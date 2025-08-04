@@ -1,7 +1,8 @@
+RUN cat << EOF > apply_patch.sh
 #!/bin/bash
 set -e
-# Path to PX4's Iris SDF file
-PX4_SDF_PATH="/home/px4user/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris/iris.sdf"
+# Path to PX4's Iris SDF file (relative to this script's directory)
+PX4_SDF_PATH="../PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris/iris.sdf"
 # Define the camera XML to insert
 CAMERA_XML='
 <!-- Forward-looking camera pitched up 30 degrees -->
@@ -52,10 +53,13 @@ CAMERA_XML='
 </joint>
 '
 # Insert the camera XML before the closing </link> tag for base_link
-awk -v xml="${CAMERA_XML}" '
+awk -v xml="\${CAMERA_XML}" '
 /<link name="base_link">/ { in_base = 1 }
 /<\/link>/ && in_base { printf "%s", xml; in_base = 0 }
 1
-' "$PX4_SDF_PATH" > temp.sdf
-mv temp.sdf "$PX4_SDF_PATH"
+' "\$PX4_SDF_PATH" > temp.sdf
+mv temp.sdf "\$PX4_SDF_PATH"
 echo "Iris SDF patched with forward camera insertion."
+EOF
+RUN chmod +x apply_patch.sh
+RUN ./apply_patch.sh
