@@ -74,6 +74,7 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
         ros-dev-tools \
         ros-humble-xacro \
         ros-humble-urdf \
+        ros-humble-cv-bridge \
         ros-humble-robot-state-publisher && \
     rm -rf /var/lib/apt/lists/*
 
@@ -119,6 +120,8 @@ RUN bash ubuntu.sh --no-sim-tools
 RUN wget https://github.com/mavlink/qgroundcontrol/releases/download/v4.4.0/QGroundControl.AppImage -O QGroundControl.AppImage || \
     { echo "QGroundControl download failed. Please manually download the AppImage and mount it into the container."; exit 1; } && \
     chmod +x QGroundControl.AppImage
+    
+ARG CACHE_BREAKER=1
 
 WORKDIR /src/
 RUN git clone https://github.com/benmatok/px4-iris-camera-patch.git
