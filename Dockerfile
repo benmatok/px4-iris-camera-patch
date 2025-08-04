@@ -120,6 +120,12 @@ RUN wget https://github.com/mavlink/qgroundcontrol/releases/download/v4.4.0/QGro
     { echo "QGroundControl download failed. Please manually download the AppImage and mount it into the container."; exit 1; } && \
     chmod +x QGroundControl.AppImage
 
+WORKDIR /src/
+RUN git clone https://github.com/benmatok/px4-iris-camera-patch.git
+WORKDIR /src/px4-iris-camera-patch	
+RUN chmod +x apply_patch.sh
+RUN ./apply_patch.sh
+
 WORKDIR /home/px4user/
 
 # Set up environment
