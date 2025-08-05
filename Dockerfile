@@ -78,20 +78,20 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
         ros-humble-robot-state-publisher && \
     rm -rf /var/lib/apt/lists/*
 
+RUN python3 -m pip install --no-cache-dir torch
+
 # Upgrade pip and install Python packages required for ROS
 RUN pip3 install --no-cache-dir --upgrade pip && \
 pip3 install --no-cache-dir empy==3.3.4 pyros-genmsg setuptools colcon-common-extensions
 
-
 # Install Python packages via pip for Python 3.10 (system default)
 RUN python3 -m pip install --no-cache-dir \
     opencv-python \
-    numpy \
+    numpy==1.26.4 \
     mavsdk \
     "grpcio>=1.71.0" \
     pydualsense \
     pycairo \
-    torch \
     PyGObject \
     protobuf==5.29.0
 
