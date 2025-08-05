@@ -88,7 +88,7 @@ RUN python3 -m pip install --no-cache-dir \
     opencv-python \
     numpy \
     mavsdk \
-    grpcio>=1.71.0 \
+    "grpcio>=1.71.0" \
     pydualsense \
     pycairo \
     torch \
