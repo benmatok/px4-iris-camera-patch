@@ -20,8 +20,6 @@ RUN apt-get update && apt-get install -y \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
     
-RUN pip3 install --no-cache-dir --upgrade pip 
-RUN python3 -m pip install --no-cache-dir torch
 
 # Install development dependencies (including python3-pip, no python3-numpy)
 RUN apt-get update && apt-get install -y \
@@ -38,6 +36,9 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --no-cache-dir --upgrade pip 
+RUN python3 -m pip install --no-cache-dir torch
 
 # Install GStreamer dependencies (without system python3-gi)
 RUN apt-get update && apt-get install -y \
