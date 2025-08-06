@@ -1,9 +1,7 @@
 #!/bin/bash
 set -e
-
 # Path to PX4's Iris SDF Jinja template
 PX4_JINJA_PATH="/home/px4user/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris/iris.sdf.jinja"
-
 # Define the sensor XML to insert inside base_link
 SENSOR_XML='
       <!-- Forward-looking camera pitched up 30 degrees -->
@@ -30,7 +28,7 @@ SENSOR_XML='
         </camera>
         <always_on>true</always_on>
         <update_rate>30.0</update_rate>
-        <plugin name="forward_camera_plugin" filename="libgazebo_camera_plugin.so">
+        <plugin name="forward_camera_plugin" filename="libgazebo_ros_camera.so">
           <robotNamespace>/</robotNamespace>
           <cameraName>forward_camera</cameraName>
           <imageTopicName>image_raw</imageTopicName>
@@ -45,7 +43,6 @@ SENSOR_XML='
         </plugin>
       </sensor>
 '
-
 # Define the frame XML to insert after base_link's </link>
 FRAME_XML='
     <!-- Optical frame for the camera -->
@@ -57,21 +54,19 @@ FRAME_XML='
       <child>forward_camera_optical</child>
     </joint>
 '
-
 # Use awk to insert sensor inside base_link before </link>, and frame after </link>
 awk -v sensor="${SENSOR_XML}" -v frame="${FRAME_XML}" '
 /<link name='"'"'base_link'"'"'>/ { in_base = 1 }
-/<\/link>/ && in_base { 
-  printf "%s", sensor; 
-  print $0; 
-  printf "%s", frame; 
-  in_base = 0; 
-  next 
+/<\/link>/ && in_base {
+  printf "%s", sensor;
+  print $0;
+  printf "%s", frame;
+  in_base = 0;
+  next
 }
 { print }
 ' "$PX4_JINJA_PATH" > temp.sdf.jinja
-echo "Updated Jinja template written to temp.sdf.jinja." 
+echo "Updated Jinja template written to temp.sdf.jinja."
 # Optionally replace the original file (uncomment if needed, after verifying temp.sdf.jinja)
 mv temp.sdf.jinja "$PX4_JINJA_PATH"
-
 echo " Successfully Patched !"
