@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 # Path to PX4's Iris SDF file (use relative path assuming script is run from px4-iris-camera-patch directory adjacent to PX4-Autopilot)
-PX4_SDF_PATH="../PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris/iris.sdf"
+PX4_SDF_PATH="/home/px4user/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris/iris.sdf"
 # Define the camera XML to insert
 CAMERA_XML='
 <!-- Forward-looking camera pitched up 30 degrees -->
