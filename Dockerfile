@@ -19,6 +19,9 @@ RUN apt-get update && apt-get install -y \
     && apt-get remove -y modemmanager \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
+    
+RUN pip3 install --no-cache-dir --upgrade pip 
+RUN python3 -m pip install --no-cache-dir torch
 
 # Install development dependencies (including python3-pip, no python3-numpy)
 RUN apt-get update && apt-get install -y \
@@ -75,14 +78,14 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
         ros-humble-xacro \
         ros-humble-urdf \
         ros-humble-cv-bridge \
+        ros-humble-gazebo-ros \
+	ros-humble-gazebo-plugins \
         ros-humble-robot-state-publisher && \
     rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m pip install --no-cache-dir torch
 
-# Upgrade pip and install Python packages required for ROS
-RUN pip3 install --no-cache-dir --upgrade pip && \
-pip3 install --no-cache-dir empy==3.3.4 pyros-genmsg setuptools colcon-common-extensions
+# install Python packages required for ROS
+RUN pip3 install --no-cache-dir empy==3.3.4 pyros-genmsg setuptools colcon-common-extensions
 
 # Install Python packages via pip for Python 3.10 (system default)
 RUN python3 -m pip install --no-cache-dir \
@@ -126,9 +129,8 @@ ARG CACHE_BREAKER=1
 WORKDIR /src/
 RUN git clone https://github.com/benmatok/px4-iris-camera-patch.git
 WORKDIR /src/px4-iris-camera-patch	
-RUN chmod +x apply_patch.sh
-RUN ./apply_patch.sh
-
+RUN chmod +x /src/px4-iris-camera-patch/apply_patch.sh
+RUN sh /src/px4-iris-camera-patch/apply_patch.sh
 WORKDIR /home/px4user/
 
 # Set up environment
