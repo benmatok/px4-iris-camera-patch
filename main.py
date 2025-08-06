@@ -383,7 +383,7 @@ class ImageViewer(Node):
         await self.drone.action.disarm()
         await asyncio.sleep(2) # Wait for full disarm
         # Optional: Set to HOLD mode for clean state
-        await self.drone.action.set_current_flight_mode(5) # 5 = HOLD
+        await self.drone.action.hold() # 5 = HOLD
     def get_control_velocities(self):
         if self.autonomous_pursuit_active:
             if self.current_bbox_center:
