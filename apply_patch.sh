@@ -71,7 +71,7 @@ FRAME_XML='
 PAYLOAD_XML='
     <!-- 2.5kg payload for Chimera CX10 simulation -->
     <link name="payload">
-      <pose>0 0 -0.2 0 0 0</pose> <!-- Positioned 0.2m below base_link center -->
+      <pose>0.15 0 -0.05 0 0 0</pose> <!-- Positioned 0.2m below base_link center -->
       <inertial>
         <mass>2.5</mass>
         <inertia>
@@ -120,9 +120,34 @@ awk -v sensor="${SENSOR_XML}" -v frame="${FRAME_XML}" -v payload="${PAYLOAD_XML}
 echo "Updated Jinja template written to temp.sdf.jinja."
 # Optionally replace the original file (uncomment if needed, after verifying temp.sdf.jinja)
 mv temp.sdf.jinja "$PX4_JINJA_PATH"
-# Append persistent parameter changes to airframe file
+# Scale motor poses for ~452mm wheelbase (original ~318mm diagonal, scale ~1.42)
+sed -i 's/<pose>0.225 0.225 -0.063 0 0 0<\/pose>/<pose>0.3195 0.3195 -0.063 0 0 0<\/pose>/g' "$PX4_JINJA_PATH"
+sed -i 's/<pose>0.225 -0.225 -0.063 0 0 -1.570796<\/pose>/<pose>0.3195 -0.3195 -0.063 0 0 -1.570796<\/pose>/g' "$PX4_JINJA_PATH"
+sed -i 's/<pose>-0.225 -0.225 -0.063 0 0 3.141593<\/pose>/<pose>-0.3195 -0.3195 -0.063 0 0 3.141593<\/pose>/g' "$PX4_JINJA_PATH"
+sed -i 's/<pose>-0.225 0.225 -0.063 0 0 1.570796<\/pose>/<pose>-0.3195 0.3195 -0.063 0 0 1.570796<\/pose>/g' "$PX4_JINJA_PATH"
+# Update prop radius to 0.127m (10" diameter props)
+sed -i 's/<radius>0.127<\/radius>/<radius>0.127<\/radius>/g' "$PX4_JINJA_PATH"  # Already matches, no change needed
+# Scale thrust_factor ~3x for stronger motors (original 0.166 -> 0.5)
+sed -i 's/<thrust_factor>0.166<\/thrust_factor>/<thrust_factor>0.5<\/thrust_factor>/g' "$PX4_JINJA_PATH"
+# Scale torque_factor ~3x (original 0.002 -> 0.006)
+sed -i 's/<torque_factor>0.002<\/torque_factor>/<torque_factor>0.006<\/torque_factor>/g' "$PX4_JINJA_PATH"
+# Update base_link mass to ~0.826kg (CX10 dry weight)
+sed -i 's/<mass>0.2<\/mass>/<mass>0.826<\/mass>/g' "$PX4_JINJA_PATH"
+# Scale base_link inertia ~8x (scale^2 * mass_ratio ≈ 2*4=8)
+sed -i 's/<ixx>0.006<\/ixx>/<ixx>0.048<\/ixx>/g' "$PX4_JINJA_PATH"
+sed -i 's/<iyy>0.006<\/iyy>/<iyy>0.048<\/iyy>/g' "$PX4_JINJA_PATH"
+sed -i 's/<izz>0.01<\/izz>/<izz>0.08<\/izz>/g' "$PX4_JINJA_PATH"
+# Append persistent parameter changes to airframe file for closer dynamics
 echo "param set COM_DISARM_LAND 0" >> "$AIRFRAME_PATH"
 echo "param set MPC_TKO_SPEED 5.0" >> "$AIRFRAME_PATH"
 echo "param set NAV_RCL_ACT 0" >> "$AIRFRAME_PATH"
 echo "param set COM_RC_IN_MODE 4" >> "$AIRFRAME_PATH"
+echo "param set MPC_XY_VEL_MAX 38.9" >> "$AIRFRAME_PATH"  # ~140km/h max
+echo "param set BAT_N_CELLS 6" >> "$AIRFRAME_PATH"
+echo "param set MPC_THR_HOVER 0.6" >> "$AIRFRAME_PATH"
+echo "param set MPC_THR_MAX 1.0" >> "$AIRFRAME_PATH"
+echo "param set MPC_THR_MIN 0.15" >> "$AIRFRAME_PATH"
+echo "param set MC_PITCHRATE_P 0.08" >> "$AIRFRAME_PATH"
+echo "param set MC_ROLLRATE_P 0.08" >> "$AIRFRAME_PATH"
+echo "param set MC_YAWRATE_P 0.05" >> "$AIRFRAME_PATH"  # Lower for larger frame
 echo " Successfully Patched !"
