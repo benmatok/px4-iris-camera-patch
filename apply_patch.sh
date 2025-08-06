@@ -70,7 +70,7 @@ awk -v sensor="${SENSOR_XML}" -v frame="${FRAME_XML}" '
 }
 { print }
 ' "$PX4_JINJA_PATH" > temp.sdf.jinja
-echo "Updated Jinja template written to temp.sdf.jinja. 
+echo "Updated Jinja template written to temp.sdf.jinja." 
 # Optionally replace the original file (uncomment if needed, after verifying temp.sdf.jinja)
 mv temp.sdf.jinja "$PX4_JINJA_PATH"
 
