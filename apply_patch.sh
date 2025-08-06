@@ -1,9 +1,8 @@
-
 #!/bin/bash
 set -e
 
-# Path to PX4's Iris SDF file (use relative path assuming script is run from px4-iris-camera-patch directory adjacent to PX4-Autopilot)
-PX4_SDF_PATH="/src/px4-iris-camera-patch/iris.sdf"
+# Path to PX4's Iris SDF Jinja template
+PX4_JINJA_PATH="/home/px4user/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris/iris.sdf.jinja"
 
 # Define the sensor XML to insert inside base_link
 SENSOR_XML='
@@ -19,7 +18,7 @@ SENSOR_XML='
           </image>
           <clip>
             <near>0.01</near>
-            <far>1000</far>
+            <far>100</far>
           </clip>
           <distortion>
             <k1>0.0</k1>
@@ -70,9 +69,9 @@ awk -v sensor="${SENSOR_XML}" -v frame="${FRAME_XML}" '
   next 
 }
 { print }
-' "$PX4_SDF_PATH" > temp.sdf
+' "$PX4_JINJA_PATH" > temp.sdf.jinja
+echo "Updated Jinja template written to temp.sdf.jinja. 
+# Optionally replace the original file (uncomment if needed, after verifying temp.sdf.jinja)
+mv temp.sdf.jinja "$PX4_JINJA_PATH"
 
-echo "Updated SDF written to temp.sdf"
-
-mv temp.sdf "$PX4_SDF_PATH"
-echo "Iris SDF patched with forward camera insertion."
+echo " Successfully Patched !"
