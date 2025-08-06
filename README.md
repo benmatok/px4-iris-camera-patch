@@ -1,4 +1,4 @@
-# PX4 Iris Camera Patch for Gazebo Classic
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/b7a58b4f-e97d-4a47-a080-3e253bed12a9" /># PX4 Iris Camera Patch for Gazebo Classic
 
 This repo provides a patch to add a forward-looking RGB camera pitched up at 30 degrees relative to the Iris body in PX4 Gazebo Classic simulations (compatible with v1.14.0).
 
@@ -19,4 +19,9 @@ sudo docker run -it --rm     --privileged     -e DISPLAY=$DISPLAY     -v /tmp/.X
 source /opt/ros/humble/setup.bash
 cd ~/PX4-Autopilot
 make px4_sitl gazebo-classic_iris__baylands
+```
+## in a second bash
+```
+sudo docker ps  # Note the CONTAINER ID of your running px4 container
+sudo docker exec -it <CONTAINER_ID> bash
 ```
