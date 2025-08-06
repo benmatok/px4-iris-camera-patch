@@ -48,6 +48,17 @@ FRAME_XML='
     <!-- Optical frame for the camera -->
     <link name="forward_camera_optical">
       <pose>0.1 0 0.1 0 -0.5236 0</pose>
+      <inertial>
+        <mass>0.01</mass> <!-- Small mass for camera; adjust if needed -->
+        <inertia>
+          <ixx>0.0001</ixx> <!-- Symmetric inertia for stability -->
+          <ixy>0.0</ixy>
+          <ixz>0.0</ixz>
+          <iyy>0.0001</iyy>
+          <iyz>0.0</iyz>
+          <izz>0.0001</izz>
+        </inertia>
+      </inertial>
     </link>
     <joint name="forward_camera_joint" type="fixed">
       <parent>base_link</parent>
