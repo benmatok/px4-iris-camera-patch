@@ -383,21 +383,37 @@ class ImageViewer(Node):
         attitude_task = asyncio.create_task(self.attitude_tracker())
         velocity_task = asyncio.create_task(self.body_velocity_tracker())
 
-        async def arm_and_takeoff():
+        async def arm_and_takeoff(self):
+            print("Arming...")
             await self.drone.action.arm()
-            await self.drone.action.takeoff()
-            await asyncio.sleep(5)
-            await self.drone.offboard.set_velocity_body(VelocityBodyYawspeed(0, 0, 0, 0))
-            await self.drone.offboard.start()
-            self.is_offboard = True
+            await asyncio.sleep(1)  # Wait for arm confirmation
+            print("Setting initial setpoint before offboard...")
+            await self.drone.offboard.set_velocity_body(VelocityBodyYawspeed(0.0, 0.0, 0.0, 0.0))
+            print("Starting offboard...")
+            try:
+                await self.drone.offboard.start()
+                self.is_offboard = True
+            except OffboardError as e:
+                print(f"Offboard start failed: {e}")
+                return
+            print("Taking off via offboard (ascending)...")
+            # Ramp up velocity for takeoff (e.g., -3 m/s up for 5s)
+            await self.drone.offboard.set_velocity_body(VelocityBodyYawspeed(0.0, 0.0, -3.0, 0.0))
+            await asyncio.sleep(5)  # Adjust time for desired height
+            await self.drone.offboard.set_velocity_body(VelocityBodyYawspeed(0.0, 0.0, 0.0, 0.0))  # Hover
 
-        async def land_and_disarm():
+        async def land_and_disarm(self):
+            print("Landing...")
             await self.drone.action.land()
             await asyncio.sleep(5)
-            await self.drone.action.disarm()
             if self.is_offboard:
                 await self.drone.offboard.stop()
                 self.is_offboard = False
+            print("Disarming...")
+            await self.drone.action.disarm()
+            await asyncio.sleep(2)  # Wait for full disarm
+            # Optional: Set to HOLD mode for clean state
+            await self.drone.action.set_current_flight_mode(5)  # 5 = HOLD
 
         while rclpy.ok():
             vx, vy, vz, yaw_rate = self.get_control_velocities()
@@ -406,8 +422,11 @@ class ImageViewer(Node):
                 await self.drone.offboard.set_velocity_body(VelocityBodyYawspeed(vx, vy, vz, yaw_rate))
 
             if self.dualsense.state.L1 and not self.is_armed:
-                await arm_and_takeoff()
-                self.is_armed = True
+                try:
+                    await arm_and_takeoff(self)
+                    self.is_armed = True
+                except Exception as e:
+                    print(f"Arm/takeoff failed: {e} - Retry after disarm complete.")
             if self.dualsense.state.L2Btn and self.is_armed:
                 self.autonomous_pursuit_active = False
                 await land_and_disarm()
