@@ -104,10 +104,14 @@ RUN apt-get install sed
 
 RUN apt-get update && apt-get install -y gazebo libgazebo11 libgazebo-dev && rm -rf /var/lib/apt/lists/*
 
+
+RUN apt-get update && apt-get install -y gedit && rm -rf /var/lib/apt/lists/*
+
 # Create a non-root user
 RUN useradd -m px4user && \
     echo "px4user ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/px4user && \
     usermod -a -G dialout px4user
+
 
 USER px4user
 WORKDIR /home/px4user
@@ -125,6 +129,7 @@ RUN wget https://github.com/mavlink/qgroundcontrol/releases/download/v4.4.0/QGro
     { echo "QGroundControl download failed. Please manually download the AppImage and mount it into the container."; exit 1; } && \
     chmod +x QGroundControl.AppImage
     
+
 ARG CACHE_BREAKER=1
 
 RUN echo 'source /opt/ros/humble/setup.bash' >> ~/.bashrc
