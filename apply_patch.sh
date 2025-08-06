@@ -3,7 +3,7 @@
 set -e
 
 # Path to PX4's Iris SDF file (use relative path assuming script is run from px4-iris-camera-patch directory adjacent to PX4-Autopilot)
-PX4_SDF_PATH="/home/px4user/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris/iris.sdf"
+PX4_SDF_PATH="/src/px4-iris-camera-patch/iris.sdf"
 
 # Define the sensor XML to insert inside base_link
 SENSOR_XML='
@@ -19,7 +19,7 @@ SENSOR_XML='
           </image>
           <clip>
             <near>0.01</near>
-            <far>100</far>
+            <far>1000</far>
           </clip>
           <distortion>
             <k1>0.0</k1>
