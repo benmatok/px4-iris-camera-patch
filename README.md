@@ -1,4 +1,4 @@
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/b7a58b4f-e97d-4a47-a080-3e253bed12a9" /># PX4 Iris Camera Patch for Gazebo Classic
+
 
 This repo provides a patch to add a forward-looking RGB camera pitched up at 30 degrees relative to the Iris body in PX4 Gazebo Classic simulations (compatible with v1.14.0).
 
