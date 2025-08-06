@@ -25,3 +25,10 @@ make px4_sitl gazebo-classic_iris__baylands
 sudo docker ps  # Note the CONTAINER ID of your running px4 container
 sudo docker exec -it <CONTAINER_ID> bash
 ```
+
+## inside second docker
+```
+source /opt/ros/humble/setup.bash
+cd /src/px4-iris-camera-patch
+python3 main.py
+```
