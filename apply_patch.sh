@@ -65,13 +65,51 @@ FRAME_XML='
       <child>forward_camera_optical</child>
     </joint>
 '
-# Use awk to insert sensor inside base_link before </link>, and frame after </link>
-awk -v sensor="${SENSOR_XML}" -v frame="${FRAME_XML}" '
+# Define the payload XML to insert after the frame (2.5kg under base_link for Chimera-like "heaviness")
+PAYLOAD_XML='
+    <!-- 2.5kg payload for Chimera CX10 simulation -->
+    <link name="payload">
+      <pose>0 0 -0.2 0 0 0</pose> <!-- Positioned 0.2m below base_link center -->
+      <inertial>
+        <mass>2.5</mass>
+        <inertia>
+          <ixx>0.0208</ixx>
+          <iyy>0.0208</iyy>
+          <izz>0.0375</izz>
+          <ixy>0.0</ixy>
+          <ixz>0.0</ixz>
+          <iyz>0.0</iyz>
+        </inertia>
+      </inertial>
+      <collision name="payload_collision">
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.3 0.3 0.1</size> <!-- Approximate box shape for payload -->
+          </box>
+        </geometry>
+      </collision>
+      <visual name="payload_visual">
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <box>
+            <size>0.3 0.3 0.1</size>
+          </box>
+        </geometry>
+      </visual>
+    </link>
+    <joint name="payload_joint" type="fixed">
+      <parent>base_link</parent>
+      <child>payload</child>
+    </joint>
+'
+# Use awk to insert sensor inside base_link before </link>, frame and payload after </link>
+awk -v sensor="${SENSOR_XML}" -v frame="${FRAME_XML}" -v payload="${PAYLOAD_XML}" '
 /<link name='"'"'base_link'"'"'>/ { in_base = 1 }
 /<\/link>/ && in_base {
   printf "%s", sensor;
   print $0;
-  printf "%s", frame;
+  printf "%s%s", frame, payload;
   in_base = 0;
   next
 }
