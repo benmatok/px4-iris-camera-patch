@@ -2,6 +2,8 @@
 set -e
 # Path to PX4's Iris SDF Jinja template
 PX4_JINJA_PATH="/home/px4user/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl_gazebo-classic/models/iris/iris.sdf.jinja"
+# Path to IRIS airframe file for persistent parameters
+AIRFRAME_PATH="/home/px4user/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/10015_gazebo-classic_iris"
 # Define the sensor XML to insert inside base_link
 SENSOR_XML='
       <!-- Forward-looking camera pitched up 30 degrees -->
@@ -65,7 +67,7 @@ FRAME_XML='
       <child>forward_camera_optical</child>
     </joint>
 '
-# Define the payload XML to insert after the frame (2.5kg under base_link for Chimera-like "heaviness")
+# Define the payload XML to insert after the frame
 PAYLOAD_XML='
     <!-- 2.5kg payload for Chimera CX10 simulation -->
     <link name="payload">
@@ -103,7 +105,7 @@ PAYLOAD_XML='
       <child>payload</child>
     </joint>
 '
-# Use awk to insert sensor inside base_link before </link>, frame and payload after </link>
+# Use awk to insert sensor inside base_link before </link>, and frame + payload after </link>
 awk -v sensor="${SENSOR_XML}" -v frame="${FRAME_XML}" -v payload="${PAYLOAD_XML}" '
 /<link name='"'"'base_link'"'"'>/ { in_base = 1 }
 /<\/link>/ && in_base {
@@ -118,4 +120,9 @@ awk -v sensor="${SENSOR_XML}" -v frame="${FRAME_XML}" -v payload="${PAYLOAD_XML}
 echo "Updated Jinja template written to temp.sdf.jinja."
 # Optionally replace the original file (uncomment if needed, after verifying temp.sdf.jinja)
 mv temp.sdf.jinja "$PX4_JINJA_PATH"
+# Append persistent parameter changes to airframe file
+echo "param set COM_DISARM_LAND 0" >> "$AIRFRAME_PATH"
+echo "param set MPC_TKO_SPEED 5.0" >> "$AIRFRAME_PATH"
+echo "param set NAV_RCL_ACT 0" >> "$AIRFRAME_PATH"
+echo "param set COM_RC_IN_MODE 4" >> "$AIRFRAME_PATH"
 echo " Successfully Patched !"
