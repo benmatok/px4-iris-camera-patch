@@ -127,6 +127,8 @@ RUN wget https://github.com/mavlink/qgroundcontrol/releases/download/v4.4.0/QGro
     
 ARG CACHE_BREAKER=1
 
+RUN echo 'source /opt/ros/humble/setup.bash' >> ~/.bashrc
+
 WORKDIR /src/
 RUN git clone https://github.com/benmatok/px4-iris-camera-patch.git
 WORKDIR /src/px4-iris-camera-patch	
