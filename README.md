@@ -16,7 +16,6 @@ sudo docker run -it --rm --privileged -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp
 
 ## inside the docker
 ```
-source /opt/ros/humble/setup.bash
 cd ~/PX4-Autopilot
 make px4_sitl gazebo-classic_iris__baylands
 ```
@@ -28,7 +27,5 @@ sudo docker exec -it <CONTAINER_ID> bash
 
 ## inside second docker
 ```
-source /opt/ros/humble/setup.bash
-cd /src/px4-iris-camera-patch
-python3 main.py
+python3 /src/px4-iris-camera-patch/main.py
 ```
