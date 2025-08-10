@@ -99,7 +99,7 @@ class PursuitState:
     def __init__(self):
         self.autonomous_pursuit_active = False
         self.pursuit_pid_yaw = PIDController(kp=0.1, ki=0.1, kd=0.03, output_limit=25.0)
-        self.pursuit_pid_alt = PIDController(kp=0.03, ki=0.005, kd=0.001, output_limit=5.0)
+        self.pursuit_pid_alt = PIDController(kp=0.1, ki=0.005, kd=0.001, output_limit=5.0)
         self.pursuit_pid_forward = PIDController(kp=0.3, ki=0.05, kd=0.01, output_limit=5.0, smoothing_factor=0.1)
         self.target_ratio = 0.4
         self.forward_velocity = 10.0
@@ -176,16 +176,25 @@ class AngleMode(ControlMode):
                 # Convert velocities to attitude targets (simplified; use arctan for tilt)
                 pitch_target = np.rad2deg(np.arctan(vx / 9.81)) # From vx (forward accel)
                 roll_target = np.rad2deg(np.arctan(vy / 9.81)) # From vy (side accel)
-                thrust = 0.5 + (vz / (2 * config.MAX_CLIMB)) # Normalized
+                thrust = 0.4 + (vz / (2 * config.MAX_CLIMB)) # Normalized
                 yaw_target = drone_state.current_body_velocities['vyaw'] + yaw_rate # Incremental
                 return 'attitude', (roll_target, pitch_target, yaw_target, thrust)
             return 'attitude', (0.0, 0.0, 0.0, 0.5)
         # Stabilized attitude; limit angles
-        max_tilt = 30.0 # degrees
-        pitch_target = -dualsense.state.LY / 128.0 * max_tilt
-        roll_target = dualsense.state.LX / 128.0 * max_tilt
-        yaw_target = drone_state.current_body_velocities['vyaw'] + (dualsense.state.RX / 128.0 * config.MAX_YAW_RATE) # Incremental yaw
-        thrust = 0.5 + (dualsense.state.RY / 128.0 * 0.5) # Normalized thrust 0-1
+        max_tilt = 30.0 # degrees (reduced to prevent wobbling)
+        ry = dualsense.state.RY / 128.0
+        pitch_target = 0
+        roll_target = 0
+        yaw_target = 0 # drone_state.current_body_velocities['vyaw'] + (dualsense.state.RX / 128.0 * config.MAX_YAW_RATE) # Incremental yaw
+        # Thrust not from RY; auto-adjust based on pitch for constant slow forward speed (~5 m/s)
+        desired_vx = 5.0 # Constant slow forward speed
+        
+        base_thrust = 0.25  # 
+        desired_vz = 0.0 # No RY, hold altitude
+        vz_error = desired_vz - drone_state.current_body_velocities['vz']
+        vz_correction = pursuit_state.pursuit_pid_alt.update(vz_error)
+        thrust = base_thrust #+ vz_correction / config.MAX_CLIMB  # Normalize vz_correction to thrust scale (m/s to 0-1)
+        thrust = np.clip(thrust, 0.0, 1.0)
         return 'attitude', (roll_target, pitch_target, yaw_target, thrust)
 
 class AcroMode(ControlMode):
