@@ -233,10 +233,11 @@ class ImageViewer(Node):
         self.prev_bbox = None
         self.control_mode = ManualMode() # Default; switch with R1 (angle), R2 (manual)
         # Start MAVSDK connection in thread
-        threading.Thread(target=mavsdk_controller, args=(self.drone_state, self.pursuit_state, self.dualsense, self.config, self.get_logger(), self.control_mode), daemon=True).start()
+        threading.Thread(target=self.run_mavsdk_controller, daemon=True).start()
         # Timer for state machine (run every 0.05s)
         self.timer = self.create_timer(0.05, self.state_machine_callback_wrapper)
-
+    def run_mavsdk_controller(self):
+        asyncio.run(mavsdk_controller(self.frame_state,self.drone_state, self.pursuit_state, self.dualsense, self.config, self.get_logger(), self.control_mode))
     def image_callback(self, msg):
         try:
             self.frame_state.current_frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
@@ -515,7 +516,7 @@ def is_bbox_area_black(frame, bbox, threshold=30):
     mean_brightness = np.mean(roi)
     return mean_brightness < threshold
 
-async def mavsdk_controller(drone_state, pursuit_state, dualsense, config, logger, control_mode):
+async def mavsdk_controller(frame_state, drone_state, pursuit_state, dualsense, config, logger, control_mode):
     await drone_state.drone.connect(system_address="udp://:14540")
     async for state in drone_state.drone.core.connection_state():
         if state.is_connected:
