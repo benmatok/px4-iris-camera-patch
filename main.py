@@ -253,7 +253,7 @@ def state_machine_callback(config, frame_state, button_state, video_state, cache
     height, width = frame.shape[:2]
     frame_state.current_frame_height, frame_state.current_frame_width = height, width
     # Toggle stabilization
-    handle_stabilization_toggle(button_state, dualsense)
+    handle_stabilization_toggle(frame_state,button_state, dualsense)
     # Toggle control mode
     handle_control_mode_toggle(button_state, dualsense, control_mode)
     display_frame = get_stabilized_frame(frame, frame_state, drone_state)
@@ -267,7 +267,7 @@ def state_machine_callback(config, frame_state, button_state, video_state, cache
     display_frame = draw_control_mode(display_frame, control_mode)
     show_video(config, display_frame, logger)
 
-def handle_stabilization_toggle(button_state, dualsense):
+def handle_stabilization_toggle(frame_state,button_state, dualsense):
     o_state = dualsense.state.circle
     if o_state and not button_state.prev_o_state:
         frame_state.show_stabilized = not frame_state.show_stabilized
