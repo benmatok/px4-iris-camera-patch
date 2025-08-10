@@ -1,6 +1,10 @@
 
 
 This repo provides a patch to add a forward-looking RGB camera pitched up at 30 degrees relative to the Iris body in PX4 Gazebo Classic simulations (compatible with v1.14.0).
+### Prequesits 
+- nvidia drivers
+- nvidia docker
+- internet connection
 
 ## How to Use in Docker Build
 - Clone this repo
@@ -23,9 +27,5 @@ make px4_sitl gazebo-classic_iris__baylands
 ```
 sudo docker ps  # Note the CONTAINER ID of your running px4 container
 sudo docker exec -it <CONTAINER_ID> bash
-```
-
-## inside second docker
-```
-python3 /src/px4-iris-camera-patch/main.py
+inside-container> python3 /src/px4-iris-camera-patch/main.py
 ```
