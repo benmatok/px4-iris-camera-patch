@@ -18,7 +18,7 @@ SENSOR_XML='
           </image>
           <clip>
             <near>0.01</near>
-            <far>100</far>
+            <far>1000</far>
           </clip>
           <distortion>
             <k1>0.0</k1>
