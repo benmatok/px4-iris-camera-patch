@@ -13,7 +13,6 @@ import threading
 import os
 import pickle
 from datetime import datetime
-
 # Simple PID Controller definition (adapted from custom tracking_utils)
 class PIDController:
     def __init__(self, kp=0.0, ki=0.0, kd=0.0, output_limit=0.0, smoothing_factor=0.0):
@@ -25,7 +24,6 @@ class PIDController:
         self.integral = 0.0
         self.previous_error = 0.0
         self.smoothed_output = 0.0
-
     def update(self, error):
         self.integral += error
         derivative = error - self.previous_error
@@ -33,21 +31,19 @@ class PIDController:
         if self.output_limit > 0:
             if output > self.output_limit:
                 output = self.output_limit
-                self.integral -= error  # Anti-windup: stop integral growth
+                self.integral -= error # Anti-windup: stop integral growth
             elif output < -self.output_limit:
                 output = -self.output_limit
-                self.integral -= error  # Anti-windup: stop integral growth
+                self.integral -= error # Anti-windup: stop integral growth
         if self.smoothing_factor > 0:
             output = (self.smoothing_factor * output) + ((1 - self.smoothing_factor) * self.smoothed_output)
             self.smoothed_output = output
         self.previous_error = error
         return output
-
     def reset(self):
         self.integral = 0.0
         self.previous_error = 0.0
         self.smoothed_output = 0.0
-
 # Simple stabilize_frame function (adapted; assumes basic warp based on pitch/roll)
 def stabilize_frame(frame, pitch_rad, roll_rad, pitch0_rad=0.0, hfov_deg=80.0):
     # Basic affine transformation for stabilization
@@ -59,38 +55,34 @@ def stabilize_frame(frame, pitch_rad, roll_rad, pitch0_rad=0.0, hfov_deg=80.0):
     M = np.float32([[1, 0, 0], [0, 1, shift_y]])
     stabilized = cv2.warpAffine(stabilized, M, (width, height))
     return stabilized
-
 # Simple draw_alignment_info function (adapted; draws basic crosshair and text)
 def draw_alignment_info(frame, self_obj, target_ratio=0.4):
     if self_obj.current_bbox_center is None:
         return frame
     height, width = frame.shape[:2]
     ref_x = self_obj.frame_center_x
-    ref_y = int(height * target_ratio)
+    ref_y = int(frame_height * (1 - pursuit_state.target_ratio))
     cv2.line(frame, (ref_x, 0), (ref_x, height), (255, 0, 0), 1) # Vertical line
     cv2.line(frame, (0, ref_y), (width, ref_y), (255, 0, 0), 1) # Horizontal line
     cv2.circle(frame, self_obj.current_bbox_center, 5, (0, 255, 0), -1)
     cv2.putText(frame, "Aligned", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
     return frame
-
 # Draw control mode on frame
 def draw_control_mode(frame, control_mode):
     mode_name = "Manual" if isinstance(control_mode, ManualMode) else "Angle" if isinstance(control_mode, AngleMode) else "Acro"
     cv2.putText(frame, f"Mode: {mode_name}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
     return frame
-
 # Configuration
 class DualSenseConfig:
     def __init__(self):
         self.MAX_VELOCITY = 30.0
         self.MAX_CLIMB = 5.0
         self.MAX_DESCENT = 25.0
-        self.MAX_YAW_RATE = 45.0
+        self.MAX_YAW_RATE = 90.0
         self.GAMMA = 3.0
         self.SHOW_VIDEO = True
         self.PUBLISH_VIDEO = False # Set to True if you add VideoPublisher
         self.RECORD_VIDEO = False
-
 class DroneState:
     def __init__(self):
         self.drone = System()
@@ -98,18 +90,17 @@ class DroneState:
         self.is_offboard = False
         self.current_pitch_rad = 0.0
         self.current_roll_rad = 0.0
+        self.current_yaw_deg = 0.0
         self.current_body_velocities = {'vx': 0.0, 'vy': 0.0, 'vz': 0.0, 'vyaw': 0.0}
-
 class PursuitState:
     def __init__(self):
         self.autonomous_pursuit_active = False
         self.pursuit_pid_yaw = PIDController(kp=0.1, ki=0.1, kd=0.03, output_limit=25.0)
-        self.pursuit_pid_alt = PIDController(kp=0.05, ki=0.001, kd=0.001, output_limit=0.1)  # Lower gains, tighter limit
+        self.pursuit_pid_alt = PIDController(kp=0.1, ki=0.03, kd=0.1, output_limit=5.0) # Lower gains, tighter limit
         self.pursuit_pid_forward = PIDController(kp=0.3, ki=0.05, kd=0.01, output_limit=5.0, smoothing_factor=0.1)
         self.target_ratio = 0.4
         self.forward_velocity = 10.0
         self.pursuit_debug_info = {}
-
 class FrameState:
     def __init__(self):
         self.current_frame = None
@@ -123,7 +114,6 @@ class FrameState:
         self.tracker_instance = None # Assume litetrack is installed; otherwise comment out tracking parts
         self.bbox_size_mode = False
         self.show_stabilized = True
-
 class ButtonState:
     def __init__(self):
         self.prev_circle_state = False
@@ -133,24 +123,20 @@ class ButtonState:
         self.prev_o_state = False
         self.prev_r1_state = False
         self.prev_r2_state = False
-
 class VideoState:
     def __init__(self):
         self.video_writer = None
         self.video_filename = None
-
 class CacheState:
     def __init__(self):
         self.cache_dir = os.path.expanduser("~/cache")
         os.makedirs(self.cache_dir, exist_ok=True)
         self.cache_frame_path = os.path.join(self.cache_dir, "roi_frame.png")
         self.cache_bbox_path = os.path.join(self.cache_dir, "roi_bbox.pkl")
-
 # Strategy for control modes
 class ControlMode:
     def get_setpoint(self, dualsense, config, pursuit_state, frame_state, drone_state):
         raise NotImplementedError("Subclasses must implement get_setpoint")
-
 class ManualMode(ControlMode):
     def get_setpoint(self, dualsense, config, pursuit_state, frame_state, drone_state):
         if pursuit_state.autonomous_pursuit_active:
@@ -172,39 +158,45 @@ class ManualMode(ControlMode):
         vz = ry * (config.MAX_CLIMB if ry < 0 else config.MAX_DESCENT) if abs(ry) > 0 else 0.0
         yaw_rate = rx * config.MAX_YAW_RATE
         return 'velocity', (vx, vy, vz, yaw_rate)
-
 class AngleMode(ControlMode):
     def get_setpoint(self, dualsense, config, pursuit_state, frame_state, drone_state):
         if pursuit_state.autonomous_pursuit_active:
             if frame_state.current_bbox_center:
                 vx, vy, vz, yaw_rate = calc_pursuit_velocities(pursuit_state, frame_state.current_bbox_center, frame_state.current_frame_width, frame_state.current_frame_height)
                 # Convert velocities to attitude targets (simplified; use arctan for tilt)
-                pitch_target = np.rad2deg(np.arctan(vx / 9.81)) # From vx (forward accel)
+                pitch_target = -np.rad2deg(np.arctan(vx / 9.81)) # From vx (forward accel), negative for forward
                 roll_target = np.rad2deg(np.arctan(vy / 9.81)) # From vy (side accel)
                 thrust = 0.4 + (vz / (2 * config.MAX_CLIMB)) # Normalized
-                yaw_target = drone_state.current_body_velocities['vyaw'] + yaw_rate # Incremental
+                yaw_target = drone_state.current_yaw_deg + (yaw_rate * 0.05) # Incremental
                 return 'attitude', (roll_target, pitch_target, yaw_target, thrust)
-            return 'attitude', (0.0, 0.0, 0.0, 0.5)
+            return 'attitude', (0.0, 0.0, 0.0, 0.25)
         # Stabilized attitude; limit angles
-        max_tilt = 30.0 # degrees (reduced to prevent wobbling)
+        lx = dualsense.state.LX / 128.0
+        ly = dualsense.state.LY / 128.0
+        rx = dualsense.state.RX / 128.0
         ry = dualsense.state.RY / 128.0
-        pitch_target = 0
-        roll_target = 0
-        yaw_target = 0 # drone_state.current_body_velocities['vyaw'] + (dualsense.state.RX / 128.0 * config.MAX_YAW_RATE) # Incremental yaw
-        # Thrust not from RY; auto-adjust based on pitch for constant slow forward speed (~5 m/s)
-        desired_vx = 5.0 # Constant slow forward speed
+        # Gamma map (simple)
+        lx = np.sign(lx) * (abs(lx) ** config.GAMMA)
+        ly = np.sign(ly) * (abs(ly) ** config.GAMMA)
+        rx = np.sign(rx) * (abs(rx) ** config.GAMMA)
+        ry = np.sign(ry) * (abs(ry) ** config.GAMMA)
+        max_tilt = 30.0
+        default_pitch = -15.0
+        pitch_target = default_pitch + (ly * max_tilt)
+        roll_target = lx * max_tilt
+        yaw_rate = rx * config.MAX_YAW_RATE
+        yaw_target = drone_state.current_yaw_deg + yaw_rate
+        base_thrust = 0.25
         
-        base_thrust = 0.25  # 
-        desired_vz = 0.0 # No RY, hold altitude
         vz_drone = drone_state.current_body_velocities['vz']
+        desired_vz = ry * 0.4
+        print(f"vz_drone = {vz_drone}, desired_vz = {desired_vz}")
         vz_error = desired_vz - vz_drone
         vz_correction = pursuit_state.pursuit_pid_alt.update(vz_error)
         thrust_correction = vz_correction / config.MAX_CLIMB
-        thrust = base_thrust - thrust_correction  # Normalize vz_correction to thrust scale (m/s to 0-1)
-        print(f"vz_drone = {vz_drone}, vz_error = {vz_error}, vz_correction = {vz_correction}, thrust_correction = {thrust_correction}, thrust = {thrust}")
-        thrust = np.clip(thrust, 0.15, 0.4)
+        thrust = base_thrust - thrust_correction
+        thrust = np.clip(thrust, 0.1, 0.9)
         return 'attitude', (roll_target, pitch_target, yaw_target, thrust)
-
 class AcroMode(ControlMode):
     def get_setpoint(self, dualsense, config, pursuit_state, frame_state, drone_state):
         if pursuit_state.autonomous_pursuit_active:
@@ -226,7 +218,6 @@ class AcroMode(ControlMode):
         yaw_rate = dualsense.state.RX / 128.0 * config.MAX_YAW_RATE
         thrust = 0.5 + (dualsense.state.RY / 128.0 * 0.5) # Normalized thrust 0-1
         return 'attitude_rate', (roll_rate, pitch_rate, yaw_rate, thrust)
-
 class ImageViewer(Node):
     def __init__(self, config):
         super().__init__('image_viewer')
@@ -260,10 +251,8 @@ class ImageViewer(Node):
             self.frame_state.current_frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
         except CvBridgeError as e:
             self.get_logger().error(str(e))
-
     def state_machine_callback_wrapper(self):
         state_machine_callback(self.config, self.frame_state, self.button_state, self.video_state, self.cache_state, self.dualsense, self.drone_state, self.pursuit_state, self.prev_bbox, self.get_logger(), self.control_mode)
-
 def state_machine_callback(config, frame_state, button_state, video_state, cache_state, dualsense, drone_state, pursuit_state, prev_bbox, logger, control_mode):
     if frame_state.current_frame is None:
         return
@@ -284,28 +273,24 @@ def state_machine_callback(config, frame_state, button_state, video_state, cache
     # Draw control mode
     display_frame = draw_control_mode(display_frame, control_mode)
     show_video(config, display_frame, logger)
-
 def handle_stabilization_toggle(frame_state,button_state, dualsense):
     o_state = dualsense.state.circle
     if o_state and not button_state.prev_o_state:
         frame_state.show_stabilized = not frame_state.show_stabilized
     button_state.prev_o_state = o_state
-
 def handle_control_mode_toggle(button_state, dualsense, control_mode):
     r1_state = dualsense.state.R1
     r2_state = dualsense.state.R2Btn
     if r1_state and not button_state.prev_r1_state:
-        control_mode.__class__ = AngleMode  # Switch to Angle mode
+        control_mode.__class__ = AngleMode # Switch to Angle mode
     if r2_state and not button_state.prev_r2_state:
-        control_mode.__class__ = ManualMode  # Switch to Manual mode
+        control_mode.__class__ = ManualMode # Switch to Manual mode
     button_state.prev_r1_state = r1_state
     button_state.prev_r2_state = r2_state
-
 def get_stabilized_frame(frame, frame_state, drone_state):
     if frame_state.show_stabilized:
         return stabilize_frame(frame, drone_state.current_pitch_rad, drone_state.current_roll_rad, pitch0_rad=np.deg2rad(-15.0), hfov_deg=100)
     return frame.copy()
-
 def handle_video_recording(config, video_state, display_frame, width, height, cache_state):
     if config.RECORD_VIDEO and video_state.video_writer is None:
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
@@ -314,7 +299,6 @@ def handle_video_recording(config, video_state, display_frame, width, height, ca
         video_state.video_writer = cv2.VideoWriter(video_state.video_filename, fourcc, 30, (width, height))
     if config.RECORD_VIDEO and video_state.video_writer:
         video_state.video_writer.write(display_frame)
-
 def handle_modes(frame_state, button_state, pursuit_state, dualsense, display_frame, width, height):
     bbox_size = 50
     if frame_state.bbox is None:
@@ -329,7 +313,6 @@ def handle_modes(frame_state, button_state, pursuit_state, dualsense, display_fr
         process_tracking_mode(frame_state, display_frame)
     elif frame_state.bbox_mode:
         process_bbox_mode(frame_state, display_frame)
-
 def handle_button_toggles(frame_state, button_state, pursuit_state, dualsense):
     if dualsense.state.square and not button_state.prev_square_state:
         if not pursuit_state.autonomous_pursuit_active:
@@ -352,7 +335,6 @@ def handle_button_toggles(frame_state, button_state, pursuit_state, dualsense):
             pursuit_state.pursuit_pid_alt.reset()
             pursuit_state.pursuit_pid_forward.reset()
     button_state.prev_triangle_state = dualsense.state.triangle
-
 def handle_bbox_controls(frame_state, dualsense, width, height):
     if not frame_state.bbox_mode or pursuit_state.autonomous_pursuit_active:
         return
@@ -390,7 +372,6 @@ def handle_bbox_controls(frame_state, dualsense, width, height):
         if dualsense.state.DpadRight:
             x = min(width - w, x + move_step)
         frame_state.bbox = [x, y, w, h]
-
 def process_bbox_mode(frame_state, display_frame):
     x, y, w, h = frame_state.bbox
     large_threshold = 0.1 * display_frame.shape[0]
@@ -403,7 +384,6 @@ def process_bbox_mode(frame_state, display_frame):
     bbox_center_local = (bbox_center_x, bbox_center_y)
     cv2.rectangle(display_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
     frame_state.current_bbox_center = bbox_center_local
-
 def process_tracking_mode(frame_state, display_frame):
     # Assume tracker logic here
     # For example:
@@ -422,7 +402,6 @@ def process_tracking_mode(frame_state, display_frame):
     bbox_color = (128, 0, 255) if frame_state.current_bbox_is_large else (0, 0, 255)
     cv2.rectangle(display_frame, (x, y), (x + w, y + h), bbox_color, 2)
     frame_state.current_bbox_center = bbox_center_local
-
 def process_pursuit_mode(frame_state, pursuit_state, display_frame):
     # Assume tracker logic
     # For example:
@@ -443,7 +422,6 @@ def process_pursuit_mode(frame_state, pursuit_state, display_frame):
     cv2.circle(display_frame, bbox_center_local, 3, (255, 255, 255), -1)
     calc_pursuit_velocities(pursuit_state, bbox_center_local, frame_state.current_frame_width, frame_state.current_frame_height)
     frame_state.current_bbox_center = bbox_center_local
-
 def handle_pursuit_alignment(pursuit_state, display_frame):
     if not pursuit_state.autonomous_pursuit_active:
         return
@@ -459,7 +437,6 @@ def handle_pursuit_alignment(pursuit_state, display_frame):
         current_pitch_rad = drone_state.current_pitch_rad
         current_roll_rad = drone_state.current_roll_rad
     display_frame = draw_alignment_info(display_frame, MockSelf())
-
 def show_video(config, display_frame, logger):
     if not config.SHOW_VIDEO:
         return
@@ -468,7 +445,6 @@ def show_video(config, display_frame, logger):
     if key == ord('q'):
         logger.info('Shutting down')
         rclpy.shutdown()
-
 def get_control_velocities(pursuit_state, drone_state, dualsense, config):
     if pursuit_state.autonomous_pursuit_active:
         if frame_state.current_bbox_center:
@@ -488,7 +464,6 @@ def get_control_velocities(pursuit_state, drone_state, dualsense, config):
     vz = ry * (config.MAX_CLIMB if ry < 0 else config.MAX_DESCENT) if abs(ry) > 0 else 0.0
     yaw_rate = rx * config.MAX_YAW_RATE
     return vx, vy, vz, yaw_rate
-
 def calc_pursuit_velocities(pursuit_state, bbox_center, frame_width, frame_height):
     if bbox_center is None:
         return 0.0, 0.0, 0.0, 0.0
@@ -518,7 +493,6 @@ def calc_pursuit_velocities(pursuit_state, bbox_center, frame_width, frame_heigh
         'bbox_is_large': frame_state.current_bbox_is_large
     }
     return vx, 0.0, vz, yaw_rate
-
 def is_bbox_area_black(frame, bbox, threshold=30):
     if frame is None or bbox is None:
         return False
@@ -532,7 +506,6 @@ def is_bbox_area_black(frame, bbox, threshold=30):
     roi = cv2.cvtColor(frame[y:y+h, x:x+w], cv2.COLOR_BGR2GRAY)
     mean_brightness = np.mean(roi)
     return mean_brightness < threshold
-
 async def mavsdk_controller(frame_state, drone_state, pursuit_state, dualsense, config, logger, control_mode):
     await drone_state.drone.connect(system_address="udp://:14540")
     async for state in drone_state.drone.core.connection_state():
@@ -560,15 +533,14 @@ async def mavsdk_controller(frame_state, drone_state, pursuit_state, dualsense, 
             await land_and_disarm(drone_state, logger)
             drone_state.is_armed = False
         await asyncio.sleep(0.05)
-
 async def attitude_tracker(drone_state):
     try:
         async for euler in drone_state.drone.telemetry.attitude_euler():
             drone_state.current_pitch_rad = np.deg2rad(euler.pitch_deg)
             drone_state.current_roll_rad = np.deg2rad(euler.roll_deg)
+            drone_state.current_yaw_deg = euler.yaw_deg
     except:
         pass
-
 async def body_velocity_tracker(drone_state):
     try:
         async for velocity in drone_state.drone.telemetry.velocity_ned():
@@ -580,7 +552,6 @@ async def body_velocity_tracker(drone_state):
             drone_state.current_body_velocities['vyaw'] = np.rad2deg(angular.yaw_rad_s) # To deg/s
     except:
         pass
-
 async def arm_and_takeoff(drone_state, logger):
     print("Arming...")
     await drone_state.drone.action.arm()
@@ -599,7 +570,6 @@ async def arm_and_takeoff(drone_state, logger):
     await drone_state.drone.offboard.set_velocity_body(VelocityBodyYawspeed(0.0, 0.0, -3.0, 0.0))
     await asyncio.sleep(5) # Adjust time for desired height
     await drone_state.drone.offboard.set_velocity_body(VelocityBodyYawspeed(0.0, 0.0, 0.0, 0.0)) # Hover
-
 async def land_and_disarm(drone_state, logger):
     print("Landing...")
     await drone_state.drone.action.land()
@@ -612,7 +582,6 @@ async def land_and_disarm(drone_state, logger):
     await asyncio.sleep(2) # Wait for full disarm
     # Optional: Set to HOLD mode for clean state
     await drone_state.drone.action.hold()
-
 def main(args=None):
     rclpy.init(args=args)
     config = DualSenseConfig()
@@ -624,6 +593,5 @@ def main(args=None):
     cv2.destroyAllWindows()
     viewer.destroy_node()
     rclpy.shutdown()
-
 if __name__ == '__main__':
     main()
