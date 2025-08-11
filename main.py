@@ -31,7 +31,12 @@ class PIDController:
         derivative = error - self.previous_error
         output = (self.kp * error) + (self.ki * self.integral) + (self.kd * derivative)
         if self.output_limit > 0:
-            output = np.clip(output, -self.output_limit, self.output_limit)
+            if output > self.output_limit:
+                output = self.output_limit
+                self.integral -= error  # Anti-windup: stop integral growth
+            elif output < -self.output_limit:
+                output = -self.output_limit
+                self.integral -= error  # Anti-windup: stop integral growth
         if self.smoothing_factor > 0:
             output = (self.smoothing_factor * output) + ((1 - self.smoothing_factor) * self.smoothed_output)
             self.smoothed_output = output
@@ -99,7 +104,7 @@ class PursuitState:
     def __init__(self):
         self.autonomous_pursuit_active = False
         self.pursuit_pid_yaw = PIDController(kp=0.1, ki=0.1, kd=0.03, output_limit=25.0)
-        self.pursuit_pid_alt = PIDController(kp=0.1, ki=0.005, kd=0.001, output_limit=5.0)
+        self.pursuit_pid_alt = PIDController(kp=0.05, ki=0.001, kd=0.001, output_limit=0.1)  # Lower gains, tighter limit
         self.pursuit_pid_forward = PIDController(kp=0.3, ki=0.05, kd=0.01, output_limit=5.0, smoothing_factor=0.1)
         self.target_ratio = 0.4
         self.forward_velocity = 10.0
@@ -191,10 +196,13 @@ class AngleMode(ControlMode):
         
         base_thrust = 0.25  # 
         desired_vz = 0.0 # No RY, hold altitude
-        vz_error = desired_vz - drone_state.current_body_velocities['vz']
+        vz_drone = drone_state.current_body_velocities['vz']
+        vz_error = desired_vz - vz_drone
         vz_correction = pursuit_state.pursuit_pid_alt.update(vz_error)
-        thrust = base_thrust #+ vz_correction / config.MAX_CLIMB  # Normalize vz_correction to thrust scale (m/s to 0-1)
-        thrust = np.clip(thrust, 0.0, 1.0)
+        thrust_correction = vz_correction / config.MAX_CLIMB
+        thrust = base_thrust - thrust_correction  # Normalize vz_correction to thrust scale (m/s to 0-1)
+        print(f"vz_drone = {vz_drone}, vz_error = {vz_error}, vz_correction = {vz_correction}, thrust_correction = {thrust_correction}, thrust = {thrust}")
+        thrust = np.clip(thrust, 0.15, 0.4)
         return 'attitude', (roll_target, pitch_target, yaw_target, thrust)
 
 class AcroMode(ControlMode):
