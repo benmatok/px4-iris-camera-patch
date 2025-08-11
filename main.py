@@ -166,6 +166,9 @@ class AngleMode(ControlMode):
                 # Convert velocities to attitude targets (simplified; use arctan for tilt)
                 pitch_target = -np.rad2deg(np.arctan(vx / 9.81)) # From vx (forward accel), negative for forward
                 roll_target = np.rad2deg(np.arctan(vy / 9.81)) # From vy (side accel)
+                # Add coordinated roll for yaw to prevent sideslip
+                coord_roll = -np.rad2deg(np.arctan(drone_state.current_body_velocities['vx'] * np.deg2rad(yaw_rate) / 9.81))
+                roll_target += coord_roll
                 thrust = 0.4 + (vz / (2 * config.MAX_CLIMB)) # Normalized
                 yaw_target = drone_state.current_yaw_deg + (yaw_rate * 0.05) # Incremental
                 return 'attitude', (roll_target, pitch_target, yaw_target, thrust)
@@ -185,18 +188,23 @@ class AngleMode(ControlMode):
         pitch_target = default_pitch + (ly * max_tilt)
         roll_target = lx * max_tilt
         yaw_rate = rx * config.MAX_YAW_RATE
-        yaw_target = drone_state.current_yaw_deg + yaw_rate
+        # Add coordinated roll for yaw to prevent sideslip
+        coord_roll = np.rad2deg(np.arctan(np.deg2rad(yaw_rate) / 9.81))
+        roll_target += coord_roll
+        yaw_target = drone_state.current_yaw_deg - yaw_rate*0.1
         base_thrust = 0.25
-        
+       
+        print(f"drone_state.current_yaw_deg = {drone_state.current_yaw_deg}, yaw_rate = {yaw_rate}")
+        print(f"yaw_target = {yaw_target}, roll_target = {roll_target}")
         vz_drone = drone_state.current_body_velocities['vz']
         desired_vz = ry * 0.4
-        print(f"vz_drone = {vz_drone}, desired_vz = {desired_vz}")
         vz_error = desired_vz - vz_drone
         vz_correction = pursuit_state.pursuit_pid_alt.update(vz_error)
         thrust_correction = vz_correction / config.MAX_CLIMB
         thrust = base_thrust - thrust_correction
         thrust = np.clip(thrust, 0.1, 0.9)
         return 'attitude', (roll_target, pitch_target, yaw_target, thrust)
+        
 class AcroMode(ControlMode):
     def get_setpoint(self, dualsense, config, pursuit_state, frame_state, drone_state):
         if pursuit_state.autonomous_pursuit_active:
@@ -242,7 +250,7 @@ class ImageViewer(Node):
         self.control_mode = ManualMode() # Default; switch with R1 (angle), R2 (manual)
         # Start MAVSDK connection in thread
         threading.Thread(target=self.run_mavsdk_controller, daemon=True).start()
-        # Timer for state machine (run every 0.05s)
+        # Timer for state machine (run every 0.01s)
         self.timer = self.create_timer(0.01, self.state_machine_callback_wrapper) # 100 fps
     def run_mavsdk_controller(self):
         asyncio.run(mavsdk_controller(self.frame_state,self.drone_state, self.pursuit_state, self.dualsense, self.config, self.get_logger(), self.control_mode))
@@ -532,7 +540,7 @@ async def mavsdk_controller(frame_state, drone_state, pursuit_state, dualsense, 
             pursuit_state.autonomous_pursuit_active = False
             await land_and_disarm(drone_state, logger)
             drone_state.is_armed = False
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.01)
 async def attitude_tracker(drone_state):
     try:
         async for euler in drone_state.drone.telemetry.attitude_euler():
