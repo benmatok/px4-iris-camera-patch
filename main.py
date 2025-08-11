@@ -243,7 +243,7 @@ class ImageViewer(Node):
         # Start MAVSDK connection in thread
         threading.Thread(target=self.run_mavsdk_controller, daemon=True).start()
         # Timer for state machine (run every 0.05s)
-        self.timer = self.create_timer(0.05, self.state_machine_callback_wrapper)
+        self.timer = self.create_timer(0.01, self.state_machine_callback_wrapper) # 100 fps
     def run_mavsdk_controller(self):
         asyncio.run(mavsdk_controller(self.frame_state,self.drone_state, self.pursuit_state, self.dualsense, self.config, self.get_logger(), self.control_mode))
     def image_callback(self, msg):
