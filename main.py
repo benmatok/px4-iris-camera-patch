@@ -13,6 +13,38 @@ import threading
 import os
 import pickle
 from datetime import datetime
+
+def velocity_to_attitude(vx_des, vy_des, vz_des, yaw_rate_des, current_yaw_deg, dt, config):
+    g = 9.81  # gravity m/s^2
+    hover_thrust = 0.5  # normalized hover thrust
+
+    # Feedforward: map desired velocity to required acceleration (assume steady-state accel = 0, but scale tilt by v_des)
+    # Simplified: tilt = arctan(v_des^2 / (r * g)) but for straight line, use proportional or arctan(v_des / ref)
+    # Here, use arctan(v_des / g) treating v_des as "effective accel" for tilt (common approximation for open-loop)
+    # Pitch for forward vx (negative for forward tilt)
+    pitch_target = -np.rad2deg(np.arctan(vx_des / g))
+    # Roll for sideways vy (positive for right tilt)
+    roll_target = np.rad2deg(np.arctan(vy_des / g))
+
+    # Thrust: base hover + scaled vz_des (open-loop, no feedback)
+    # vz_des negative for climb; scale to thrust correction
+    thrust_correction = vz_des / (2 * config.MAX_CLIMB)  # normalize (sign: negative vz_des increases thrust for climb)
+    thrust = hover_thrust - thrust_correction  # Adjust sign based on vz convention (PX4: positive down)
+    thrust = np.clip(thrust, 0.1, 0.9)
+
+    # Yaw: incremental absolute target (as before)
+    yaw_target = current_yaw_deg + yaw_rate_des * dt
+
+    return roll_target, pitch_target, yaw_target, thrust
+    
+def map_to_betaflight_rc(roll_target, pitch_target, yaw_rate_des, thrust, max_angle=45.0, max_yaw_rate=200.0):
+    # Scaled to -500 to 500 (Betaflight rate/angle units)
+    rc_roll = (roll_target / max_angle) * 500
+    rc_pitch = (pitch_target / max_angle) * 500
+    rc_yaw = (yaw_rate_des / max_yaw_rate) * 500
+    rc_throttle = thrust * 1000 + 1000  # 1000-2000 PWM
+    return rc_roll, rc_pitch, rc_yaw, rc_throttle
+    
 # Simple PID Controller definition (adapted from custom tracking_utils)
 class PIDController:
     def __init__(self, kp=0.0, ki=0.0, kd=0.0, output_limit=0.0, smoothing_factor=0.0):
@@ -203,29 +235,124 @@ class AngleMode(ControlMode):
         thrust_correction = vz_correction / config.MAX_CLIMB
         thrust = base_thrust - thrust_correction
         thrust = np.clip(thrust, 0.1, 0.9)
-        return 'attitude', (roll_target, pitch_target, yaw_target, thrust)
+        return 'attitude', (yaw_target, pitch_target, roll_target, thrust)
+        #return 'attitude', (yaw_target, pitch_target, roll_target, thrust)
+
         
+# Helper functions for quaternion math
+def euler_to_quat(roll_deg, pitch_deg, yaw_deg):
+    # Convert Euler angles (deg) to quaternion (w, x, y, z)
+    roll = np.deg2rad(roll_deg / 2)
+    pitch = np.deg2rad(pitch_deg / 2)
+    yaw = np.deg2rad(yaw_deg / 2)
+    cy = np.cos(yaw)
+    sy = np.sin(yaw)
+    cp = np.cos(pitch)
+    sp = np.sin(pitch)
+    cr = np.cos(roll)
+    sr = np.sin(roll)
+    w = cr * cp * cy + sr * sp * sy
+    x = sr * cp * cy - cr * sp * sy
+    y = cr * sp * cy + sr * cp * sy
+    z = cr * cp * sy - sr * sp * cy
+    return np.array([w, x, y, z])
+
+def quat_conjugate(q):
+    return np.array([q[0], -q[1], -q[2], -q[3]])
+
+def quat_multiply(q1, q2):
+    w1, x1, y1, z1 = q1
+    w2, x2, y2, z2 = q2
+    w = w1*w2 - x1*x2 - y1*y2 - z1*z2
+    x = w1*x2 + x1*w2 + y1*z2 - z1*y2
+    y = w1*y2 - x1*z2 + y1*w2 + z1*x2
+    z = w1*z2 + x1*y2 - y1*x2 + z1*w2
+    return np.array([w, x, y, z])
+
+def quat_to_body_rates(error_quat, kp_roll=4.0, kp_pitch=4.0, kp_yaw=2.0):
+    # Compute body angular rates from error quaternion
+    # Normalize error_quat if needed
+    error_quat /= np.linalg.norm(error_quat)
+    # Ensure shortest rotation
+    if error_quat[0] < 0:
+        error_quat = -error_quat
+    # For small angles, omega ≈ 2 * vec(error_quat)
+    # Apply separate gains per axis (assuming x=roll, y=pitch, z=yaw)
+    vec = error_quat[1:]
+    rates = 2 * np.array([kp_roll * vec[0], kp_pitch * vec[1], kp_yaw * vec[2]])
+    return rates  # [roll_rate, pitch_rate, yaw_rate]
+
 class AcroMode(ControlMode):
     def get_setpoint(self, dualsense, config, pursuit_state, frame_state, drone_state):
+        # Get current quaternion as np.array
+        current_quat = euler_to_quat(drone_state.current_roll_rad, drone_state.current_pitch_rad, drone_state.current_yaw_deg)
+
         if pursuit_state.autonomous_pursuit_active:
             if frame_state.current_bbox_center:
                 vx, vy, vz, yaw_rate = calc_pursuit_velocities(pursuit_state, frame_state.current_bbox_center, frame_state.current_frame_width, frame_state.current_frame_height)
-                # Convert velocities to rates (use PID on desired vs current)
-                roll_rate_pid = PIDController(kp=0.5) # Placeholder PID
-                pitch_rate_pid = PIDController(kp=0.5)
+                # Compute desired global attitudes from velocities
+                desired_pitch = np.rad2deg(np.arctan(vx / 9.81))  # Positive for forward (note sign flip from AngleMode)
                 desired_roll = np.rad2deg(np.arctan(vy / 9.81))
-                desired_pitch = np.rad2deg(np.arctan(vx / 9.81))
-                roll_rate = roll_rate_pid.update(desired_roll - drone_state.current_roll_rad)
-                pitch_rate = pitch_rate_pid.update(desired_pitch - drone_state.current_pitch_rad)
-                thrust = 0.5 + (vz / (2 * config.MAX_CLIMB))
+                # Coordinated roll for yaw (global turn banking)
+                coord_roll = np.rad2deg(np.arctan(drone_state.current_body_velocities['vx'] * np.deg2rad(yaw_rate) / 9.81))
+                desired_roll += coord_roll  # Positive sign assuming PX4 conventions (right turn positive)
+                # Desired yaw: incremental global target
+                desired_yaw = drone_state.current_yaw_deg + yaw_rate  # No multiplier needed
+
+                # Compute desired quaternion
+                desired_quat = euler_to_quat(desired_roll, desired_pitch, desired_yaw)
+
+                # Error quaternion: desired * conjugate(current)
+                error_quat = quat_multiply(desired_quat, quat_conjugate(current_quat))
+
+                # Compute body rates
+                roll_rate, pitch_rate, yaw_rate = quat_to_body_rates(error_quat)
+
+                thrust = 0.5 + (vz / (2 * config.MAX_CLIMB))  # Normalized, adjust base to 0.5 for hover
                 return 'attitude_rate', (roll_rate, pitch_rate, yaw_rate, thrust)
             return 'attitude_rate', (0.0, 0.0, 0.0, 0.5)
-        # Rate-based; no stabilization
-        roll_rate = dualsense.state.LX / 128.0 * 200.0 # deg/s
-        pitch_rate = -dualsense.state.LY / 128.0 * 200.0
-        yaw_rate = dualsense.state.RX / 128.0 * config.MAX_YAW_RATE
-        thrust = 0.5 + (dualsense.state.RY / 128.0 * 0.5) # Normalized thrust 0-1
+
+        # Manual control: Compute desired global attitudes from joystick
+        lx = dualsense.state.LX / 128.0
+        ly = dualsense.state.LY / 128.0
+        rx = dualsense.state.RX / 128.0
+        ry = dualsense.state.RY / 128.0
+        # Gamma correction
+        lx = np.sign(lx) * (abs(lx) ** config.GAMMA)
+        ly = np.sign(ly) * (abs(ly) ** config.GAMMA)
+        rx = np.sign(rx) * (abs(rx) ** config.GAMMA)
+        ry = np.sign(ry) * (abs(ry) ** config.GAMMA)
+
+        max_tilt = 30.0
+        default_pitch = -15.0  # If needed for cruise
+        desired_pitch = default_pitch + (ly * max_tilt)
+        desired_roll = 0
+        input_yaw_rate = rx * config.MAX_YAW_RATE
+        # Desired yaw: incremental global
+        desired_yaw = drone_state.current_yaw_deg + input_yaw_rate  # Direct integration for target
+
+        # Compute desired quaternion
+        desired_quat = euler_to_quat(desired_roll, desired_pitch, desired_yaw)
+
+        # Error quaternion: desired * conjugate(current)
+        error_quat = quat_multiply(desired_quat, quat_conjugate(current_quat))
+
+        # Compute body rates
+        roll_rate, pitch_rate, yaw_rate = 0,0,input_yaw_rate*0.01#quat_to_body_rates(error_quat)*0.01
+        print(f"roll_rate, pitch_rate, yaw_rate = {roll_rate}, {pitch_rate}, {yaw_rate}")
+
+        # Thrust with vz correction (from AngleMode)
+        base_thrust = 0.3  # Critical: Set to hover value
+        vz_drone = drone_state.current_body_velocities['vz']
+        desired_vz = 0  # Scale appropriately
+        vz_error = desired_vz - vz_drone
+        vz_correction = pursuit_state.pursuit_pid_alt.update(vz_error)
+        thrust_correction = vz_correction / config.MAX_CLIMB
+        thrust = base_thrust - thrust_correction  # Note sign: + for climb (negative vz is up)
+        thrust = np.clip(thrust, 0.1, 0.9)
+
         return 'attitude_rate', (roll_rate, pitch_rate, yaw_rate, thrust)
+        
 class ImageViewer(Node):
     def __init__(self, config):
         super().__init__('image_viewer')
