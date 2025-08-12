@@ -16,7 +16,7 @@ from datetime import datetime
 
 def velocity_to_attitude(vx_des, vy_des, vz_des, yaw_rate_des, current_yaw_deg, dt, config):
     g = 9.81 # gravity m/s^2
-    hover_thrust = 0.25 # normalized hover thrust
+    hover_thrust = 0.3 # normalized hover thrust
     # Feedforward: map desired velocity to required acceleration (assume steady-state accel = 0, but scale tilt by v_des)
     # Simplified: tilt = arctan(v_des^2 / (r * g)) but for straight line, use proportional or arctan(v_des / ref)
     # Here, use arctan(v_des / g) treating v_des as "effective accel" for tilt (common approximation for open-loop)
@@ -24,10 +24,15 @@ def velocity_to_attitude(vx_des, vy_des, vz_des, yaw_rate_des, current_yaw_deg, 
     pitch_target = -np.rad2deg(np.arctan(vx_des / g))
     # Roll for sideways vy (positive for right tilt)
     roll_target = np.rad2deg(np.arctan(vy_des / g))
-    # Thrust: base hover + scaled vz_des (open-loop, no feedback)
+    # Compensate thrust for pitch/roll tilt to maintain hover vertically
+    pitch_rad = np.deg2rad(pitch_target)
+    roll_rad = np.deg2rad(roll_target)
+    tilt_correction = 1.0 / (np.cos(pitch_rad) * np.cos(roll_rad)) if np.cos(pitch_rad) * np.cos(roll_rad) > 0 else 1.0
+    base_thrust = hover_thrust * tilt_correction
+    # Thrust correction for vz_des
     # vz_des negative for climb; scale to thrust correction
-    thrust_correction = vz_des / (2 * config.MAX_CLIMB) # normalize (sign: negative vz_des increases thrust for climb)
-    thrust = hover_thrust - thrust_correction # Adjust sign based on vz convention (PX4: positive down)
+    thrust_correction = vz_des / (config.MAX_CLIMB) # normalize (sign: negative vz_des increases thrust for climb)
+    thrust = base_thrust - thrust_correction # Adjust sign based on vz convention (PX4: positive down)
     thrust = np.clip(thrust, 0.1, 0.9)
     # Yaw: incremental absolute target (as before)
     yaw_target = current_yaw_deg + yaw_rate_des * dt
@@ -339,7 +344,7 @@ def handle_control_mode_toggle(button_state, dualsense, control_mode):
     button_state.prev_r2_state = r2_state
 def get_stabilized_frame(frame, frame_state, drone_state):
     if frame_state.show_stabilized:
-        return stabilize_frame(frame, drone_state.current_pitch_rad, drone_state.current_roll_rad, pitch0_rad=np.deg2rad(-15.0), hfov_deg=110)
+        return stabilize_frame(frame, drone_state.current_pitch_rad, drone_state.current_roll_rad, pitch0_rad=np.deg2rad(0.0), hfov_deg=110)
     return frame.copy()
 def handle_video_recording(config, video_state, display_frame, width, height, cache_state):
     if config.RECORD_VIDEO and video_state.video_writer is None:
