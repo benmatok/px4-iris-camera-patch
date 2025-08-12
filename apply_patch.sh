@@ -179,7 +179,7 @@ echo "param set MC_PITCHRATE_P 0.08" >> "$AIRFRAME_PATH"
 echo "param set MC_ROLLRATE_P 0.08" >> "$AIRFRAME_PATH"
 echo "param set MC_YAWRATE_P 0.05" >> "$AIRFRAME_PATH"  # Lower for larger frame
 echo "param set MPC_MAN_TILT_MAX 20" >> "$AIRFRAME_PATH"  # Cine stability
-echo "param set MC_YAW_P 0.05" >> "$AIRFRAME_PATH"
+echo "param set MC_YAW_P 3.05" >> "$AIRFRAME_PATH"
 echo "param set MC_YAWRATE_MAX 90" >> "$AIRFRAME_PATH"
 echo "param set MPC_Z_VEL_MAX_UP 3.0" >> "$AIRFRAME_PATH"  # Loaded climb
 echo "param set MPC_Z_VEL_MAX_DN 2.0" >> "$AIRFRAME_PATH"
