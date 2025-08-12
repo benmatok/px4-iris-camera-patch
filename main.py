@@ -190,53 +190,46 @@ class ManualMode(ControlMode):
         vz = ry * (config.MAX_CLIMB if ry < 0 else config.MAX_DESCENT) if abs(ry) > 0 else 0.0
         yaw_rate = rx * config.MAX_YAW_RATE
         return 'velocity', (vx, vy, vz, yaw_rate)
+
 class AngleMode(ControlMode):
     def get_setpoint(self, dualsense, config, pursuit_state, frame_state, drone_state):
+        # Compute desired body velocities and yaw rate (same as manual)
         if pursuit_state.autonomous_pursuit_active:
             if frame_state.current_bbox_center:
                 vx, vy, vz, yaw_rate = calc_pursuit_velocities(pursuit_state, frame_state.current_bbox_center, frame_state.current_frame_width, frame_state.current_frame_height)
-                # Convert velocities to attitude targets (simplified; use arctan for tilt)
-                pitch_target = -np.rad2deg(np.arctan(vx / 9.81)) # From vx (forward accel), negative for forward
-                roll_target = np.rad2deg(np.arctan(vy / 9.81)) # From vy (side accel)
-                # Add coordinated roll for yaw to prevent sideslip
-                coord_roll = -np.rad2deg(np.arctan(drone_state.current_body_velocities['vx'] * np.deg2rad(yaw_rate) / 9.81))
-                roll_target += coord_roll
-                thrust = 0.4 + (vz / (2 * config.MAX_CLIMB)) # Normalized
-                yaw_target = drone_state.current_yaw_deg + (yaw_rate * 0.05) # Incremental
-                return 'attitude', (roll_target, pitch_target, yaw_target, thrust)
-            return 'attitude', (0.0, 0.0, 0.0, 0.25)
-        # Stabilized attitude; limit angles
-        lx = dualsense.state.LX / 128.0
-        ly = dualsense.state.LY / 128.0
-        rx = dualsense.state.RX / 128.0
-        ry = dualsense.state.RY / 128.0
-        # Gamma map (simple)
-        lx = np.sign(lx) * (abs(lx) ** config.GAMMA)
-        ly = np.sign(ly) * (abs(ly) ** config.GAMMA)
-        rx = np.sign(rx) * (abs(rx) ** config.GAMMA)
-        ry = np.sign(ry) * (abs(ry) ** config.GAMMA)
-        max_tilt = 30.0
-        default_pitch = -15.0
-        pitch_target = default_pitch + (ly * max_tilt)
-        roll_target = lx * max_tilt
-        yaw_rate = rx * config.MAX_YAW_RATE
-        # Add coordinated roll for yaw to prevent sideslip
-        coord_roll = np.rad2deg(np.arctan(np.deg2rad(yaw_rate) / 9.81))
+            else:
+                vx, vy, vz, yaw_rate = 0.0, 0.0, 0.0, 0.0
+        else:
+            lx = dualsense.state.LX / 128.0
+            ly = dualsense.state.LY / 128.0
+            rx = dualsense.state.RX / 128.0
+            ry = dualsense.state.RY / 128.0
+            # Gamma map (simple)
+            lx = np.sign(lx) * (abs(lx) ** config.GAMMA)
+            ly = np.sign(ly) * (abs(ly) ** config.GAMMA)
+            rx = np.sign(rx) * (abs(rx) ** config.GAMMA)
+            ry = np.sign(ry) * (abs(ry) ** config.GAMMA)
+            vx = -ly * config.MAX_VELOCITY
+            vy = lx * config.MAX_VELOCITY
+            vz = ry * (config.MAX_CLIMB if ry < 0 else config.MAX_DESCENT) if abs(ry) > 0 else 0.0
+            yaw_rate = rx * config.MAX_YAW_RATE
+
+        # Translate to attitude setpoints
+        dt = 0.01  # Loop timestep
+        roll_target, pitch_target, yaw_target, thrust = velocity_to_attitude(
+            vx, vy, vz, yaw_rate, drone_state.current_yaw_deg, dt, config
+        )
+
+        # Optional: Add coordinated roll for yaw (to prevent sideslip)
+        coord_roll = np.rad2deg(np.arctan(vx * np.deg2rad(yaw_rate) / 9.81))  # Sign may need adjustment
         roll_target += coord_roll
-        yaw_target = drone_state.current_yaw_deg - yaw_rate*0.1
-        base_thrust = 0.25
-       
-        print(f"drone_state.current_yaw_deg = {drone_state.current_yaw_deg}, yaw_rate = {yaw_rate}")
-        print(f"yaw_target = {yaw_target}, roll_target = {roll_target}")
-        vz_drone = drone_state.current_body_velocities['vz']
-        desired_vz = ry * 0.4
-        vz_error = desired_vz - vz_drone
-        vz_correction = pursuit_state.pursuit_pid_alt.update(vz_error)
-        thrust_correction = vz_correction / config.MAX_CLIMB
-        thrust = base_thrust - thrust_correction
-        thrust = np.clip(thrust, 0.1, 0.9)
-        return 'attitude', (yaw_target, pitch_target, roll_target, thrust)
-        #return 'attitude', (yaw_target, pitch_target, roll_target, thrust)
+
+        # Limit angles (for stabilized feel)
+        max_tilt = 30.0
+        roll_target = np.clip(roll_target, -max_tilt, max_tilt)
+        pitch_target = np.clip(pitch_target, -max_tilt, max_tilt)
+
+        return 'attitude', (roll_target, pitch_target, yaw_target, thrust)
 
         
 # Helper functions for quaternion math
