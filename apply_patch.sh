@@ -6,15 +6,15 @@ PX4_JINJA_PATH="/home/px4user/PX4-Autopilot/Tools/simulation/gazebo-classic/sitl
 AIRFRAME_PATH="/home/px4user/PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/10015_gazebo-classic_iris"
 # Define the sensor XML to insert inside base_link
 SENSOR_XML='
-      <!-- Forward-looking camera pitched up 30 degrees -->
+      <!-- ArduCam OV9281 1MP global shutter monochrome MIPI camera with 110 deg HFOV, pitched up 30 degrees -->
       <sensor name="forward_camera" type="camera">
         <pose>0.1 0 0.1 0 -0.5236 0</pose> <!-- Position: 0.1m forward, 0.1m up; Orientation: 0 roll, -30 deg pitch (upward tilt), 0 yaw -->
         <camera>
-          <horizontal_fov>1.3962634</horizontal_fov> <!-- ~80 degrees FOV -->
+          <horizontal_fov>1.919862</horizontal_fov> <!-- ~110 degrees HFOV (in radians) -->
           <image>
-            <width>640</width>
-            <height>480</height>
-            <format>R8G8B8</format>
+            <width>1280</width>
+            <height>800</height>
+            <format>L8</format> <!-- Grayscale for monochrome -->
           </image>
           <clip>
             <near>0.01</near>
@@ -170,22 +170,22 @@ echo "param set COM_DISARM_LAND 0" >> "$AIRFRAME_PATH"
 echo "param set MPC_TKO_SPEED 5.0" >> "$AIRFRAME_PATH"
 echo "param set NAV_RCL_ACT 0" >> "$AIRFRAME_PATH"
 echo "param set COM_RC_IN_MODE 4" >> "$AIRFRAME_PATH"
-echo "param set MPC_XY_VEL_MAX 38.9" >> "$AIRFRAME_PATH"  # ~140km/h max
+echo "param set MPC_XY_VEL_MAX 38.9" >> "$AIRFRAME_PATH" # ~140km/h max
 echo "param set BAT_N_CELLS 6" >> "$AIRFRAME_PATH"
 echo "param set MPC_THR_HOVER 0.6" >> "$AIRFRAME_PATH"
 echo "param set MPC_THR_MAX 1.0" >> "$AIRFRAME_PATH"
 echo "param set MPC_THR_MIN 0.15" >> "$AIRFRAME_PATH"
 echo "param set MC_PITCHRATE_P 0.08" >> "$AIRFRAME_PATH"
 echo "param set MC_ROLLRATE_P 0.08" >> "$AIRFRAME_PATH"
-echo "param set MC_YAWRATE_P 0.05" >> "$AIRFRAME_PATH"  # Lower for larger frame
-echo "param set MPC_MAN_TILT_MAX 20" >> "$AIRFRAME_PATH"  # Cine stability
+echo "param set MC_YAWRATE_P 0.05" >> "$AIRFRAME_PATH" # Lower for larger frame
+echo "param set MPC_MAN_TILT_MAX 20" >> "$AIRFRAME_PATH" # Cine stability
 echo "param set MC_YAW_P 3.05" >> "$AIRFRAME_PATH"
 echo "param set MC_YAWRATE_MAX 90" >> "$AIRFRAME_PATH"
-echo "param set MPC_Z_VEL_MAX_UP 3.0" >> "$AIRFRAME_PATH"  # Loaded climb
+echo "param set MPC_Z_VEL_MAX_UP 3.0" >> "$AIRFRAME_PATH" # Loaded climb
 echo "param set MPC_Z_VEL_MAX_DN 2.0" >> "$AIRFRAME_PATH"
-echo "param set MPC_XY_CRUISE 10.0" >> "$AIRFRAME_PATH"  # ~36km/h cruise
-echo "param set MC_AIRMODE 1" >> "$AIRFRAME_PATH"  # Cinewhoop style
+echo "param set MPC_XY_CRUISE 10.0" >> "$AIRFRAME_PATH" # ~36km/h cruise
+echo "param set MC_AIRMODE 1" >> "$AIRFRAME_PATH" # Cinewhoop style
 # Verify airframe parameter additions
 echo "Verifying airframe parameters:"
-tail -n 19 "$AIRFRAME_PATH"  # Shows added params
+tail -n 19 "$AIRFRAME_PATH" # Shows added params
 echo " Successfully Patched !"
