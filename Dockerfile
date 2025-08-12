@@ -38,7 +38,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python3 -m pip install --no-cache-dir --upgrade pip 
-RUN python3 -m pip install --no-cache-dir torch
+#RUN python3 -m pip install --no-cache-dir torch
 
 # Install GStreamer dependencies (without system python3-gi)
 RUN apt-get update && apt-get install -y \
@@ -91,6 +91,7 @@ RUN pip3 install --no-cache-dir empy==3.3.4 pyros-genmsg setuptools colcon-commo
 # Install Python packages via pip for Python 3.10 (system default)
 RUN python3 -m pip install --no-cache-dir \
     opencv-python \
+    opencv-contrib-python \
     numpy==1.26.4 \
     mavsdk \
     "grpcio>=1.71.0" \
@@ -125,9 +126,9 @@ RUN sed -i 's/matplotlib>=3.0.*/matplotlib>=3.0.0/' requirements.txt
 RUN bash ubuntu.sh --no-sim-tools
 
 # Download QGroundControl AppImage from GitHub releases
-RUN wget https://github.com/mavlink/qgroundcontrol/releases/download/v4.4.0/QGroundControl.AppImage -O QGroundControl.AppImage || \
-    { echo "QGroundControl download failed. Please manually download the AppImage and mount it into the container."; exit 1; } && \
-    chmod +x QGroundControl.AppImage
+#RUN wget https://github.com/mavlink/qgroundcontrol/releases/download/v4.4.0/QGroundControl.AppImage -O QGroundControl.AppImage || \
+#    { echo "QGroundControl download failed. Please manually download the AppImage and mount it into the container."; exit 1; } && \
+#    chmod +x QGroundControl.AppImage
     
 
 ARG CACHE_BREAKER=1
