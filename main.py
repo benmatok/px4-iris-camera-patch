@@ -15,9 +15,8 @@ import pickle
 from datetime import datetime
 
 def velocity_to_attitude(vx_des, vy_des, vz_des, yaw_rate_des, current_yaw_deg, dt, config):
-    g = 9.81  # gravity m/s^2
-    hover_thrust = 0.25  # normalized hover thrust
-
+    g = 9.81 # gravity m/s^2
+    hover_thrust = 0.25 # normalized hover thrust
     # Feedforward: map desired velocity to required acceleration (assume steady-state accel = 0, but scale tilt by v_des)
     # Simplified: tilt = arctan(v_des^2 / (r * g)) but for straight line, use proportional or arctan(v_des / ref)
     # Here, use arctan(v_des / g) treating v_des as "effective accel" for tilt (common approximation for open-loop)
@@ -25,26 +24,23 @@ def velocity_to_attitude(vx_des, vy_des, vz_des, yaw_rate_des, current_yaw_deg, 
     pitch_target = -np.rad2deg(np.arctan(vx_des / g))
     # Roll for sideways vy (positive for right tilt)
     roll_target = np.rad2deg(np.arctan(vy_des / g))
-
     # Thrust: base hover + scaled vz_des (open-loop, no feedback)
     # vz_des negative for climb; scale to thrust correction
-    thrust_correction = vz_des / (2 * config.MAX_CLIMB)  # normalize (sign: negative vz_des increases thrust for climb)
-    thrust = hover_thrust - thrust_correction  # Adjust sign based on vz convention (PX4: positive down)
+    thrust_correction = vz_des / (2 * config.MAX_CLIMB) # normalize (sign: negative vz_des increases thrust for climb)
+    thrust = hover_thrust - thrust_correction # Adjust sign based on vz convention (PX4: positive down)
     thrust = np.clip(thrust, 0.1, 0.9)
-
     # Yaw: incremental absolute target (as before)
     yaw_target = current_yaw_deg + yaw_rate_des * dt
-
     return roll_target, pitch_target, yaw_target, thrust
-    
+   
 def map_to_betaflight_rc(roll_target, pitch_target, yaw_rate_des, thrust, max_angle=45.0, max_yaw_rate=200.0):
     # Scaled to -500 to 500 (Betaflight rate/angle units)
     rc_roll = (roll_target / max_angle) * 500
     rc_pitch = (pitch_target / max_angle) * 500
     rc_yaw = (yaw_rate_des / max_yaw_rate) * 500
-    rc_throttle = thrust * 1000 + 1000  # 1000-2000 PWM
+    rc_throttle = thrust * 1000 + 1000 # 1000-2000 PWM
     return rc_roll, rc_pitch, rc_yaw, rc_throttle
-    
+   
 # Simple PID Controller definition (adapted from custom tracking_utils)
 class PIDController:
     def __init__(self, kp=0.0, ki=0.0, kd=0.0, output_limit=0.0, smoothing_factor=0.0):
@@ -77,7 +73,7 @@ class PIDController:
         self.previous_error = 0.0
         self.smoothed_output = 0.0
 # Simple stabilize_frame function (adapted; assumes basic warp based on pitch/roll)
-def stabilize_frame(frame, pitch_rad, roll_rad, pitch0_rad=0.0, hfov_deg=80.0):
+def stabilize_frame(frame, pitch_rad, roll_rad, pitch0_rad=0.0, hfov_deg=110.0):
     # Basic affine transformation for stabilization
     height, width = frame.shape[:2]
     rotation_matrix = cv2.getRotationMatrix2D((width/2, height/2), np.rad2deg(roll_rad), 1.0)
@@ -136,8 +132,8 @@ class PursuitState:
 class FrameState:
     def __init__(self):
         self.current_frame = None
-        self.current_frame_width = 640
-        self.current_frame_height = 480
+        self.current_frame_width = 1280
+        self.current_frame_height = 800
         self.current_bbox_center = None
         self.current_bbox_is_large = False
         self.bbox = None
@@ -190,7 +186,6 @@ class ManualMode(ControlMode):
         vz = ry * (config.MAX_CLIMB if ry < 0 else config.MAX_DESCENT) if abs(ry) > 0 else 0.0
         yaw_rate = rx * config.MAX_YAW_RATE
         return 'velocity', (vx, vy, vz, yaw_rate)
-
 class AngleMode(ControlMode):
     def get_setpoint(self, dualsense, config, pursuit_state, frame_state, drone_state):
         # Compute desired body velocities and yaw rate (same as manual)
@@ -213,25 +208,20 @@ class AngleMode(ControlMode):
             vy = lx * config.MAX_VELOCITY
             vz = ry * (config.MAX_CLIMB if ry < 0 else config.MAX_DESCENT) if abs(ry) > 0 else 0.0
             yaw_rate = rx * config.MAX_YAW_RATE
-
         # Translate to attitude setpoints
         dt = 1.0  # Loop timestep
         roll_target, pitch_target, yaw_target, thrust = velocity_to_attitude(
             vx, vy, vz, yaw_rate, drone_state.current_yaw_deg, dt, config
         )
-
         # Optional: Add coordinated roll for yaw (to prevent sideslip)
-        coord_roll = np.rad2deg(np.arctan(vx * np.deg2rad(yaw_rate) / 9.81))  # Sign may need adjustment
+        coord_roll = np.rad2deg(np.arctan(vx * np.deg2rad(yaw_rate) / 9.81)) # Sign may need adjustment
         roll_target += coord_roll
-
         # Limit angles (for stabilized feel)
         max_tilt = 30.0
         roll_target = np.clip(roll_target, -max_tilt, max_tilt)
         pitch_target = np.clip(pitch_target, -max_tilt, max_tilt)
-
         return 'attitude', (roll_target, pitch_target, yaw_target, thrust)
 
-        
 # Helper functions for quaternion math
 def euler_to_quat(roll_deg, pitch_deg, yaw_deg):
     # Convert Euler angles (deg) to quaternion (w, x, y, z)
@@ -275,7 +265,6 @@ def quat_to_body_rates(error_quat, kp_roll=4.0, kp_pitch=4.0, kp_yaw=2.0):
     rates = 2 * np.array([kp_roll * vec[0], kp_pitch * vec[1], kp_yaw * vec[2]])
     return rates  # [roll_rate, pitch_rate, yaw_rate]
 
-        
 class ImageViewer(Node):
     def __init__(self, config):
         super().__init__('image_viewer')
@@ -306,7 +295,7 @@ class ImageViewer(Node):
         asyncio.run(mavsdk_controller(self.frame_state,self.drone_state, self.pursuit_state, self.dualsense, self.config, self.get_logger(), self.control_mode))
     def image_callback(self, msg):
         try:
-            self.frame_state.current_frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+            self.frame_state.current_frame = self.bridge.imgmsg_to_cv2(msg, 'mono8')  # Monochrome camera
         except CvBridgeError as e:
             self.get_logger().error(str(e))
     def state_machine_callback_wrapper(self):
@@ -322,6 +311,9 @@ def state_machine_callback(config, frame_state, button_state, video_state, cache
     # Toggle control mode
     handle_control_mode_toggle(button_state, dualsense, control_mode)
     display_frame = get_stabilized_frame(frame, frame_state, drone_state)
+    # For drawing, convert grayscale to BGR
+    if len(display_frame.shape) == 2:
+        display_frame = cv2.cvtColor(display_frame, cv2.COLOR_GRAY2BGR)
     # Record if enabled
     handle_video_recording(config, video_state, display_frame, width, height, cache_state)
     # BBox and tracking logic
@@ -347,7 +339,7 @@ def handle_control_mode_toggle(button_state, dualsense, control_mode):
     button_state.prev_r2_state = r2_state
 def get_stabilized_frame(frame, frame_state, drone_state):
     if frame_state.show_stabilized:
-        return stabilize_frame(frame, drone_state.current_pitch_rad, drone_state.current_roll_rad, pitch0_rad=np.deg2rad(-15.0), hfov_deg=100)
+        return stabilize_frame(frame, drone_state.current_pitch_rad, drone_state.current_roll_rad, pitch0_rad=np.deg2rad(-15.0), hfov_deg=110)
     return frame.copy()
 def handle_video_recording(config, video_state, display_frame, width, height, cache_state):
     if config.RECORD_VIDEO and video_state.video_writer is None:
