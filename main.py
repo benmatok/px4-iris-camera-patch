@@ -16,7 +16,7 @@ from datetime import datetime
 
 def velocity_to_attitude(vx_des, vy_des, vz_des, yaw_rate_des, current_yaw_deg, dt, config):
     g = 9.81  # gravity m/s^2
-    hover_thrust = 0.5  # normalized hover thrust
+    hover_thrust = 0.25  # normalized hover thrust
 
     # Feedforward: map desired velocity to required acceleration (assume steady-state accel = 0, but scale tilt by v_des)
     # Simplified: tilt = arctan(v_des^2 / (r * g)) but for straight line, use proportional or arctan(v_des / ref)
@@ -215,7 +215,7 @@ class AngleMode(ControlMode):
             yaw_rate = rx * config.MAX_YAW_RATE
 
         # Translate to attitude setpoints
-        dt = 0.01  # Loop timestep
+        dt = 1.0  # Loop timestep
         roll_target, pitch_target, yaw_target, thrust = velocity_to_attitude(
             vx, vy, vz, yaw_rate, drone_state.current_yaw_deg, dt, config
         )
