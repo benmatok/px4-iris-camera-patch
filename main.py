@@ -147,7 +147,9 @@ class FrameState:
         self.tracker_instance = None
         self.bbox_size_mode = False
         self.show_stabilized = True
-        self.init_tracking = False 
+        self.init_tracking = False
+        self.last_success_frame = None
+        self.last_success_bbox = None
 class ButtonState:
     def __init__(self):
         self.prev_circle_state = False
@@ -167,6 +169,42 @@ class CacheState:
         os.makedirs(self.cache_dir, exist_ok=True)
         self.cache_frame_path = os.path.join(self.cache_dir, "roi_frame.png")
         self.cache_bbox_path = os.path.join(self.cache_dir, "roi_bbox.pkl")
+        
+def compute_homography(last_frame, current_frame):
+    # Compute homography using ORB features
+    orb = cv2.ORB_create()
+    gray_last = cv2.cvtColor(last_frame, cv2.COLOR_BGR2GRAY)
+    gray_current = cv2.cvtColor(current_frame, cv2.COLOR_BGR2GRAY)
+    kp1, des1 = orb.detectAndCompute(gray_last, None)
+    kp2, des2 = orb.detectAndCompute(gray_current, None)
+    if des1 is None or des2 is None or len(des1) == 0 or len(des2) == 0:
+        return None, False
+    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+    matches = bf.match(des1, des2)
+    matches = sorted(matches, key=lambda x: x.distance)
+    if len(matches) < 4:  # Min for homography
+        return None, False
+    src_pts = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
+    dst_pts = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
+    H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+    if H is None:
+        return None, False
+    return H, True
+
+def warp_bbox(H, last_bbox):
+    x, y, w, h = last_bbox
+    pts = np.float32([[x, y], [x + w, y], [x + w, y + h], [x, y + h]]).reshape(-1, 1, 2)
+    warped_pts = cv2.perspectiveTransform(pts, H)
+    x_new = int(min(warped_pts[:, 0, 0]))
+    y_new = int(min(warped_pts[:, 0, 1]))
+    w_new = int(max(warped_pts[:, 0, 0]) - x_new)
+    h_new = int(max(warped_pts[:, 0, 1]) - y_new)
+    if w_new <= 0 or h_new <= 0:
+        return None, False
+    new_bbox = [int(x_new), int(y_new), int(w_new), int(h_new)]
+    return new_bbox, True
+    
+
 # Strategy for control modes
 class ControlMode:
     def get_setpoint(self, dualsense, config, pursuit_state, frame_state, drone_state):
@@ -448,26 +486,53 @@ def process_bbox_mode(frame_state, display_frame):
     frame_state.current_bbox_center = bbox_center_local
     
 def process_tracking_mode(frame_state, display_frame):
-    # Initialize or update KCF tracker (using grayscale current_frame for consistency)
+    # Initialize or update KCF tracker (using color current_frame for consistency)
+    color_frame = cv2.cvtColor(frame_state.current_frame, cv2.COLOR_GRAY2BGR)
     if frame_state.init_tracking:
         if frame_state.tracker_instance is None:
             frame_state.tracker_instance = cv2.TrackerKCF_create()
-        success = frame_state.tracker_instance.init(frame_state.current_frame, tuple(frame_state.bbox))
+        success = frame_state.tracker_instance.init(color_frame, tuple(frame_state.bbox))
         frame_state.init_tracking = False
-        if not success:
+        if success:
+            frame_state.last_success_frame = color_frame.copy()  # Store for homography
+            frame_state.last_success_bbox = frame_state.bbox[:]
+        else:
             frame_state.tracking_mode = False
             frame_state.tracker_instance = None
             return  # Early exit if init fails
-
     if frame_state.tracker_instance:
-        success, bbox = frame_state.tracker_instance.update(frame_state.current_frame)
+        success, bbox = frame_state.tracker_instance.update(color_frame)
         if success:
             frame_state.bbox = [int(v) for v in bbox]
+            frame_state.last_success_frame = color_frame.copy()  # Update on success
+            frame_state.last_success_bbox = frame_state.bbox[:]
         else:
-            # Tracking lost; exit mode
-            frame_state.tracking_mode = False
-            frame_state.tracker_instance = None
-
+            # Tracking lost; attempt homography-based recovery
+            whole_process_success = False
+            print(f"frame_state.bbox = {frame_state.bbox} , bbox = {bbox} , success = {success}")
+            print("process_tracking_mode - Tracking lost, attempting homography recovery")
+            if frame_state.last_success_frame is not None:
+                print("frame_state.last_success_frame is not None")
+                H, hom_success = compute_homography(frame_state.last_success_frame, color_frame)
+                if hom_success:
+                    print("hom_success")
+                    new_bbox, warp_success = warp_bbox(H, frame_state.last_success_bbox)
+                    if warp_success:
+                        print("warp_success")
+                        # Re-init tracker with warped bbox
+                        frame_state.tracker_instance = cv2.TrackerKCF_create()
+                        whole_process_success = frame_state.tracker_instance.init(color_frame, tuple(new_bbox))
+                        whole_process_success = True
+                        print(f"whole_process_success = {whole_process_success}, new_bbox = {new_bbox}")
+                        if whole_process_success:
+                            print("whole_process_success")
+                            frame_state.bbox = new_bbox
+                            frame_state.last_success_frame = color_frame.copy()
+                            frame_state.last_success_bbox = new_bbox[:]
+                            print("Homography recovery successful")
+            if not whole_process_success:
+                frame_state.tracking_mode = False
+                frame_state.tracker_instance = None
     # Proceed with bbox processing (even if tracking lost, use last known)
     if frame_state.bbox:
         x, y, w, h = frame_state.bbox
@@ -482,27 +547,73 @@ def process_tracking_mode(frame_state, display_frame):
         bbox_color = (128, 0, 255) if frame_state.current_bbox_is_large else (0, 0, 255)
         cv2.rectangle(display_frame, (x, y), (x + w, y + h), bbox_color, 2)
         frame_state.current_bbox_center = bbox_center_local
-    
+        
 def process_pursuit_mode(frame_state, drone_state, pursuit_state, display_frame):
-    # Assume tracker logic
-    # For example:
-    # if frame_state.tracker_instance:
-    # out = frame_state.tracker_instance.track(display_frame)
-    # frame_state.bbox = [int(s) for s in out["target_bbox"]]
-    x, y, w, h = frame_state.bbox
-    large_threshold = 0.1 * display_frame.shape[0]
-    frame_state.current_bbox_is_large = w > large_threshold or h > large_threshold
-    bbox_center_x = x + w // 2
-    if frame_state.current_bbox_is_large:
-        bbox_center_y = int(y * 0.25 + (y + h) * 0.75)
+    # Initialize or update KCF tracker if in pursuit mode
+    color_frame = cv2.cvtColor(frame_state.current_frame, cv2.COLOR_GRAY2BGR)
+    if frame_state.tracker_instance is None:
+        frame_state.tracker_instance = cv2.TrackerKCF_create()
+        success = frame_state.tracker_instance.init(color_frame, tuple(frame_state.bbox))
+        if success:
+            frame_state.last_success_frame = color_frame.copy() # Store for homography
+            frame_state.last_success_bbox = frame_state.bbox[:]
+        else:
+            # Handle init failure: disable pursuit or log error
+            pursuit_state.autonomous_pursuit_active = False
+            return
     else:
-        bbox_center_y = y + h // 2
-    bbox_center_local = (bbox_center_x, bbox_center_y)
-    bbox_color = (128, 0, 255) if frame_state.current_bbox_is_large else (255, 0, 0)
-    cv2.rectangle(display_frame, (x, y), (x + w, y + h), bbox_color, 3)
-    cv2.circle(display_frame, bbox_center_local, 3, (255, 255, 255), -1)
-    calc_pursuit_velocities(pursuit_state, drone_state, bbox_center_local, frame_state.current_frame_width, frame_state.current_frame_height)
-    frame_state.current_bbox_center = bbox_center_local
+        success, bbox = frame_state.tracker_instance.update(color_frame)
+        if success:
+            frame_state.bbox = [int(v) for v in bbox]
+            frame_state.last_success_frame = color_frame.copy() # Update on success
+            frame_state.last_success_bbox = frame_state.bbox[:]
+        else:
+            # Tracking lost: attempt homography-based recovery
+            whole_process_success = False
+            print(f"frame_state.bbox = {frame_state.bbox} , bbox = {bbox} , success = {success}")
+            print("process_pursuit_mode - Tracking lost, attempting homography recovery")
+            if frame_state.last_success_frame is not None:
+                print("frame_state.last_success_frame is not None")
+                H, hom_success = compute_homography(frame_state.last_success_frame, color_frame)
+                if hom_success:
+                    print("hom_success")
+                    new_bbox, warp_success = warp_bbox(H, frame_state.last_success_bbox)
+                    if warp_success:
+                        # Re-init tracker with warped bbox
+                        print("warp_success")
+                        frame_state.tracker_instance = cv2.TrackerKCF_create()
+                        print(new_bbox)
+                        print(color_frame)
+                        whole_process_success = frame_state.tracker_instance.init(color_frame, tuple(new_bbox))
+                        whole_process_success = True
+                        print(f"whole_process_success = {whole_process_success}, new_bbox = {new_bbox}")
+                        if whole_process_success:
+                            print("whole_process_success")
+                            frame_state.bbox = new_bbox
+                            frame_state.last_success_frame = color_frame.copy()
+                            frame_state.last_success_bbox = new_bbox[:]
+                            print("Homography recovery successful")
+            if not whole_process_success:
+                pursuit_state.autonomous_pursuit_active = False
+                frame_state.tracker_instance = None
+                return
+    # Proceed with bbox processing
+    if frame_state.bbox:
+        x, y, w, h = frame_state.bbox
+        large_threshold = 0.1 * display_frame.shape[0]
+        frame_state.current_bbox_is_large = w > large_threshold or h > large_threshold
+        bbox_center_x = x + w // 2
+        if frame_state.current_bbox_is_large:
+            bbox_center_y = int(y * 0.25 + (y + h) * 0.75)
+        else:
+            bbox_center_y = y + h // 2
+        bbox_center_local = (bbox_center_x, bbox_center_y)
+        bbox_color = (128, 0, 255) if frame_state.current_bbox_is_large else (255, 0, 0)
+        cv2.rectangle(display_frame, (x, y), (x + w, y + h), bbox_color, 3)
+        cv2.circle(display_frame, bbox_center_local, 3, (255, 255, 255), -1)
+        calc_pursuit_velocities(pursuit_state, drone_state, bbox_center_local, frame_state.current_frame_width, frame_state.current_frame_height)
+        frame_state.current_bbox_center = bbox_center_local
+        
     
 def handle_pursuit_alignment(pursuit_state, drone_state, frame_state, display_frame):
     if not pursuit_state.autonomous_pursuit_active or None == frame_state.current_bbox_center:
