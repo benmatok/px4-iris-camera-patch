@@ -144,9 +144,10 @@ class FrameState:
         self.bbox = None
         self.bbox_mode = False
         self.tracking_mode = False
-        self.tracker_instance = None # Assume litetrack is installed; otherwise comment out tracking parts
+        self.tracker_instance = None
         self.bbox_size_mode = False
         self.show_stabilized = True
+        self.init_tracking = False 
 class ButtonState:
     def __init__(self):
         self.prev_circle_state = False
@@ -174,7 +175,7 @@ class ManualMode(ControlMode):
     def get_setpoint(self, dualsense, config, pursuit_state, frame_state, drone_state):
         if pursuit_state.autonomous_pursuit_active:
             if frame_state.current_bbox_center:
-                vx, vy, vz, yaw_rate = calc_pursuit_velocities(pursuit_state, frame_state.current_bbox_center, frame_state.current_frame_width, frame_state.current_frame_height)
+                vx, vy, vz, yaw_rate = calc_pursuit_velocities(pursuit_state, drone_state, frame_state.current_bbox_center, frame_state.current_frame_width, frame_state.current_frame_height)
                 return 'velocity', (vx, vy, vz, yaw_rate)
             return 'velocity', (0.0, 0.0, 0.0, 0.0)
         lx = dualsense.state.LX / 128.0
@@ -196,7 +197,7 @@ class AngleMode(ControlMode):
         # Compute desired body velocities and yaw rate (same as manual)
         if pursuit_state.autonomous_pursuit_active:
             if frame_state.current_bbox_center:
-                vx, vy, vz, yaw_rate = calc_pursuit_velocities(pursuit_state, frame_state.current_bbox_center, frame_state.current_frame_width, frame_state.current_frame_height)
+                vx, vy, vz, yaw_rate = calc_pursuit_velocities(pursuit_state, drone_state, frame_state.current_bbox_center, frame_state.current_frame_width, frame_state.current_frame_height)
             else:
                 vx, vy, vz, yaw_rate = 0.0, 0.0, 0.0, 0.0
         else:
@@ -322,9 +323,9 @@ def state_machine_callback(config, frame_state, button_state, video_state, cache
     # Record if enabled
     handle_video_recording(config, video_state, display_frame, width, height, cache_state)
     # BBox and tracking logic
-    handle_modes(frame_state, button_state, pursuit_state, dualsense, display_frame, width, height)
+    handle_modes(frame_state, drone_state, button_state, pursuit_state, dualsense, display_frame, width, height)
     # Draw alignment if pursuit
-    handle_pursuit_alignment(pursuit_state, display_frame)
+    handle_pursuit_alignment(pursuit_state, drone_state, frame_state, display_frame)
     # Draw control mode
     display_frame = draw_control_mode(display_frame, control_mode)
     show_video(config, display_frame, logger)
@@ -354,20 +355,21 @@ def handle_video_recording(config, video_state, display_frame, width, height, ca
         video_state.video_writer = cv2.VideoWriter(video_state.video_filename, fourcc, 30, (width, height))
     if config.RECORD_VIDEO and video_state.video_writer:
         video_state.video_writer.write(display_frame)
-def handle_modes(frame_state, button_state, pursuit_state, dualsense, display_frame, width, height):
+def handle_modes(frame_state, drone_state, button_state, pursuit_state, dualsense, display_frame, width, height):
     bbox_size = 50
     if frame_state.bbox is None:
         frame_state.bbox = [width//2 - bbox_size//2, height//2 - bbox_size//2, bbox_size, bbox_size]
     # Mode toggles with buttons
     handle_button_toggles(frame_state, button_state, pursuit_state, dualsense)
     # BBox controls
-    handle_bbox_controls(frame_state, dualsense, width, height)
+    handle_bbox_controls(frame_state, dualsense, pursuit_state, width, height)
     if pursuit_state.autonomous_pursuit_active:
-        process_pursuit_mode(frame_state, pursuit_state, display_frame)
+        process_pursuit_mode(frame_state, drone_state, pursuit_state, display_frame)
     elif frame_state.tracking_mode:
         process_tracking_mode(frame_state, display_frame)
     elif frame_state.bbox_mode:
         process_bbox_mode(frame_state, display_frame)
+        
 def handle_button_toggles(frame_state, button_state, pursuit_state, dualsense):
     if dualsense.state.square and not button_state.prev_square_state:
         if not pursuit_state.autonomous_pursuit_active:
@@ -380,8 +382,12 @@ def handle_button_toggles(frame_state, button_state, pursuit_state, dualsense):
             frame_state.bbox_size_mode = not frame_state.bbox_size_mode
     button_state.prev_circle_state = dualsense.state.circle
     if dualsense.state.cross and not button_state.prev_cross_state:
-        # Enter tracking (if tracker available)
-        pass # Add tracker init
+        frame_state.tracking_mode = not frame_state.tracking_mode
+        if frame_state.tracking_mode:
+            frame_state.init_tracking = True
+            frame_state.bbox_mode = False  # Exit bbox mode when entering tracking
+        else:
+            frame_state.tracker_instance = None  # Reset tracker when exiting
     button_state.prev_cross_state = dualsense.state.cross
     if dualsense.state.triangle and not button_state.prev_triangle_state:
         pursuit_state.autonomous_pursuit_active = not pursuit_state.autonomous_pursuit_active
@@ -390,7 +396,8 @@ def handle_button_toggles(frame_state, button_state, pursuit_state, dualsense):
             pursuit_state.pursuit_pid_alt.reset()
             pursuit_state.pursuit_pid_forward.reset()
     button_state.prev_triangle_state = dualsense.state.triangle
-def handle_bbox_controls(frame_state, dualsense, width, height):
+    
+def handle_bbox_controls(frame_state, dualsense, pursuit_state, width, height):
     if not frame_state.bbox_mode or pursuit_state.autonomous_pursuit_active:
         return
     move_step = 5
@@ -439,25 +446,44 @@ def process_bbox_mode(frame_state, display_frame):
     bbox_center_local = (bbox_center_x, bbox_center_y)
     cv2.rectangle(display_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
     frame_state.current_bbox_center = bbox_center_local
+    
 def process_tracking_mode(frame_state, display_frame):
-    # Assume tracker logic here
-    # For example:
-    # if frame_state.tracker_instance:
-    # out = frame_state.tracker_instance.track(display_frame)
-    # frame_state.bbox = [int(s) for s in out["target_bbox"]]
-    x, y, w, h = frame_state.bbox
-    large_threshold = 0.1 * display_frame.shape[0]
-    frame_state.current_bbox_is_large = w > large_threshold or h > large_threshold
-    bbox_center_x = x + w // 2
-    if frame_state.current_bbox_is_large:
-        bbox_center_y = int(y * 0.25 + (y + h) * 0.75)
-    else:
-        bbox_center_y = y + h // 2
-    bbox_center_local = (bbox_center_x, bbox_center_y)
-    bbox_color = (128, 0, 255) if frame_state.current_bbox_is_large else (0, 0, 255)
-    cv2.rectangle(display_frame, (x, y), (x + w, y + h), bbox_color, 2)
-    frame_state.current_bbox_center = bbox_center_local
-def process_pursuit_mode(frame_state, pursuit_state, display_frame):
+    # Initialize or update KCF tracker (using grayscale current_frame for consistency)
+    if frame_state.init_tracking:
+        if frame_state.tracker_instance is None:
+            frame_state.tracker_instance = cv2.TrackerKCF_create()
+        success = frame_state.tracker_instance.init(frame_state.current_frame, tuple(frame_state.bbox))
+        frame_state.init_tracking = False
+        if not success:
+            frame_state.tracking_mode = False
+            frame_state.tracker_instance = None
+            return  # Early exit if init fails
+
+    if frame_state.tracker_instance:
+        success, bbox = frame_state.tracker_instance.update(frame_state.current_frame)
+        if success:
+            frame_state.bbox = [int(v) for v in bbox]
+        else:
+            # Tracking lost; exit mode
+            frame_state.tracking_mode = False
+            frame_state.tracker_instance = None
+
+    # Proceed with bbox processing (even if tracking lost, use last known)
+    if frame_state.bbox:
+        x, y, w, h = frame_state.bbox
+        large_threshold = 0.1 * display_frame.shape[0]
+        frame_state.current_bbox_is_large = w > large_threshold or h > large_threshold
+        bbox_center_x = x + w // 2
+        if frame_state.current_bbox_is_large:
+            bbox_center_y = int(y * 0.25 + (y + h) * 0.75)
+        else:
+            bbox_center_y = y + h // 2
+        bbox_center_local = (bbox_center_x, bbox_center_y)
+        bbox_color = (128, 0, 255) if frame_state.current_bbox_is_large else (0, 0, 255)
+        cv2.rectangle(display_frame, (x, y), (x + w, y + h), bbox_color, 2)
+        frame_state.current_bbox_center = bbox_center_local
+    
+def process_pursuit_mode(frame_state, drone_state, pursuit_state, display_frame):
     # Assume tracker logic
     # For example:
     # if frame_state.tracker_instance:
@@ -475,10 +501,11 @@ def process_pursuit_mode(frame_state, pursuit_state, display_frame):
     bbox_color = (128, 0, 255) if frame_state.current_bbox_is_large else (255, 0, 0)
     cv2.rectangle(display_frame, (x, y), (x + w, y + h), bbox_color, 3)
     cv2.circle(display_frame, bbox_center_local, 3, (255, 255, 255), -1)
-    calc_pursuit_velocities(pursuit_state, bbox_center_local, frame_state.current_frame_width, frame_state.current_frame_height)
+    calc_pursuit_velocities(pursuit_state, drone_state, bbox_center_local, frame_state.current_frame_width, frame_state.current_frame_height)
     frame_state.current_bbox_center = bbox_center_local
-def handle_pursuit_alignment(pursuit_state, display_frame):
-    if not pursuit_state.autonomous_pursuit_active:
+    
+def handle_pursuit_alignment(pursuit_state, drone_state, frame_state, display_frame):
+    if not pursuit_state.autonomous_pursuit_active or None == frame_state.current_bbox_center:
         return
     class MockSelf:
         frame_width = display_frame.shape[1]
@@ -492,6 +519,7 @@ def handle_pursuit_alignment(pursuit_state, display_frame):
         current_pitch_rad = drone_state.current_pitch_rad
         current_roll_rad = drone_state.current_roll_rad
     display_frame = draw_alignment_info(display_frame, MockSelf())
+    
 def show_video(config, display_frame, logger):
     if not config.SHOW_VIDEO:
         return
@@ -500,10 +528,11 @@ def show_video(config, display_frame, logger):
     if key == ord('q'):
         logger.info('Shutting down')
         rclpy.shutdown()
+        
 def get_control_velocities(pursuit_state, drone_state, dualsense, config):
     if pursuit_state.autonomous_pursuit_active:
         if frame_state.current_bbox_center:
-            return calc_pursuit_velocities(pursuit_state, frame_state.current_bbox_center, frame_state.current_frame_width, frame_state.current_frame_height)
+            return calc_pursuit_velocities(pursuit_state, drone_state, frame_state.current_bbox_center, frame_state.current_frame_width, frame_state.current_frame_height)
         return 0.0, 0.0, 0.0, 0.0
     lx = dualsense.state.LX / 128.0
     ly = dualsense.state.LY / 128.0
@@ -519,35 +548,59 @@ def get_control_velocities(pursuit_state, drone_state, dualsense, config):
     vz = ry * (config.MAX_CLIMB if ry < 0 else config.MAX_DESCENT) if abs(ry) > 0 else 0.0
     yaw_rate = rx * config.MAX_YAW_RATE
     return vx, vy, vz, yaw_rate
-def calc_pursuit_velocities(pursuit_state, bbox_center, frame_width, frame_height):
+    
+def calc_pursuit_velocities(pursuit_state, drone_state, bbox_center, frame_width, frame_height):
     if bbox_center is None:
         return 0.0, 0.0, 0.0, 0.0
     ref_x = frame_width // 2
     ref_y = int(frame_height * (1 - pursuit_state.target_ratio))
     bbox_x, bbox_y = bbox_center
-    error_x = bbox_x - ref_x
-    error_y = bbox_y - ref_y
-    error_norm = np.sqrt(error_x**2 + error_y**2) / (frame_height * 0.5)
-    yaw_rate = pursuit_state.pursuit_pid_yaw.update(error_x)
-    throttle = np.clip(1 - (error_norm - 0.25) / 0.35, 0.0, 1.0) # Simplified
+    cx = frame_width / 2.0
+    cy = frame_height / 2.0
+    hfov_deg = 110.0  # From camera parameters
+    hfov_rad = np.deg2rad(hfov_deg)
+    fx = (frame_width / 2.0) / np.tan(hfov_rad / 2.0)
+    fy = fx  # Assuming square pixels and VFOV derived from HFOV and aspect ratio
+    u = (bbox_x - cx) / fx
+    v = (bbox_y - cy) / fy
+    u_des = (ref_x - cx) / fx
+    v_des = (ref_y - cy) / fy
+    angle_x = np.arctan(u)
+    angle_y = np.arctan(v)
+    angle_x_des = np.arctan(u_des)
+    angle_y_des = np.arctan(v_des)
+    error_angle_x = angle_x - angle_x_des
+    error_angle_y = angle_y - angle_y_des
+    error_angle_x_deg = np.rad2deg(error_angle_x)
+    error_angle_y_deg = np.rad2deg(error_angle_y)
+    error_norm_angle = np.sqrt(error_angle_x**2 + error_angle_y**2)
+    error_norm_angle_deg = np.rad2deg(error_norm_angle)
+    yaw_rate = pursuit_state.pursuit_pid_yaw.update(error_angle_x_deg)
+    # Updated to allow full range (climb and descend) without max( ,0)
+    vz = pursuit_state.pursuit_pid_alt.update(error_angle_y_deg)
+    # Geometric throttle based on angular misalignment
+    misalignment_start_deg = 12.0  # Start reducing speed (tuned close to original effective ~12.75 deg)
+    misalignment_range_deg = 18.0  # Range to reach zero throttle (tuned close to original effective ~17.85 deg)
+    throttle = np.clip(1 - (error_norm_angle_deg - misalignment_start_deg) / misalignment_range_deg, 0.0, 1.0)
     target_speed = pursuit_state.forward_velocity * throttle
     target_speed = max(target_speed, 0.4)
     vx = pursuit_state.pursuit_pid_forward.update(target_speed - drone_state.current_body_velocities['vx'])
-    vz = pursuit_state.pursuit_pid_alt.update(max(error_y, 0.0))
     pursuit_state.pursuit_debug_info = {
-        'error_x': error_x,
-        'error_y': error_y,
+        'error_angle_x_deg': error_angle_x_deg,
+        'error_angle_y_deg': error_angle_y_deg,
         'yaw_rate': yaw_rate,
         'vx': vx,
         'vz': vz,
         'throttle': throttle,
         'current_speed': drone_state.current_body_velocities['vx'],
         'target_speed': target_speed,
-        'error_norm': error_norm,
-        'target_ratio_used': pursuit_state.target_ratio,
-        'bbox_is_large': frame_state.current_bbox_is_large
+        'error_norm_angle_deg': error_norm_angle_deg,
+        'target_ratio_used': pursuit_state.target_ratio
     }
     return vx, 0.0, vz, yaw_rate
+    
+    
+    
 def is_bbox_area_black(frame, bbox, threshold=30):
     if frame is None or bbox is None:
         return False
