@@ -89,12 +89,12 @@ def stabilize_frame(frame, pitch_rad, roll_rad, pitch0_rad=0.0, hfov_deg=110.0):
     stabilized = cv2.warpAffine(stabilized, M, (width, height))
     return stabilized
 # Simple draw_alignment_info function (adapted; draws basic crosshair and text)
-def draw_alignment_info(frame, self_obj, target_ratio=0.4):
+def draw_alignment_info(frame, pursuit_state, self_obj, target_ratio=0.4):
     if self_obj.current_bbox_center is None:
         return frame
     height, width = frame.shape[:2]
     ref_x = self_obj.frame_center_x
-    ref_y = int(frame_height * (1 - pursuit_state.target_ratio))
+    ref_y = int(height * (1 - pursuit_state.target_ratio))
     cv2.line(frame, (ref_x, 0), (ref_x, height), (255, 0, 0), 1) # Vertical line
     cv2.line(frame, (0, ref_y), (width, ref_y), (255, 0, 0), 1) # Horizontal line
     cv2.circle(frame, self_obj.current_bbox_center, 5, (0, 255, 0), -1)
@@ -518,7 +518,8 @@ def handle_pursuit_alignment(pursuit_state, drone_state, frame_state, display_fr
         landing_proximity_threshold = 0.2
         current_pitch_rad = drone_state.current_pitch_rad
         current_roll_rad = drone_state.current_roll_rad
-    display_frame = draw_alignment_info(display_frame, MockSelf())
+    print(f"current_bbox_center = {frame_state.current_bbox_center}")
+    display_frame = draw_alignment_info(display_frame, pursuit_state, MockSelf())
     
 def show_video(config, display_frame, logger):
     if not config.SHOW_VIDEO:
