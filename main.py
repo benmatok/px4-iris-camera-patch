@@ -128,11 +128,11 @@ class DroneState:
 class PursuitState:
     def __init__(self):
         self.autonomous_pursuit_active = False
-        self.pursuit_pid_yaw = PIDController(kp=0.1, ki=0.1, kd=0.03, output_limit=25.0)
-        self.pursuit_pid_alt = PIDController(kp=0.1, ki=0.03, kd=0.1, output_limit=5.0) # Lower gains, tighter limit
-        self.pursuit_pid_forward = PIDController(kp=0.3, ki=0.05, kd=0.01, output_limit=5.0, smoothing_factor=0.1)
-        self.target_ratio = 0.4
-        self.forward_velocity = 10.0
+        self.pursuit_pid_yaw = PIDController(kp=0.5, ki=0.005, kd=0.02, output_limit=25.0)
+        self.pursuit_pid_alt = PIDController(kp=0.0001, ki=0.0001, kd=0.0001, output_limit=10.0) # Lower gains, tighter limit
+        self.pursuit_pid_forward = PIDController(kp=0.01, ki=0.01, kd=0.01, output_limit=25.0, smoothing_factor=0.1)
+        self.target_ratio = 0.5
+        self.forward_velocity = 25.0
         self.pursuit_debug_info = {}
 class FrameState:
     def __init__(self):
@@ -485,12 +485,15 @@ def process_bbox_mode(frame_state, display_frame):
     cv2.rectangle(display_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
     frame_state.current_bbox_center = bbox_center_local
     
+def megatrack():
+    return cv2.TrackerCSRT_create()
+
 def process_tracking_mode(frame_state, display_frame):
     # Initialize or update KCF tracker (using color current_frame for consistency)
     color_frame = cv2.cvtColor(frame_state.current_frame, cv2.COLOR_GRAY2BGR)
     if frame_state.init_tracking:
         if frame_state.tracker_instance is None:
-            frame_state.tracker_instance = cv2.TrackerKCF_create()
+            frame_state.tracker_instance = megatrack()
         success = frame_state.tracker_instance.init(color_frame, tuple(frame_state.bbox))
         frame_state.init_tracking = False
         if success:
@@ -520,7 +523,7 @@ def process_tracking_mode(frame_state, display_frame):
                     if warp_success:
                         print("warp_success")
                         # Re-init tracker with warped bbox
-                        frame_state.tracker_instance = cv2.TrackerKCF_create()
+                        frame_state.tracker_instance = megatrack()
                         whole_process_success = frame_state.tracker_instance.init(color_frame, tuple(new_bbox))
                         whole_process_success = True
                         print(f"whole_process_success = {whole_process_success}, new_bbox = {new_bbox}")
@@ -552,7 +555,7 @@ def process_pursuit_mode(frame_state, drone_state, pursuit_state, display_frame)
     # Initialize or update KCF tracker if in pursuit mode
     color_frame = cv2.cvtColor(frame_state.current_frame, cv2.COLOR_GRAY2BGR)
     if frame_state.tracker_instance is None:
-        frame_state.tracker_instance = cv2.TrackerKCF_create()
+        frame_state.tracker_instance = megatrack()
         success = frame_state.tracker_instance.init(color_frame, tuple(frame_state.bbox))
         if success:
             frame_state.last_success_frame = color_frame.copy() # Store for homography
@@ -581,7 +584,7 @@ def process_pursuit_mode(frame_state, drone_state, pursuit_state, display_frame)
                     if warp_success:
                         # Re-init tracker with warped bbox
                         print("warp_success")
-                        frame_state.tracker_instance = cv2.TrackerKCF_create()
+                        frame_state.tracker_instance = megatrack()
                         print(new_bbox)
                         print(color_frame)
                         whole_process_success = frame_state.tracker_instance.init(color_frame, tuple(new_bbox))
@@ -687,15 +690,16 @@ def calc_pursuit_velocities(pursuit_state, drone_state, bbox_center, frame_width
     error_angle_y_deg = np.rad2deg(error_angle_y)
     error_norm_angle = np.sqrt(error_angle_x**2 + error_angle_y**2)
     error_norm_angle_deg = np.rad2deg(error_norm_angle)
-    yaw_rate = pursuit_state.pursuit_pid_yaw.update(error_angle_x_deg)
+    yaw_rate = error_angle_x_deg #pursuit_state.pursuit_pid_yaw.update(error_angle_x_deg)
     # Updated to allow full range (climb and descend) without max( ,0)
-    vz = pursuit_state.pursuit_pid_alt.update(error_angle_y_deg)
+    vz = 0.05 # pursuit_state.pursuit_pid_alt.update(error_angle_y_deg)
     # Geometric throttle based on angular misalignment
     misalignment_start_deg = 12.0  # Start reducing speed (tuned close to original effective ~12.75 deg)
     misalignment_range_deg = 18.0  # Range to reach zero throttle (tuned close to original effective ~17.85 deg)
-    throttle = np.clip(1 - (error_norm_angle_deg - misalignment_start_deg) / misalignment_range_deg, 0.0, 1.0)
+    throttle = np.clip(1 - (error_norm_angle_deg - misalignment_start_deg) / misalignment_range_deg, 0.3, 1.0)
+    throttle = 0.8
     target_speed = pursuit_state.forward_velocity * throttle
-    target_speed = max(target_speed, 0.4)
+    target_speed = max(target_speed, 3.0)
     vx = pursuit_state.pursuit_pid_forward.update(target_speed - drone_state.current_body_velocities['vx'])
     pursuit_state.pursuit_debug_info = {
         'error_angle_x_deg': error_angle_x_deg,
@@ -709,6 +713,7 @@ def calc_pursuit_velocities(pursuit_state, drone_state, bbox_center, frame_width
         'error_norm_angle_deg': error_norm_angle_deg,
         'target_ratio_used': pursuit_state.target_ratio
     }
+    print(pursuit_state.pursuit_debug_info)
     return vx, 0.0, vz, yaw_rate
     
     
