@@ -129,11 +129,15 @@ class PursuitState:
     def __init__(self):
         self.autonomous_pursuit_active = False
         self.pursuit_pid_yaw = PIDController(kp=0.5, ki=0.005, kd=0.02, output_limit=25.0)
-        self.pursuit_pid_alt = PIDController(kp=0.0001, ki=0.0001, kd=0.0001, output_limit=10.0) # Lower gains, tighter limit
-        self.pursuit_pid_forward = PIDController(kp=0.01, ki=0.01, kd=0.01, output_limit=25.0, smoothing_factor=0.1)
-        self.target_ratio = 0.5
+        self.pursuit_pid_alt = PIDController(kp=0.001, ki=0.1, kd=0.0001, output_limit=25.0) # Lower gains, tighter limit
+        self.pursuit_pid_forward = PIDController(kp=0.001, ki=0.001, kd=0.001, output_limit=25.0, smoothing_factor=0.1)
+        self.target_ratio = 0.2
         self.forward_velocity = 25.0
         self.pursuit_debug_info = {}
+        self.stable_count = 0
+        self.stable_threshold = 30  # Number of consecutive frames to consider stable
+        self.alignment_threshold_deg = 5.0  # Error norm below which considered aligned
+        self.down_movement_threshold_deg = 5.0  # y-error above which to activate vz after stable
 class FrameState:
     def __init__(self):
         self.current_frame = None
@@ -666,16 +670,17 @@ def get_control_velocities(pursuit_state, drone_state, dualsense, config):
     
 def calc_pursuit_velocities(pursuit_state, drone_state, bbox_center, frame_width, frame_height):
     if bbox_center is None:
+        pursuit_state.stable_count = 0
         return 0.0, 0.0, 0.0, 0.0
     ref_x = frame_width // 2
     ref_y = int(frame_height * (1 - pursuit_state.target_ratio))
     bbox_x, bbox_y = bbox_center
     cx = frame_width / 2.0
     cy = frame_height / 2.0
-    hfov_deg = 110.0  # From camera parameters
+    hfov_deg = 110.0 # From camera parameters
     hfov_rad = np.deg2rad(hfov_deg)
     fx = (frame_width / 2.0) / np.tan(hfov_rad / 2.0)
-    fy = fx  # Assuming square pixels and VFOV derived from HFOV and aspect ratio
+    fy = fx # Assuming square pixels and VFOV derived from HFOV and aspect ratio
     u = (bbox_x - cx) / fx
     v = (bbox_y - cy) / fy
     u_des = (ref_x - cx) / fx
@@ -691,16 +696,24 @@ def calc_pursuit_velocities(pursuit_state, drone_state, bbox_center, frame_width
     error_norm_angle = np.sqrt(error_angle_x**2 + error_angle_y**2)
     error_norm_angle_deg = np.rad2deg(error_norm_angle)
     yaw_rate = error_angle_x_deg #pursuit_state.pursuit_pid_yaw.update(error_angle_x_deg)
-    # Updated to allow full range (climb and descend) without max( ,0)
-    vz = 0.05 # pursuit_state.pursuit_pid_alt.update(error_angle_y_deg)
-    # Geometric throttle based on angular misalignment
-    misalignment_start_deg = 12.0  # Start reducing speed (tuned close to original effective ~12.75 deg)
-    misalignment_range_deg = 18.0  # Range to reach zero throttle (tuned close to original effective ~17.85 deg)
+    # vz control: only activate after stable centering and if target moving down (positive y-error)
+    if pursuit_state.stable_count > pursuit_state.stable_threshold and error_angle_y_deg > pursuit_state.down_movement_threshold_deg:
+        vz = pursuit_state.pursuit_pid_alt.update(error_angle_y_deg)
+    else:
+        vz = 0.05  # Minimal/default vz until conditions met
+    # Geometric throttle based on angular misalignment (focus on centering with vx)
+    misalignment_start_deg = 12.0 # Start reducing speed (tuned close to original effective ~12.75 deg)
+    misalignment_range_deg = 18.0 # Range to reach zero throttle (tuned close to original effective ~17.85 deg)
     throttle = np.clip(1 - (error_norm_angle_deg - misalignment_start_deg) / misalignment_range_deg, 0.3, 1.0)
     throttle = 0.8
     target_speed = pursuit_state.forward_velocity * throttle
     target_speed = max(target_speed, 3.0)
     vx = pursuit_state.pursuit_pid_forward.update(target_speed - drone_state.current_body_velocities['vx'])
+    # Stability check for enabling vz
+    if np.abs(error_angle_x_deg) < pursuit_state.alignment_threshold_deg:
+        pursuit_state.stable_count += 1
+    else:
+        pursuit_state.stable_count = 0  # Reset if not aligned
     pursuit_state.pursuit_debug_info = {
         'error_angle_x_deg': error_angle_x_deg,
         'error_angle_y_deg': error_angle_y_deg,
@@ -711,7 +724,8 @@ def calc_pursuit_velocities(pursuit_state, drone_state, bbox_center, frame_width
         'current_speed': drone_state.current_body_velocities['vx'],
         'target_speed': target_speed,
         'error_norm_angle_deg': error_norm_angle_deg,
-        'target_ratio_used': pursuit_state.target_ratio
+        'target_ratio_used': pursuit_state.target_ratio,
+        'stable_count': pursuit_state.stable_count
     }
     print(pursuit_state.pursuit_debug_info)
     return vx, 0.0, vz, yaw_rate
