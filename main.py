@@ -59,15 +59,20 @@ def velocity_to_attitude(vx_des_body, vy_des_body, vz_des_body, yaw_rate_des_bod
     # Desired attitude: from thrust direction (z-body aligns with t_des for convention, thrust up)
     # Normalize t_des to get desired body z-axis (thrust up)
     z_des_body = t_des_body / T_mag
-    # Desired roll/pitch from z_des (yaw separate); these are targets in world frame reference
-    pitch_target_world_deg = np.degrees(np.arcsin(-z_des_body[1]))
-    roll_target_world_deg = np.degrees(np.arctan2(z_des_body[0], z_des_body[2]))
+    # Desired roll/pitch from z_des (yaw separate); these are targets in world frame reference 
+    
+    pitch_target_world_deg = -np.degrees(np.arctan2(z_des_body[0], z_des_body[2]))
+    roll_target_world_deg = np.degrees(np.arcsin(z_des_body[1]))
+   
+    #roll_target_world_deg  = np.clip(roll_target_world_deg,-30,30)
+    pitch_target_world_deg = np.clip(pitch_target_world_deg,-30,30)
+    
     # Thrust normalized
     max_force = mass_kg * g / stable_thrust
     thrust = T_mag / max_force
     thrust = np.clip(thrust, 0.1, 0.9)
     yaw_target_world_deg = current_yaw_deg_world + yaw_rate_des_body * dt
-    print(f"g_body={g_body}, a_body = {a_body}, thrust = {thrust}")	
+    print(f"roll_target_world_deg={roll_target_world_deg}, pitch_target_world_deg = {pitch_target_world_deg}, yaw_target_world_deg = {yaw_target_world_deg}")	
     return roll_target_world_deg, pitch_target_world_deg, yaw_target_world_deg, thrust
     
    
