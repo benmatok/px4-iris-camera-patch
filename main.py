@@ -73,8 +73,8 @@ def velocity_to_attitude(vx_des_body, vy_des_body, vz_des_body, yaw_rate_des_bod
     pitch_target_world_deg = np.degrees(np.arctan2(-z_des_body[0], z_des_body[2]))
     roll_target_world_deg = np.degrees(np.arcsin(z_des_body[1]))
    
-    #roll_target_world_deg  = np.clip(roll_target_world_deg,-30,30)
-    pitch_target_world_deg = np.clip(pitch_target_world_deg,-30,30)
+    roll_target_world_deg  = np.clip(roll_target_world_deg,-5,5)
+    pitch_target_world_deg = np.clip(pitch_target_world_deg,-15,15)
     
     # Thrust normalized
     max_force = mass_kg * g / stable_thrust
