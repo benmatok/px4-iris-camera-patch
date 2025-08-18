@@ -177,7 +177,7 @@ class PursuitState:
     def __init__(self):
         self.autonomous_pursuit_active = False
         self.pursuit_pid_yaw = PIDController(kp=0.5, ki=0.005, kd=0.02, output_limit=25.0)
-        self.pursuit_pid_alt = PIDController(kp=0.001, ki=0.1, kd=0.0001, output_limit=25.0) # Lower gains, tighter limit
+        self.pursuit_pid_alt = PIDController(kp=0.5, ki=0.1, kd=0.1, output_limit=25.0) # Lower gains, tighter limit
         self.pursuit_pid_forward = PIDController(kp=0.001, ki=0.001, kd=0.001, output_limit=25.0, smoothing_factor=0.1)
         self.target_ratio = 0.2
         self.forward_velocity = 25.0
@@ -716,9 +716,10 @@ def calc_pursuit_velocities(pursuit_state, drone_state, bbox_center, frame_width
     error_angle_y = angle_y - angle_y_des
     error_angle_x_deg = np.rad2deg(error_angle_x)
     error_angle_y_deg = np.rad2deg(error_angle_y)
+    print(f"pursuit_state.stable_count = {pursuit_state.stable_count}, error_angle_y_deg={error_angle_y_deg}, error_angle_x_deg={error_angle_x_deg}")
     error_norm_angle = np.sqrt(error_angle_x**2 + error_angle_y**2)
     error_norm_angle_deg = np.rad2deg(error_norm_angle)
-    yaw_rate = error_angle_x_deg #pursuit_state.pursuit_pid_yaw.update(error_angle_x_deg)
+    yaw_rate = error_angle_x_deg 
     current_attitude = (drone_state.current_roll_rad,drone_state.current_pitch_rad,np.deg2rad(drone_state.current_yaw_deg))
     est_vx,est_vy,est_vz = estimate_body_velocities(drone_state.current_thrust,current_attitude,drone_state.drone_mass,drone_state.stable_thrust)
     # vz control: only activate after stable centering and if target moving down (positive y-error)
@@ -726,8 +727,8 @@ def calc_pursuit_velocities(pursuit_state, drone_state, bbox_center, frame_width
         vz_pid = pursuit_state.pursuit_pid_alt.update(error_angle_y_deg)
         # Geometric feedforward: vz_ff ≈ vx * tan(error_y + camera_pitch), but simplified to vx * sin(error_y) for small angles; sign: positive error_y -> positive vz (descend)
         camera_pitch_deg = 30.0  # From your camera pose (-30 deg pitch, but downward)
-        k_ff = 0.1  # Tune: start low (0.05-0.2) to avoid instability
-        vz_ff = vx_est * np.sin(np.deg2rad(error_angle_y_deg + camera_pitch_deg))
+        k_ff = 0.8  # Tune: start low (0.05-0.2) to avoid instability
+        vz_ff = est_vx * np.sin(np.deg2rad(error_angle_y_deg + camera_pitch_deg))
         vz = vz_pid + k_ff * vz_ff
         vz = np.clip(vz, -pursuit_state.pursuit_pid_alt.output_limit, pursuit_state.pursuit_pid_alt.output_limit)  # Safety clip
     else:
