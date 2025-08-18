@@ -24,29 +24,51 @@ def estimate_body_velocities(thrust_normalized, attitude_rad, mass_kg, stable_th
     v_z = effective_g * np.cos(pitch) * np.cos(roll) - g
     return v_x, v_y, v_z
     
-def velocity_to_attitude(vx_des, vy_des, vz_des, yaw_rate_des, current_yaw_deg, dt, config):
-    g = 9.81 # gravity m/s^2
-    hover_thrust = 0.3 # normalized hover thrust
-    # Feedforward: map desired velocity to required acceleration (assume steady-state accel = 0, but scale tilt by v_des)
-    # Simplified: tilt = arctan(v_des^2 / (r * g)) but for straight line, use proportional or arctan(v_des / ref)
-    # Here, use arctan(v_des / g) treating v_des as "effective accel" for tilt (common approximation for open-loop)
-    # Pitch for forward vx (negative for forward tilt)
-    pitch_target = -np.rad2deg(np.arctan(vx_des / g))
-    # Roll for sideways vy (positive for right tilt)
-    roll_target = np.rad2deg(np.arctan(vy_des / g))
-    # Compensate thrust for pitch/roll tilt to maintain hover vertically
-    pitch_rad = np.deg2rad(pitch_target)
-    roll_rad = np.deg2rad(roll_target)
-    tilt_correction = 1.0 / (np.cos(pitch_rad) * np.cos(roll_rad)) if np.cos(pitch_rad) * np.cos(roll_rad) > 0 else 1.0
-    base_thrust = hover_thrust * tilt_correction
-    # Thrust correction for vz_des
-    # vz_des negative for climb; scale to thrust correction
-    thrust_correction = vz_des / (config.MAX_CLIMB) # normalize (sign: negative vz_des increases thrust for climb)
-    thrust = base_thrust - thrust_correction # Adjust sign based on vz convention (PX4: positive down)
+def velocity_to_attitude(vx_des_body, vy_des_body, vz_des_body, yaw_rate_des_body, current_yaw_deg_world, dt, drone_state):
+    g = 9.81
+    stable_thrust = drone_state.stable_thrust
+    mass_kg = drone_state.drone_mass
+    tau = 1.0  # Time constant
+    # Estimate current body velocities
+    attitude_rad = (drone_state.current_roll_rad, drone_state.current_pitch_rad, np.deg2rad(current_yaw_deg_world))
+    thrust_normalized = drone_state.current_thrust
+    v_est_x_body, v_est_y_body, v_est_z_body = estimate_body_velocities(thrust_normalized, attitude_rad, mass_kg, stable_thrust)
+    # Desired acceleration in body frame
+    a_body = np.array([(vx_des_body - v_est_x_body) / tau, (vy_des_body - v_est_y_body) / tau, (vz_des_body - v_est_z_body) / tau])
+    # Gravity vector in world: [0, 0, g] (down positive if PX4 convention)
+    g_world = np.array([0, 0, g])
+    # Rotation matrix from body to world (using current attitude)
+    cr = np.cos(drone_state.current_roll_rad)
+    sr = np.sin(drone_state.current_roll_rad)
+    cp = np.cos(drone_state.current_pitch_rad)
+    sp = np.sin(drone_state.current_pitch_rad)
+    cy = np.cos(np.deg2rad(current_yaw_deg_world))
+    sy = np.sin(np.deg2rad(current_yaw_deg_world))
+    R_body_to_world = np.array([
+        [cy*cp, cy*sp*sr - sy*cr, cy*sp*cr + sy*sr],
+        [sy*cp, sy*sp*sr + cy*cr, sy*sp*cr - cy*sr],
+        [-sp, cp*sr, cp*cr]
+    ])
+    # Gravity in body frame: R.T @ g_world
+    g_body = R_body_to_world.T @ g_world
+    # Desired thrust vector in body frame: mass * (a_body + g_body)
+    t_des_body = mass_kg * (a_body + g_body)
+    T_mag = np.linalg.norm(t_des_body)
+    if T_mag == 0:
+        return 0.0, 0.0, current_yaw_deg_world, stable_thrust  # Hover default
+    # Desired attitude: from thrust direction (z-body aligns with t_des for convention, thrust up)
+    # Normalize t_des to get desired body z-axis (thrust up)
+    z_des_body = t_des_body / T_mag
+    # Desired roll/pitch from z_des (yaw separate); these are targets in world frame reference
+    pitch_target_world_deg = np.degrees(np.arcsin(-z_des_body[1]))
+    roll_target_world_deg = np.degrees(np.arctan2(z_des_body[0], z_des_body[2]))
+    # Thrust normalized
+    max_force = mass_kg * g / stable_thrust
+    thrust = T_mag / max_force
     thrust = np.clip(thrust, 0.1, 0.9)
-    # Yaw: incremental absolute target (as before)
-    yaw_target = current_yaw_deg + yaw_rate_des * dt
-    return roll_target, pitch_target, yaw_target, thrust
+    yaw_target_world_deg = current_yaw_deg_world + yaw_rate_des_body * dt
+    return roll_target_world_deg, pitch_target_world_deg, yaw_target_world_deg, thrust
+    
    
 def map_to_betaflight_rc(roll_target, pitch_target, yaw_rate_des, thrust, max_angle=45.0, max_yaw_rate=200.0):
     # Scaled to -500 to 500 (Betaflight rate/angle units)
@@ -272,15 +294,9 @@ class AngleMode(ControlMode):
         # Translate to attitude setpoints
         dt = 1.0  # Loop timestep
         roll_target, pitch_target, yaw_target, thrust = velocity_to_attitude(
-            vx, vy, vz, yaw_rate, drone_state.current_yaw_deg, dt, config
+            vx, vy, vz, yaw_rate, drone_state.current_yaw_deg, dt, drone_state
         )
-        # Optional: Add coordinated roll for yaw (to prevent sideslip)
-        coord_roll = np.rad2deg(np.arctan(vx * np.deg2rad(yaw_rate) / 9.81)) # Sign may need adjustment
-        roll_target += coord_roll
-        # Limit angles (for stabilized feel)
-        max_tilt = 30.0
-        roll_target = np.clip(roll_target, -max_tilt, max_tilt)
-        pitch_target = np.clip(pitch_target, -max_tilt, max_tilt)
+        print(thrust)
         return 'attitude', (roll_target, pitch_target, yaw_target, thrust)
 
 # Helper functions for quaternion math
@@ -631,6 +647,7 @@ def process_pursuit_mode(frame_state, drone_state, pursuit_state, display_frame)
         bbox_color = (128, 0, 255) if frame_state.current_bbox_is_large else (255, 0, 0)
         cv2.rectangle(display_frame, (x, y), (x + w, y + h), bbox_color, 3)
         cv2.circle(display_frame, bbox_center_local, 3, (255, 255, 255), -1)
+        # TODO: check if this line below is needed
         calc_pursuit_velocities(pursuit_state, drone_state, bbox_center_local, frame_state.current_frame_width, frame_state.current_frame_height)
         frame_state.current_bbox_center = bbox_center_local
         
@@ -661,25 +678,6 @@ def show_video(config, display_frame, logger):
         logger.info('Shutting down')
         rclpy.shutdown()
         
-def get_control_velocities(pursuit_state, drone_state, dualsense, config):
-    if pursuit_state.autonomous_pursuit_active:
-        if frame_state.current_bbox_center:
-            return calc_pursuit_velocities(pursuit_state, drone_state, frame_state.current_bbox_center, frame_state.current_frame_width, frame_state.current_frame_height)
-        return 0.0, 0.0, 0.0, 0.0
-    lx = dualsense.state.LX / 128.0
-    ly = dualsense.state.LY / 128.0
-    rx = dualsense.state.RX / 128.0
-    ry = dualsense.state.RY / 128.0
-    # Gamma map (simple)
-    lx = np.sign(lx) * (abs(lx) ** config.GAMMA)
-    ly = np.sign(ly) * (abs(ly) ** config.GAMMA)
-    rx = np.sign(rx) * (abs(rx) ** config.GAMMA)
-    ry = np.sign(ry) * (abs(ry) ** config.GAMMA)
-    vx = -ly * config.MAX_VELOCITY
-    vy = lx * config.MAX_VELOCITY
-    vz = ry * (config.MAX_CLIMB if ry < 0 else config.MAX_DESCENT) if abs(ry) > 0 else 0.0
-    yaw_rate = rx * config.MAX_YAW_RATE
-    return vx, vy, vz, yaw_rate
     
 def calc_pursuit_velocities(pursuit_state, drone_state, bbox_center, frame_width, frame_height):
     if bbox_center is None:
@@ -749,7 +747,7 @@ def calc_pursuit_velocities(pursuit_state, drone_state, bbox_center, frame_width
         'target_ratio_used': pursuit_state.target_ratio,
         'stable_count': pursuit_state.stable_count
     }
-    print(pursuit_state.pursuit_debug_info)
+    #print(pursuit_state.pursuit_debug_info)
     return vx, 0.0, vz, yaw_rate
     
     
