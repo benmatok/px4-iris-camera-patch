@@ -21,7 +21,7 @@ def estimate_body_velocities(thrust_normalized, attitude_rad, mass_kg, stable_th
     v_x = effective_g * np.tan(-pitch)
     v_y = effective_g * np.tan(roll)
     # For vz, estimate as excess effective vertical component (accounts for tilt at large angles)
-    v_z = effective_g * np.cos(pitch) * np.cos(roll) - g
+    v_z = effective_g * np.cos(pitch) * np.cos(roll)
     return v_x, v_y, v_z
     
 def velocity_to_attitude(vx_des_body, vy_des_body, vz_des_body, yaw_rate_des_body, current_yaw_deg_world, dt, drone_state):
@@ -67,6 +67,7 @@ def velocity_to_attitude(vx_des_body, vy_des_body, vz_des_body, yaw_rate_des_bod
     thrust = T_mag / max_force
     thrust = np.clip(thrust, 0.1, 0.9)
     yaw_target_world_deg = current_yaw_deg_world + yaw_rate_des_body * dt
+    print(f"g_body={g_body}, a_body = {a_body}, thrust = {thrust}")	
     return roll_target_world_deg, pitch_target_world_deg, yaw_target_world_deg, thrust
     
    
@@ -296,7 +297,6 @@ class AngleMode(ControlMode):
         roll_target, pitch_target, yaw_target, thrust = velocity_to_attitude(
             vx, vy, vz, yaw_rate, drone_state.current_yaw_deg, dt, drone_state
         )
-        print(thrust)
         return 'attitude', (roll_target, pitch_target, yaw_target, thrust)
 
 # Helper functions for quaternion math
