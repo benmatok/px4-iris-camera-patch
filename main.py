@@ -14,6 +14,16 @@ import os
 import pickle
 from datetime import datetime
 
+def estimate_body_velocities(thrust_normalized, attitude_rad, mass_kg, stable_thrust):
+    g = 9.81
+    roll, pitch, yaw = attitude_rad
+    effective_g = (thrust_normalized / stable_thrust) * g
+    v_x = effective_g * np.tan(-pitch)
+    v_y = effective_g * np.tan(roll)
+    # For vz, estimate as excess effective vertical component (accounts for tilt at large angles)
+    v_z = effective_g * np.cos(pitch) * np.cos(roll) - g
+    return v_x, v_y, v_z
+    
 def velocity_to_attitude(vx_des, vy_des, vz_des, yaw_rate_des, current_yaw_deg, dt, config):
     g = 9.81 # gravity m/s^2
     hover_thrust = 0.3 # normalized hover thrust
@@ -121,10 +131,13 @@ class DroneState:
         self.drone = System()
         self.is_armed = False
         self.is_offboard = False
+        self.stable_thrust = 0.25
+        self.drone_mass = 2.8
         self.current_pitch_rad = 0.0
         self.current_roll_rad = 0.0
         self.current_yaw_deg = 0.0
         self.current_body_velocities = {'vx': 0.0, 'vy': 0.0, 'vz': 0.0, 'vyaw': 0.0}
+        self.current_thrust = 0.0
 class PursuitState:
     def __init__(self):
         self.autonomous_pursuit_active = False
@@ -696,9 +709,18 @@ def calc_pursuit_velocities(pursuit_state, drone_state, bbox_center, frame_width
     error_norm_angle = np.sqrt(error_angle_x**2 + error_angle_y**2)
     error_norm_angle_deg = np.rad2deg(error_norm_angle)
     yaw_rate = error_angle_x_deg #pursuit_state.pursuit_pid_yaw.update(error_angle_x_deg)
+    current_attitude = (drone_state.current_roll_rad,drone_state.current_pitch_rad,np.deg2rad(drone_state.current_yaw_deg))
+    est_vx,est_vy,est_vz = estimate_body_velocities(drone_state.current_thrust,current_attitude,drone_state.drone_mass,drone_state.stable_thrust)
     # vz control: only activate after stable centering and if target moving down (positive y-error)
     if pursuit_state.stable_count > pursuit_state.stable_threshold and error_angle_y_deg > pursuit_state.down_movement_threshold_deg:
-        vz = pursuit_state.pursuit_pid_alt.update(error_angle_y_deg)
+        vz_pid = pursuit_state.pursuit_pid_alt.update(error_angle_y_deg)
+        # Geometric feedforward: vz_ff ≈ vx * tan(error_y + camera_pitch), but simplified to vx * sin(error_y) for small angles; sign: positive error_y -> positive vz (descend)
+        camera_pitch_deg = 30.0  # From your camera pose (-30 deg pitch, but downward)
+        k_ff = 0.1  # Tune: start low (0.05-0.2) to avoid instability
+        vx_est = 9.81 * np.tan(-drone_state.current_pitch_rad)
+        vz_ff = vx_est * np.sin(np.deg2rad(error_angle_y_deg + camera_pitch_deg))
+        vz = vz_pid + k_ff * vz_ff
+        vz = np.clip(vz, -pursuit_state.pursuit_pid_alt.output_limit, pursuit_state.pursuit_pid_alt.output_limit)  # Safety clip
     else:
         vz = 0.05  # Minimal/default vz until conditions met
     # Geometric throttle based on angular misalignment (focus on centering with vx)
@@ -752,6 +774,8 @@ async def mavsdk_controller(frame_state, drone_state, pursuit_state, dualsense, 
             break
     attitude_task = asyncio.create_task(attitude_tracker(drone_state))
     velocity_task = asyncio.create_task(body_velocity_tracker(drone_state))
+    actuator_task = asyncio.create_task(actuator_tracker(drone_state))
+    
     while rclpy.ok():
         setpoint_type, setpoint = control_mode.get_setpoint(dualsense, config, pursuit_state, frame_state, drone_state)
         if drone_state.is_armed and drone_state.is_offboard:
@@ -772,6 +796,16 @@ async def mavsdk_controller(frame_state, drone_state, pursuit_state, dualsense, 
             await land_and_disarm(drone_state, logger)
             drone_state.is_armed = False
         await asyncio.sleep(0.01)
+        
+async def actuator_tracker(drone_state):
+    try:
+        async for status in drone_state.drone.telemetry.actuator_output_status(0):  # Group 0 for main motors
+            # For quadcopter, average normalized thrust from first 4 actuators (0-1)
+            thrusts = status.actuator[:4]
+            drone_state.current_thrust = np.mean(thrusts) if thrusts else 0.0
+    except:
+        pass
+
 async def attitude_tracker(drone_state):
     try:
         async for euler in drone_state.drone.telemetry.attitude_euler():
@@ -791,6 +825,7 @@ async def body_velocity_tracker(drone_state):
             drone_state.current_body_velocities['vyaw'] = np.rad2deg(angular.yaw_rad_s) # To deg/s
     except:
         pass
+        
 async def arm_and_takeoff(drone_state, logger):
     print("Arming...")
     await drone_state.drone.action.arm()
