@@ -181,7 +181,7 @@ class PursuitState:
     def __init__(self):
         self.autonomous_pursuit_active = False
         self.pursuit_pid_yaw = PIDController(kp=0.5, ki=0.005, kd=0.02, output_limit=25.0)
-        self.pursuit_pid_alt = PIDController(kp=0.005, ki=0.005, kd=0.005, output_limit=25.0) # Lower gains, tight	er limit
+        self.pursuit_pid_alt = PIDController(kp=0.1, ki=0.01, kd=0.0, output_limit=25.0) # Lower gains, tighter limit
         self.pursuit_pid_forward = PIDController(kp=0.001, ki=0.001, kd=0.001, output_limit=25.0, smoothing_factor=0.1)
         self.target_ratio = 0.2
         self.forward_velocity = 25.0
