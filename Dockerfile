@@ -108,6 +108,21 @@ RUN apt-get update && apt-get install -y gazebo libgazebo11 libgazebo-dev && rm 
 
 RUN apt-get update && apt-get install -y gedit && rm -rf /var/lib/apt/lists/*
 
+RUN apt-get update && apt-get install -y \
+    libsdl2-dev \
+    libsdl2-image-dev \
+    libsdl2-mixer-dev \
+    libsdl2-ttf-dev \
+    libfreetype6-dev \
+    libportmidi-dev \
+    libjpeg-dev \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3 -m pip install --no-cache-dir \
+    pygame \
+    PyOpenGL
+
 # Create a non-root user
 RUN useradd -m px4user && \
     echo "px4user ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/px4user && \
@@ -129,7 +144,7 @@ RUN bash ubuntu.sh --no-sim-tools
 #RUN wget https://github.com/mavlink/qgroundcontrol/releases/download/v4.4.0/QGroundControl.AppImage -O QGroundControl.AppImage || \
 #    { echo "QGroundControl download failed. Please manually download the AppImage and mount it into the container."; exit 1; } && \
 #    chmod +x QGroundControl.AppImage
-    
+
 
 ARG CACHE_BREAKER=1
 
