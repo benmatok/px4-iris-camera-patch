@@ -50,7 +50,7 @@ def velocity_to_attitude(vx_des_body, vy_des_body, vz_des_body, yaw_rate_des_bod
     print(f"v_est_body: vx={v_est_x_body:.2f}, vy={v_est_y_body:.2f}, vz={v_est_z_body:.2f}")
     
     # Desired acceleration in body frame
-    a_body = np.array([(vx_des_body - v_est_x_body) / tau, (vy_des_body - v_est_y_body) / tau, (vz_des_body - v_est_z_body) / tau])
+    a_body = np.array([(vx_des_body - v_est_x_body) / tau, (vy_des_body - v_est_y_body) / tau, (vz_des_body - v_est_z_body)/tau ])
     print(f"a_body: ax={a_body[0]:.2f}, ay={a_body[1]:.2f}, az={a_body[2]:.2f}")
     # Gravity vector in world: [0, 0, g] (down positive if PX4 convention)
     g_world = np.array([0, 0, g])
@@ -73,7 +73,7 @@ def velocity_to_attitude(vx_des_body, vy_des_body, vz_des_body, yaw_rate_des_bod
     pitch_target_world_deg = np.degrees(np.arctan2(-z_des_body[0], z_des_body[2]))
     roll_target_world_deg = np.degrees(np.arcsin(z_des_body[1]))
    
-    roll_target_world_deg  = np.clip(roll_target_world_deg,-5,5)
+    roll_target_world_deg  = np.clip(roll_target_world_deg,-5,5)*0.1 # limit roll
     pitch_target_world_deg = np.clip(pitch_target_world_deg,-15,15)
     
     # Thrust normalized
@@ -314,7 +314,7 @@ class AngleMode(ControlMode):
         # Translate to attitude setpoints
         dt = 1.0  # Loop timestep
         roll_target, pitch_target, yaw_target, thrust = velocity_to_attitude(
-            vx, vy, vz, yaw_rate, drone_state.current_yaw_deg, dt, drone_state
+            vx, vy, -vz, yaw_rate, drone_state.current_yaw_deg, dt, drone_state
         )
         return 'attitude', (roll_target, pitch_target, yaw_target, thrust)
 
