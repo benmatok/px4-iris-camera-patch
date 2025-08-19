@@ -47,22 +47,22 @@ def velocity_to_attitude(vx_des_body, vy_des_body, vz_des_body, yaw_rate_des_bod
     attitude_rad = (drone_state.current_roll_rad, drone_state.current_pitch_rad, np.deg2rad(current_yaw_deg_world))
     thrust_normalized = drone_state.current_thrust
     v_est_x_body, v_est_y_body, v_est_z_body = estimate_body_velocities(thrust_normalized, attitude_rad, mass_kg, stable_thrust)
-    print(f"v_est_body: vx={v_est_x_body:.2f}, vy={v_est_y_body:.2f}, vz={v_est_z_body:.2f}")
+    #print(f"v_est_body: vx={v_est_x_body:.2f}, vy={v_est_y_body:.2f}, vz={v_est_z_body:.2f}")
     
     # Desired acceleration in body frame
     a_body = np.array([(vx_des_body - v_est_x_body) / tau, (vy_des_body - v_est_y_body) / tau, (vz_des_body - v_est_z_body)/tau ])
-    print(f"a_body: ax={a_body[0]:.2f}, ay={a_body[1]:.2f}, az={a_body[2]:.2f}")
+    #print(f"a_body: ax={a_body[0]:.2f}, ay={a_body[1]:.2f}, az={a_body[2]:.2f}")
     # Gravity vector in world: [0, 0, g] (down positive if PX4 convention)
     g_world = np.array([0, 0, g])
     # Rotation matrix from body to world (using current attitude)
     R_body_to_world = get_rotation_body_to_world(drone_state.current_roll_rad,drone_state.current_pitch_rad,np.deg2rad(current_yaw_deg_world))
     # Gravity in body frame: R.T @ g_world
     g_body = R_body_to_world.T @ g_world
-    print(f"g_body: gx={g_body[0]:.2f}, gy={g_body[1]:.2f}, gz={g_body[2]:.2f}")
+    #print(f"g_body: gx={g_body[0]:.2f}, gy={g_body[1]:.2f}, gz={g_body[2]:.2f}")
     # Desired thrust vector in body frame: mass * (a_body + g_body)
     t_des_body = mass_kg * (a_body + g_body)
     T_mag = np.linalg.norm(t_des_body)
-    print(f"t_des_body: tx={t_des_body[0]:.2f}, ty={t_des_body[1]:.2f}, tz={t_des_body[2]:.2f}, T_mag={T_mag:.2f}")
+    #print(f"t_des_body: tx={t_des_body[0]:.2f}, ty={t_des_body[1]:.2f}, tz={t_des_body[2]:.2f}, T_mag={T_mag:.2f}")
     if T_mag == 0:
         return 0.0, 0.0, current_yaw_deg_world, stable_thrust  # Hover default
     # Desired attitude: from thrust direction (z-body aligns with t_des for convention, thrust up)
@@ -73,7 +73,7 @@ def velocity_to_attitude(vx_des_body, vy_des_body, vz_des_body, yaw_rate_des_bod
     pitch_target_world_deg = np.degrees(np.arctan2(-z_des_body[0], z_des_body[2]))
     roll_target_world_deg = np.degrees(np.arcsin(z_des_body[1]))
    
-    roll_target_world_deg  = np.clip(roll_target_world_deg,-5,5)*0.1 # limit roll
+    roll_target_world_deg  = np.clip(roll_target_world_deg,-5,5)*0.0 # limit roll
     pitch_target_world_deg = np.clip(pitch_target_world_deg,-15,15)
     
     # Thrust normalized
@@ -81,9 +81,9 @@ def velocity_to_attitude(vx_des_body, vy_des_body, vz_des_body, yaw_rate_des_bod
     thrust = T_mag / max_force
     thrust = np.clip(thrust, 0.1, 0.9)
     yaw_target_world_deg = current_yaw_deg_world + yaw_rate_des_body * dt
-    print(f"des_attitude: roll={roll_target_world_deg:.2f}, pitch={pitch_target_world_deg:.2f}, yaw={yaw_target_world_deg:.2f}, thrust={thrust:.2f}")
-    print(f"current_attitude_deg: roll={np.degrees(drone_state.current_roll_rad):.2f}, pitch={np.degrees(drone_state.current_pitch_rad):.2f}")
-    print(f"z_des_body: {z_des_body}")
+    #print(f"des_attitude: roll={roll_target_world_deg:.2f}, pitch={pitch_target_world_deg:.2f}, yaw={yaw_target_world_deg:.2f}, thrust={thrust:.2f}")
+    #print(f"current_attitude_deg: roll={np.degrees(drone_state.current_roll_rad):.2f}, pitch={np.degrees(drone_state.current_pitch_rad):.2f}")
+    #print(f"z_des_body: {z_des_body}")
     return roll_target_world_deg, pitch_target_world_deg, yaw_target_world_deg, thrust
     
    
@@ -184,7 +184,7 @@ class PursuitState:
         vx_p = 0.005
         vx_i = 0.0005
         vx_d = 0.00125
-        self.pursuit_pid_alt = PIDController(kp=vx_p*5, ki=vx_i*5, kd=vx_d*5, output_limit=25.0) # Lower gains, tighter limit
+        self.pursuit_pid_alt = PIDController(kp=vx_p*20, ki=vx_i*20, kd=vx_d*20, output_limit=25.0) # Lower gains, tighter limit
         self.pursuit_pid_forward = PIDController(kp=vx_p, ki=vx_i, kd=vx_d, output_limit=25.0, smoothing_factor=0.1)
         self.target_ratio = 0.2
         self.forward_velocity = 25.0
