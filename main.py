@@ -181,8 +181,11 @@ class PursuitState:
     def __init__(self):
         self.autonomous_pursuit_active = False
         self.pursuit_pid_yaw = PIDController(kp=0.5, ki=0.005, kd=0.02, output_limit=25.0)
-        self.pursuit_pid_alt = PIDController(kp=0.1, ki=0.01, kd=0.0, output_limit=25.0) # Lower gains, tighter limit
-        self.pursuit_pid_forward = PIDController(kp=0.001, ki=0.001, kd=0.001, output_limit=25.0, smoothing_factor=0.1)
+        vx_p = 0.005
+        vx_i = 0.0005
+        vx_d = 0.00125
+        self.pursuit_pid_alt = PIDController(kp=vx_p*5, ki=vx_i*5, kd=vx_d*5, output_limit=25.0) # Lower gains, tighter limit
+        self.pursuit_pid_forward = PIDController(kp=vx_p, ki=vx_i, kd=vx_d, output_limit=25.0, smoothing_factor=0.1)
         self.target_ratio = 0.2
         self.forward_velocity = 25.0
         self.pursuit_debug_info = {}
@@ -757,7 +760,7 @@ def calc_pursuit_velocities(pursuit_state, drone_state, bbox_center, frame_width
         # Desired world velocity along LOS to maintain angle (for stationary object)
         vx = pursuit_state.pursuit_pid_forward.update(pursuit_state.forward_velocity - est_vx)
         vz = pursuit_state.pursuit_pid_alt.update(pursuit_state.initial_attack_angle - object_attack_angle_world_deg)
-        print(f"vz={vz}")
+        print(f"vz={vz}, vx={vx}")
         # Add PID correction on error for robustness (e.g., moving object)
         #vz += pursuit_state.pursuit_pid_alt.update(error_attack_deg)
         vz = np.clip(vz, -pursuit_state.pursuit_pid_alt.output_limit, pursuit_state.pursuit_pid_alt.output_limit)
