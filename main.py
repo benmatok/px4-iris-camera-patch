@@ -2,6 +2,10 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 import cv2
+import pygame
+from pygame.locals import *
+from OpenGL.GL import *
+from OpenGL.GLU import *
 from cv_bridge import CvBridge, CvBridgeError
 import time
 from pydualsense import *
