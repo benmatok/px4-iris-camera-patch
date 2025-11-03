@@ -17,7 +17,6 @@ import threading
 import os
 import pickle
 from datetime import datetime
-
 def get_rotation_body_to_world(roll_rad, pitch_rad, yaw_rad):
     cr = np.cos(roll_rad)
     sr = np.sin(roll_rad)
@@ -31,7 +30,6 @@ def get_rotation_body_to_world(roll_rad, pitch_rad, yaw_rad):
         [-sp, cp*sr, cp*cr]
     ])
     return R_body_to_world
-
 def estimate_body_velocities(thrust_normalized, attitude_rad, mass_kg, stable_thrust):
     g = 9.81
     roll, pitch, yaw = attitude_rad
@@ -41,18 +39,18 @@ def estimate_body_velocities(thrust_normalized, attitude_rad, mass_kg, stable_th
     # For vz, estimate as excess effective vertical component (accounts for tilt at large angles)
     v_z = effective_g * np.cos(pitch) * np.cos(roll)
     return v_x, v_y, v_z
-    
+   
 def velocity_to_attitude(vx_des_body, vy_des_body, vz_des_body, yaw_rate_des_body, current_yaw_deg_world, dt, drone_state):
     g = 9.81
     stable_thrust = drone_state.stable_thrust
     mass_kg = drone_state.drone_mass
-    tau = 5.0  # Time constant
+    tau = 5.0 # Time constant
     # Estimate current body velocities
     attitude_rad = (drone_state.current_roll_rad, drone_state.current_pitch_rad, np.deg2rad(current_yaw_deg_world))
     thrust_normalized = drone_state.current_thrust
     v_est_x_body, v_est_y_body, v_est_z_body = estimate_body_velocities(thrust_normalized, attitude_rad, mass_kg, stable_thrust)
     #print(f"v_est_body: vx={v_est_x_body:.2f}, vy={v_est_y_body:.2f}, vz={v_est_z_body:.2f}")
-    
+   
     # Desired acceleration in body frame
     a_body = np.array([(vx_des_body - v_est_x_body) / tau, (vy_des_body - v_est_y_body) / tau, (vz_des_body - v_est_z_body)/tau ])
     #print(f"a_body: ax={a_body[0]:.2f}, ay={a_body[1]:.2f}, az={a_body[2]:.2f}")
@@ -68,18 +66,18 @@ def velocity_to_attitude(vx_des_body, vy_des_body, vz_des_body, yaw_rate_des_bod
     T_mag = np.linalg.norm(t_des_body)
     #print(f"t_des_body: tx={t_des_body[0]:.2f}, ty={t_des_body[1]:.2f}, tz={t_des_body[2]:.2f}, T_mag={T_mag:.2f}")
     if T_mag == 0:
-        return 0.0, 0.0, current_yaw_deg_world, stable_thrust  # Hover default
+        return 0.0, 0.0, current_yaw_deg_world, stable_thrust # Hover default
     # Desired attitude: from thrust direction (z-body aligns with t_des for convention, thrust up)
     # Normalize t_des to get desired body z-axis (thrust up)
     z_des_body = t_des_body / T_mag
-    # Desired roll/pitch from z_des (yaw separate); these are targets in world frame reference 
-    
+    # Desired roll/pitch from z_des (yaw separate); these are targets in world frame reference
+   
     pitch_target_world_deg = np.degrees(np.arctan2(-z_des_body[0], z_des_body[2]))
     roll_target_world_deg = np.degrees(np.arcsin(z_des_body[1]))
-   
-    roll_target_world_deg  = np.clip(roll_target_world_deg,-5,5)*0.0 # limit roll
+  
+    roll_target_world_deg = np.clip(roll_target_world_deg,-5,5)*0.0 # limit roll
     pitch_target_world_deg = np.clip(pitch_target_world_deg,-15,15)
-    
+   
     # Thrust normalized
     max_force = mass_kg * g / stable_thrust
     thrust = T_mag / max_force
@@ -89,8 +87,8 @@ def velocity_to_attitude(vx_des_body, vy_des_body, vz_des_body, yaw_rate_des_bod
     #print(f"current_attitude_deg: roll={np.degrees(drone_state.current_roll_rad):.2f}, pitch={np.degrees(drone_state.current_pitch_rad):.2f}")
     #print(f"z_des_body: {z_des_body}")
     return roll_target_world_deg, pitch_target_world_deg, yaw_target_world_deg, thrust
-    
    
+  
 def map_to_betaflight_rc(roll_target, pitch_target, yaw_rate_des, thrust, max_angle=45.0, max_yaw_rate=200.0):
     # Scaled to -500 to 500 (Betaflight rate/angle units)
     rc_roll = (roll_target / max_angle) * 500
@@ -98,7 +96,7 @@ def map_to_betaflight_rc(roll_target, pitch_target, yaw_rate_des, thrust, max_an
     rc_yaw = (yaw_rate_des / max_yaw_rate) * 500
     rc_throttle = thrust * 1000 + 1000 # 1000-2000 PWM
     return rc_roll, rc_pitch, rc_yaw, rc_throttle
-   
+  
 # Simple PID Controller definition (adapted from custom tracking_utils)
 class PIDController:
     def __init__(self, kp=0.0, ki=0.0, kd=0.0, output_limit=0.0, smoothing_factor=0.0):
@@ -194,9 +192,10 @@ class PursuitState:
         self.forward_velocity = 25.0
         self.pursuit_debug_info = {}
         self.stable_count = 0
-        self.stable_threshold = 30  # Number of consecutive frames to consider stable
-        self.alignment_threshold_deg = 5.0  # Error norm below which considered aligned
-        self.down_movement_threshold_deg = 5.0  # y-error above which to activate vz after stable
+        self.stable_threshold = 30 # Number of consecutive frames to consider stable
+        self.alignment_threshold_deg = 5.0 # Error norm below which considered aligned
+        self.down_movement_threshold_deg = 5.0 # y-error above which to activate vz after stable
+        self.max_linear_speed = 2.0  # New: Limit overall linear speed (m/s). Adjust as needed.
 class FrameState:
     def __init__(self):
         self.current_frame = None
@@ -232,7 +231,7 @@ class CacheState:
         os.makedirs(self.cache_dir, exist_ok=True)
         self.cache_frame_path = os.path.join(self.cache_dir, "roi_frame.png")
         self.cache_bbox_path = os.path.join(self.cache_dir, "roi_bbox.pkl")
-        
+       
 def compute_homography(last_frame, current_frame):
     # Compute homography using ORB features
     orb = cv2.ORB_create()
@@ -245,7 +244,7 @@ def compute_homography(last_frame, current_frame):
     bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
     matches = bf.match(des1, des2)
     matches = sorted(matches, key=lambda x: x.distance)
-    if len(matches) < 4:  # Min for homography
+    if len(matches) < 4: # Min for homography
         return None, False
     src_pts = np.float32([kp1[m.queryIdx].pt for m in matches]).reshape(-1, 1, 2)
     dst_pts = np.float32([kp2[m.trainIdx].pt for m in matches]).reshape(-1, 1, 2)
@@ -253,7 +252,6 @@ def compute_homography(last_frame, current_frame):
     if H is None:
         return None, False
     return H, True
-
 def warp_bbox(H, last_bbox):
     x, y, w, h = last_bbox
     pts = np.float32([[x, y], [x + w, y], [x + w, y + h], [x, y + h]]).reshape(-1, 1, 2)
@@ -266,8 +264,7 @@ def warp_bbox(H, last_bbox):
         return None, False
     new_bbox = [int(x_new), int(y_new), int(w_new), int(h_new)]
     return new_bbox, True
-    
-
+   
 # Strategy for control modes
 class ControlMode:
     def get_setpoint(self, dualsense, config, pursuit_state, frame_state, drone_state):
@@ -316,12 +313,11 @@ class AngleMode(ControlMode):
             vz = ry * (config.MAX_CLIMB if ry < 0 else config.MAX_DESCENT) if abs(ry) > 0 else 0.0
             yaw_rate = rx * config.MAX_YAW_RATE
         # Translate to attitude setpoints
-        dt = 1.0  # Loop timestep
+        dt = 1.0 # Loop timestep
         roll_target, pitch_target, yaw_target, thrust = velocity_to_attitude(
             vx, vy, -vz, yaw_rate, drone_state.current_yaw_deg, dt, drone_state
         )
         return 'attitude', (roll_target, pitch_target, yaw_target, thrust)
-
 # Helper functions for quaternion math
 def euler_to_quat(roll_deg, pitch_deg, yaw_deg):
     # Convert Euler angles (deg) to quaternion (w, x, y, z)
@@ -339,10 +335,8 @@ def euler_to_quat(roll_deg, pitch_deg, yaw_deg):
     y = cr * sp * cy + sr * cp * sy
     z = cr * cp * sy - sr * sp * cy
     return np.array([w, x, y, z])
-
 def quat_conjugate(q):
     return np.array([q[0], -q[1], -q[2], -q[3]])
-
 def quat_multiply(q1, q2):
     w1, x1, y1, z1 = q1
     w2, x2, y2, z2 = q2
@@ -351,7 +345,6 @@ def quat_multiply(q1, q2):
     y = w1*y2 - x1*z2 + y1*w2 + z1*x2
     z = w1*z2 + x1*y2 - y1*x2 + z1*w2
     return np.array([w, x, y, z])
-
 def quat_to_body_rates(error_quat, kp_roll=4.0, kp_pitch=4.0, kp_yaw=2.0):
     # Compute body angular rates from error quaternion
     # Normalize error_quat if needed
@@ -363,8 +356,7 @@ def quat_to_body_rates(error_quat, kp_roll=4.0, kp_pitch=4.0, kp_yaw=2.0):
     # Apply separate gains per axis (assuming x=roll, y=pitch, z=yaw)
     vec = error_quat[1:]
     rates = 2 * np.array([kp_roll * vec[0], kp_pitch * vec[1], kp_yaw * vec[2]])
-    return rates  # [roll_rate, pitch_rate, yaw_rate]
-
+    return rates # [roll_rate, pitch_rate, yaw_rate]
 class ImageViewer(Node):
     def __init__(self, config):
         super().__init__('image_viewer')
@@ -395,7 +387,7 @@ class ImageViewer(Node):
         asyncio.run(mavsdk_controller(self.frame_state,self.drone_state, self.pursuit_state, self.dualsense, self.config, self.get_logger(), self.control_mode))
     def image_callback(self, msg):
         try:
-            self.frame_state.current_frame = self.bridge.imgmsg_to_cv2(msg, 'mono8')  # Monochrome camera
+            self.frame_state.current_frame = self.bridge.imgmsg_to_cv2(msg, 'mono8') # Monochrome camera
         except CvBridgeError as e:
             self.get_logger().error(str(e))
     def state_machine_callback_wrapper(self):
@@ -463,7 +455,7 @@ def handle_modes(frame_state, drone_state, button_state, pursuit_state, dualsens
         process_tracking_mode(frame_state, display_frame)
     elif frame_state.bbox_mode:
         process_bbox_mode(frame_state, display_frame)
-        
+       
 def handle_button_toggles(frame_state, button_state, pursuit_state, dualsense):
     if dualsense.state.square and not button_state.prev_square_state:
         if not pursuit_state.autonomous_pursuit_active:
@@ -479,9 +471,9 @@ def handle_button_toggles(frame_state, button_state, pursuit_state, dualsense):
         frame_state.tracking_mode = not frame_state.tracking_mode
         if frame_state.tracking_mode:
             frame_state.init_tracking = True
-            frame_state.bbox_mode = False  # Exit bbox mode when entering tracking
+            frame_state.bbox_mode = False # Exit bbox mode when entering tracking
         else:
-            frame_state.tracker_instance = None  # Reset tracker when exiting
+            frame_state.tracker_instance = None # Reset tracker when exiting
     button_state.prev_cross_state = dualsense.state.cross
     if dualsense.state.triangle and not button_state.prev_triangle_state:
         pursuit_state.autonomous_pursuit_active = not pursuit_state.autonomous_pursuit_active
@@ -490,7 +482,7 @@ def handle_button_toggles(frame_state, button_state, pursuit_state, dualsense):
             pursuit_state.pursuit_pid_alt.reset()
             pursuit_state.pursuit_pid_forward.reset()
     button_state.prev_triangle_state = dualsense.state.triangle
-    
+   
 def handle_bbox_controls(frame_state, dualsense, pursuit_state, width, height):
     if not frame_state.bbox_mode or pursuit_state.autonomous_pursuit_active:
         return
@@ -540,10 +532,9 @@ def process_bbox_mode(frame_state, display_frame):
     bbox_center_local = (bbox_center_x, bbox_center_y)
     cv2.rectangle(display_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
     frame_state.current_bbox_center = bbox_center_local
-    
+   
 def megatrack():
     return cv2.TrackerCSRT_create()
-
 def process_tracking_mode(frame_state, display_frame):
     # Initialize or update KCF tracker (using color current_frame for consistency)
     color_frame = cv2.cvtColor(frame_state.current_frame, cv2.COLOR_GRAY2BGR)
@@ -553,17 +544,17 @@ def process_tracking_mode(frame_state, display_frame):
         success = frame_state.tracker_instance.init(color_frame, tuple(frame_state.bbox))
         frame_state.init_tracking = False
         if success:
-            frame_state.last_success_frame = color_frame.copy()  # Store for homography
+            frame_state.last_success_frame = color_frame.copy() # Store for homography
             frame_state.last_success_bbox = frame_state.bbox[:]
         else:
             frame_state.tracking_mode = False
             frame_state.tracker_instance = None
-            return  # Early exit if init fails
+            return # Early exit if init fails
     if frame_state.tracker_instance:
         success, bbox = frame_state.tracker_instance.update(color_frame)
         if success:
             frame_state.bbox = [int(v) for v in bbox]
-            frame_state.last_success_frame = color_frame.copy()  # Update on success
+            frame_state.last_success_frame = color_frame.copy() # Update on success
             frame_state.last_success_bbox = frame_state.bbox[:]
         else:
             # Tracking lost; attempt homography-based recovery
@@ -606,7 +597,7 @@ def process_tracking_mode(frame_state, display_frame):
         bbox_color = (128, 0, 255) if frame_state.current_bbox_is_large else (0, 0, 255)
         cv2.rectangle(display_frame, (x, y), (x + w, y + h), bbox_color, 2)
         frame_state.current_bbox_center = bbox_center_local
-        
+       
 def process_pursuit_mode(frame_state, drone_state, pursuit_state, display_frame):
     # Initialize or update KCF tracker if in pursuit mode
     color_frame = cv2.cvtColor(frame_state.current_frame, cv2.COLOR_GRAY2BGR)
@@ -671,8 +662,8 @@ def process_pursuit_mode(frame_state, drone_state, pursuit_state, display_frame)
         cv2.rectangle(display_frame, (x, y), (x + w, y + h), bbox_color, 3)
         cv2.circle(display_frame, bbox_center_local, 3, (255, 255, 255), -1)
         frame_state.current_bbox_center = bbox_center_local
-        
-    
+       
+   
 def handle_pursuit_alignment(pursuit_state, drone_state, frame_state, display_frame):
     if not pursuit_state.autonomous_pursuit_active or None == frame_state.current_bbox_center:
         return
@@ -689,7 +680,7 @@ def handle_pursuit_alignment(pursuit_state, drone_state, frame_state, display_fr
         current_roll_rad = drone_state.current_roll_rad
     print(f"current_bbox_center = {frame_state.current_bbox_center}")
     display_frame = draw_alignment_info(display_frame, pursuit_state, MockSelf())
-    
+   
 def show_video(config, display_frame, logger):
     if not config.SHOW_VIDEO:
         return
@@ -698,7 +689,7 @@ def show_video(config, display_frame, logger):
     if key == ord('q'):
         logger.info('Shutting down')
         rclpy.shutdown()
-        
+       
 def calc_pursuit_velocities(pursuit_state, drone_state, bbox_center, frame_width, frame_height):
     if bbox_center is None:
         pursuit_state.stable_count = 0
@@ -710,13 +701,13 @@ def calc_pursuit_velocities(pursuit_state, drone_state, bbox_center, frame_width
     cy = frame_height / 2.0
     hfov_deg = 110.0 # From camera parameters
     vfov_deg = 90.0 # Updated VFOV
-    
+   
     hfov_rad = np.deg2rad(hfov_deg)
     vfov_rad = np.deg2rad(vfov_deg)
-    
+   
     fx = (frame_width / 2.0) / np.tan(hfov_rad / 2.0)
     fy = (frame_height / 2.0) / np.tan(vfov_rad / 2.0)
-    
+   
     u = (bbox_x - cx) / fx
     v = -(bbox_y - cy) / fy
     u_des = (ref_x - cx) / fx
@@ -752,12 +743,12 @@ def calc_pursuit_velocities(pursuit_state, drone_state, bbox_center, frame_width
     object_attack_angle_world_deg = object_vertical_angle_body_deg + drone_pitch_deg # Elevation angle relative to horizon (positive above, negative below)
     target_attack_angle_world_deg = -20
     target_attack_angle_body_deg = target_attack_angle_world_deg - drone_pitch_deg - camera_mount_pitch_deg
-    
+   
     # Change control to preserve initial attack angle, clamped at most -20 degrees (i.e., not more negative than -20)
-    if pursuit_state.stable_count == 1:  # Record initial on first stable frame
+    if pursuit_state.stable_count == 1: # Record initial on first stable frame
         pursuit_state.initial_attack_angle = object_attack_angle_world_deg
-    target_attack_deg = max(pursuit_state.initial_attack_angle, -20.0) if pursuit_state.stable_count > 0 else -20.0  # Clamp to not below -20°
-    error_attack_deg = object_attack_angle_world_deg - target_attack_deg  # Positive error: object higher than target -> descend (positive vz)
+    target_attack_deg = max(pursuit_state.initial_attack_angle, -20.0) if pursuit_state.stable_count > 0 else -20.0 # Clamp to not below -20°
+    error_attack_deg = object_attack_angle_world_deg - target_attack_deg # Positive error: object higher than target -> descend (positive vz)
     # Calc vz, vx from target attack angle: first in world frame, then to body
     if pursuit_state.stable_count > pursuit_state.stable_threshold:
         print(f"object_attack_angle_world_deg={object_attack_angle_world_deg} , pursuit_state.initial_attack_angle = {pursuit_state.initial_attack_angle}")
@@ -771,7 +762,7 @@ def calc_pursuit_velocities(pursuit_state, drone_state, bbox_center, frame_width
         #vz = 0
     else:
         vz = 0.01 # Minimal/default vz until conditions met
-        vx = 0.01  # Minimal/default vx until conditions met
+        vx = 0.01 # Minimal/default vx until conditions met
     pursuit_state.pursuit_debug_info = {
         'error_angle_x_deg': error_angle_x_deg,
         'error_angle_y_deg': error_angle_y_deg,
@@ -787,10 +778,19 @@ def calc_pursuit_velocities(pursuit_state, drone_state, bbox_center, frame_width
         'object_attack_angle_world_deg': object_attack_angle_world_deg
     }
     #print(pursuit_state.pursuit_debug_info)
-    return vx, 0.0, vz, yaw_rate
-    
-    
-    
+
+    # New: Limit the linear velocity magnitude
+    vy = 0.0
+    vel_vector = np.array([vx, vy, vz])
+    norm = np.linalg.norm(vel_vector)
+    if norm > pursuit_state.max_linear_speed and norm > 0:
+        vel_vector = (vel_vector / norm) * pursuit_state.max_linear_speed
+    vx, vy, vz = vel_vector
+
+    return vx, vy, vz, yaw_rate
+   
+   
+   
 def is_bbox_area_black(frame, bbox, threshold=30):
     if frame is None or bbox is None:
         return False
@@ -812,7 +812,7 @@ async def mavsdk_controller(frame_state, drone_state, pursuit_state, dualsense, 
     attitude_task = asyncio.create_task(attitude_tracker(drone_state))
     velocity_task = asyncio.create_task(body_velocity_tracker(drone_state))
     actuator_task = asyncio.create_task(actuator_tracker(drone_state))
-    
+   
     while rclpy.ok():
         setpoint_type, setpoint = control_mode.get_setpoint(dualsense, config, pursuit_state, frame_state, drone_state)
         if drone_state.is_armed and drone_state.is_offboard:
@@ -833,16 +833,15 @@ async def mavsdk_controller(frame_state, drone_state, pursuit_state, dualsense, 
             await land_and_disarm(drone_state, logger)
             drone_state.is_armed = False
         await asyncio.sleep(0.01)
-        
+       
 async def actuator_tracker(drone_state):
     try:
-        async for status in drone_state.drone.telemetry.actuator_output_status(0):  # Group 0 for main motors
+        async for status in drone_state.drone.telemetry.actuator_output_status(0): # Group 0 for main motors
             # For quadcopter, average normalized thrust from first 4 actuators (0-1)
             thrusts = status.actuator[:4]
             drone_state.current_thrust = np.mean(thrusts) if thrusts else 0.0
     except:
         pass
-
 async def attitude_tracker(drone_state):
     try:
         async for euler in drone_state.drone.telemetry.attitude_euler():
@@ -862,7 +861,7 @@ async def body_velocity_tracker(drone_state):
             drone_state.current_body_velocities['vyaw'] = np.rad2deg(angular.yaw_rad_s) # To deg/s
     except:
         pass
-        
+       
 async def arm_and_takeoff(drone_state, logger):
     print("Arming...")
     await drone_state.drone.action.arm()
