@@ -72,7 +72,7 @@ def velocity_to_attitude(vx_des_body, vy_des_body, vz_des_body, yaw_rate_des_bod
     z_des_body = t_des_body / T_mag
     # Desired roll/pitch from z_des (yaw separate); these are targets in world frame reference
    
-    pitch_target_world_deg = np.degrees(np.arctan2(-z_des_body[0], z_des_body[2]))
+    pitch_target_world_deg = np.degrees(np.arctan2(-z_des_body[0], z_des_body[2]))*0.8
     roll_target_world_deg = np.degrees(np.arcsin(z_des_body[1]))
   
     roll_target_world_deg = np.clip(roll_target_world_deg,-5,5)*0.0 # limit roll
@@ -83,6 +83,7 @@ def velocity_to_attitude(vx_des_body, vy_des_body, vz_des_body, yaw_rate_des_bod
     thrust = T_mag / max_force
     thrust = np.clip(thrust, 0.1, 0.9)
     yaw_target_world_deg = current_yaw_deg_world + yaw_rate_des_body * dt
+    print("V =",vz_des_body, ", pitch=",pitch_target_world_deg,", thrust=",thrust)
     #print(f"des_attitude: roll={roll_target_world_deg:.2f}, pitch={pitch_target_world_deg:.2f}, yaw={yaw_target_world_deg:.2f}, thrust={thrust:.2f}")
     #print(f"current_attitude_deg: roll={np.degrees(drone_state.current_roll_rad):.2f}, pitch={np.degrees(drone_state.current_pitch_rad):.2f}")
     #print(f"z_des_body: {z_des_body}")
@@ -183,10 +184,10 @@ class PursuitState:
     def __init__(self):
         self.autonomous_pursuit_active = False
         self.pursuit_pid_yaw = PIDController(kp=0.5, ki=0.005, kd=0.02, output_limit=25.0)
-        vx_p = 0.005
-        vx_i = 0.0005
+        vx_p = 0.02
+        vx_i = 0.00015
         vx_d = 0.00125
-        self.pursuit_pid_alt = PIDController(kp=vx_p*20, ki=vx_i*20, kd=vx_d*20, output_limit=25.0) # Lower gains, tighter limit
+        self.pursuit_pid_alt = PIDController(kp=vx_p*40, ki=vx_i*40, kd=vx_d*40, output_limit=25.0) # Lower gains, tighter limit
         self.pursuit_pid_forward = PIDController(kp=vx_p, ki=vx_i, kd=vx_d, output_limit=25.0, smoothing_factor=0.1)
         self.target_ratio = 0.2
         self.forward_velocity = 25.0
@@ -782,10 +783,10 @@ def calc_pursuit_velocities(pursuit_state, drone_state, bbox_center, frame_width
     # New: Limit the linear velocity magnitude
     vy = 0.0
     vel_vector = np.array([vx, vy, vz])
-    norm = np.linalg.norm(vel_vector)
-    if norm > pursuit_state.max_linear_speed and norm > 0:
-        vel_vector = (vel_vector / norm) * pursuit_state.max_linear_speed
-    vx, vy, vz = vel_vector
+    print("pre norm ",vz)
+    if abs(vz) > pursuit_state.max_linear_speed:
+        vz = pursuit_state.max_linear_speed*vz/abs(vz)
+    print("post norm ",vz)
 
     return vx, vy, vz, yaw_rate
    
