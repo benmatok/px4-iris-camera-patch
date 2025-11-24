@@ -160,3 +160,59 @@ WORKDIR /home/px4user/
 # Set up environment
 ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 ENV PATH=$PATH:$JAVA_HOME/bin
+
+# ===================================================================
+# ADD FULL SALESFORCE WARPDRIVE + PYTORCH CUDA STACK
+# (Works with FROM ubuntu:22.04 + NVIDIA runtime)
+# ===================================================================
+
+USER root
+
+# Install CUDA toolkit components that match the driver on your host
+# (These are the minimal runtime libraries + headers needed for PyTorch/WarpDrive)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gnupg2 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN apt-key del 7fa2af80 && \
+    . /etc/os-release && \
+    curl -fsSL https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb \
+        -o cuda-keyring.deb && \
+    dpkg -i cuda-keyring.deb && \
+    rm cuda-keyring.deb
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cuda-toolkit-12-2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install PyTorch + WarpDrive + everything needed for training & live testing
+RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    python3 -m pip install --no-cache-dir \
+        torch==2.3.0+cu121 \
+        torchvision==0.18.0+cu121 \
+        torchaudio==2.3.0+cu121 \
+        --index-url https://download.pytorch.org/whl/cu121 && \
+    python3 -m pip install --no-cache-dir \
+        pytorch-lightning>=2.0 \
+        warp-drive>=2.1.0 \
+        pymavlink \
+        pyyaml \
+        tqdm \
+        tensorboard \
+        jupyterlab \
+        matplotlib \
+        pandas
+
+# Create workspace for your WarpDrive code and models
+RUN mkdir -p /workspace/models && chown px4user:px4user /workspace /workspace/models
+
+# Switch back to your normal user
+USER px4user
+WORKDIR /workspace
+
+# Final environment
+ENV PYTHONPATH="/workspace:${PYTHONPATH}" \
+    CUDA_VISIBLE_DEVICES=0 \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
