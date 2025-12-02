@@ -75,11 +75,7 @@ RUN pip3 install --no-cache-dir \
     torch==2.3.0+cu121 torchvision==0.18.0+cu121 torchaudio==2.3.0+cu121 \
     --index-url https://download.pytorch.org/whl/cu121
 
-# WarpDrive v2.7.1 from source — FULL BUILD INCLUDING pycuda
-RUN git clone https://github.com/salesforce/warp-drive.git /tmp/warp-drive && \
-    cd /tmp/warp-drive && \
-    pip3 install --no-cache-dir -e . && \
-    cd / && rm -rf /tmp/warp-drive
+RUN pip3 install --no-cache-dir rl-warp-drive==2.7.1
 
 # Remaining RL deps
 RUN pip3 install --no-cache-dir \
