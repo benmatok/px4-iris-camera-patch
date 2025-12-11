@@ -5,9 +5,9 @@ env:
 
 policy:
   drone_policy:
-    model: FullyConnected
-    # Observation space is 10:
-    # 3 (Acc Body) + 3 (Rates) + 4 (Target Cmds)
+    model: FullyConnected # This is replaced at runtime
+    # Observation space is 184:
+    # 180 (30 steps * 6 IMU) + 4 (Target Cmds)
     # Action space is 4
     hidden_dims: [128, 128]
 
