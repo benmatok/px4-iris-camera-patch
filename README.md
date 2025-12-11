@@ -43,3 +43,13 @@ You can customize the configuration by editing `configs/drone.yaml` or passing a
 ```bash
 python3 train_drone.py --config configs/my_custom_config.yaml
 ```
+
+## Training Visualization
+
+The training script automatically generates visualizations of the agent's performance.
+After training, check the `visualizations/` directory for:
+- `reward_plot.png`: A plot of mean rewards over iterations.
+- `training_evolution.gif`: An animation showing the evolution of the drone's trajectory (Top-down and Side views) throughout the training process.
+
+![Reward Plot](visualizations_mock/reward_plot.png)
+![Training Evolution](visualizations_mock/training_evolution.gif)
