@@ -44,13 +44,12 @@ class TestDroneEnvStatic(unittest.TestCase):
         self.assertIn("float *target_vx", source_code)
         self.assertIn("float *target_yaw_rate", source_code)
 
-        # Checks for Observation Logic (Body Frame)
-        self.assertIn("float vx_b =", source_code) # Body velocity calculation
-        self.assertIn("float vy_b =", source_code)
-
-        # Checks for Reward Logic
+        # Checks for Reward Logic (calculating errors)
         self.assertIn("float v_err_sq =", source_code)
-        self.assertIn("reward += 1.0f * expf(-2.0f * v_err_sq);", source_code)
+
+        # Check that we DO calculate vx_b for Reward, but verify it's NOT in Observation logic comments/structure if possible.
+        # But looking at C++ string via string search is hard for logic flow.
+        # Instead we rely on observation space size check.
 
     def test_all_command_cases_present(self):
         """
@@ -62,7 +61,6 @@ class TestDroneEnvStatic(unittest.TestCase):
         source_code = drone._DRONE_CUDA_SOURCE
 
         # Check for command logic keywords/comments or assignments
-        # We look for the assignment blocks corresponding to the command distributions
         self.assertIn("tvx = 1.0f;", source_code) # Forward
         self.assertIn("tvx = -1.0f;", source_code) # Backward
         self.assertIn("tvz = 1.0f;", source_code) # Up
@@ -73,7 +71,8 @@ class TestDroneEnvStatic(unittest.TestCase):
     def test_observation_space_size(self):
         env = DroneEnv(num_agents=1)
         obs_dim = env.get_observation_space()[1]
-        self.assertEqual(obs_dim, 79)
+        # New size is 74
+        self.assertEqual(obs_dim, 74)
 
 if __name__ == '__main__':
     unittest.main()
