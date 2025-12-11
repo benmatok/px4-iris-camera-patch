@@ -120,7 +120,6 @@ class CPUTrainer:
         # We wrap the policy to handle torch tensors
         self.policy = DronePolicy(env).to("cpu")
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=config['algorithm']['lr'])
-        self.ae_optimizer = torch.optim.Adam(self.policy.ae.parameters(), lr=0.001)
         self.ae_criterion = nn.L1Loss()
 
         # State Containers
@@ -299,12 +298,10 @@ class CPUTrainer:
             total_loss = loss + ae_loss
 
             self.optimizer.zero_grad()
-            self.ae_optimizer.zero_grad()
 
             total_loss.backward()
 
             self.optimizer.step()
-            self.ae_optimizer.step()
 
             # Logging
             mean_reward = torch.stack(reward_buffer).mean().item()
