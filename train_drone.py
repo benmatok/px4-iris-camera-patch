@@ -19,6 +19,7 @@ sys.path.append(os.getcwd())
 
 from drone_env.drone import DroneEnv
 from models.ae_policy import DronePolicy, KFACOptimizerPlaceholder
+from visualization import Visualizer
 
 class CustomTrainer(Trainer):
     def __init__(self, *args, **kwargs):
@@ -35,6 +36,9 @@ class CustomTrainer(Trainer):
         # Initialize KFAC for AE (Auxiliary)
         self.ae_optimizer = KFACOptimizerPlaceholder(new_model.ae.parameters(), lr=0.001)
         self.ae_criterion = nn.L1Loss()
+
+        # Initialize Visualizer
+        self.visualizer = Visualizer()
 
     def train(self):
         """
@@ -79,6 +83,25 @@ class CustomTrainer(Trainer):
 
                 if itr % 10 == 0:
                     print(f"Iter {itr}: AE Loss {loss.item()}")
+
+                # Visualization Hooks
+                # Log Rewards
+                rewards = data_manager.pull_data("rewards")
+                mean_reward = np.mean(rewards)
+                self.visualizer.log_reward(itr, mean_reward)
+
+                # Capture Trajectory every 50 iterations (or 10% of total)
+                if itr % 50 == 0 or itr == num_iters - 1:
+                    pos_history = data_manager.pull_data("pos_history") # (num_envs * episode_length * 3)
+                    # Reshape: (num_envs, episode_length, 3)
+                    episode_length = self.env_wrapper.env.episode_length
+                    pos_history = pos_history.reshape(self.config['trainer']['num_envs'], episode_length, 3)
+                    self.visualizer.log_trajectory(itr, pos_history)
+
+            # Generate Plots and GIF
+            self.visualizer.plot_rewards()
+            gif_path = self.visualizer.generate_trajectory_gif()
+            print(f"Visualization complete. GIF saved at {gif_path}")
 
         else:
             print("WARNING: Trainer.step() not found. Falling back to standard train loop.")

@@ -22,6 +22,7 @@ __global__ void step(
     float *masses, float *drag_coeffs, float *thrust_coeffs,
     float *target_vx, float *target_vy, float *target_vz, float *target_yaw_rate,
     float *imu_history,
+    float *pos_history,
     float *observations,
     float *rewards,
     float *done_flags,
@@ -162,6 +163,19 @@ __global__ void step(
     }
     int t = step_counts[env_id];
 
+    // Store Position History
+    // idx is global agent index.
+    // Each agent has episode_length * 3 float storage.
+    // We store at t-1 because t was just incremented?
+    // step_counts starts at 0. First step makes it 1.
+    // So we store at index t-1.
+    if (t <= episode_length) {
+        int pos_hist_idx = idx * episode_length * 3 + (t-1) * 3;
+        pos_history[pos_hist_idx + 0] = px;
+        pos_history[pos_hist_idx + 1] = py;
+        pos_history[pos_hist_idx + 2] = pz;
+    }
+
     // 2. Observations
     // Structure:
     // IMU History (300 steps * 6) + Target (4) = 1804 floats
@@ -258,6 +272,7 @@ __global__ void reset(
     float *masses, float *drag_coeffs, float *thrust_coeffs,
     float *target_vx, float *target_vy, float *target_vz, float *target_yaw_rate,
     float *imu_history,
+    float *pos_history,
     int *rng_states,
     int *step_counts,
     const int num_agents,
@@ -313,6 +328,12 @@ __global__ void reset(
         imu_history[hist_start + i] = 0.0f;
     }
 
+    // Reset Pos History (optional but cleaner)
+    // Size episode_length * 3
+    // We assume episode_length is available implicitly or passed via const?
+    // It's not passed to reset. But we know it's size of pos_history / num_agents.
+    // We can skip clearing it, as we will overwrite it step by step.
+
     // Update seed state
     rng_states[idx] = seed;
 
@@ -354,6 +375,7 @@ class DroneEnv(CUDAEnvironmentState):
                 "masses", "drag_coeffs", "thrust_coeffs",
                 "target_vx", "target_vy", "target_vz", "target_yaw_rate",
                 "imu_history",
+                "pos_history",
                 "rng_states",
                 "step_counts"
             ],
@@ -370,6 +392,7 @@ class DroneEnv(CUDAEnvironmentState):
             "target_vz": {"shape": (self.num_agents,), "dtype": np.float32},
             "target_yaw_rate": {"shape": (self.num_agents,), "dtype": np.float32},
             "imu_history": {"shape": (self.num_agents * 300 * 6,), "dtype": np.float32}, # 1800 floats per agent
+            "pos_history": {"shape": (self.num_agents * self.episode_length * 3,), "dtype": np.float32},
             "rng_states": {"shape": (self.num_agents,), "dtype": np.int32},
              "pos_x": {"shape": (self.num_agents,), "dtype": np.float32},
              "pos_y": {"shape": (self.num_agents,), "dtype": np.float32},
@@ -403,6 +426,7 @@ class DroneEnv(CUDAEnvironmentState):
                 "masses", "drag_coeffs", "thrust_coeffs",
                 "target_vx", "target_vy", "target_vz", "target_yaw_rate",
                 "imu_history",
+                "pos_history",
                 "rng_states",
                 "observations", "rewards", "done_flags",
                 "step_counts"
@@ -425,6 +449,7 @@ class DroneEnv(CUDAEnvironmentState):
             "masses": "masses", "drag_coeffs": "drag_coeffs", "thrust_coeffs": "thrust_coeffs",
             "target_vx": "target_vx", "target_vy": "target_vy", "target_vz": "target_vz", "target_yaw_rate": "target_yaw_rate",
             "imu_history": "imu_history",
+            "pos_history": "pos_history",
             "observations": "observations",
             "rewards": "rewards",
             "done_flags": "done_flags",
@@ -442,6 +467,7 @@ class DroneEnv(CUDAEnvironmentState):
             "masses": "masses", "drag_coeffs": "drag_coeffs", "thrust_coeffs": "thrust_coeffs",
             "target_vx": "target_vx", "target_vy": "target_vy", "target_vz": "target_vz", "target_yaw_rate": "target_yaw_rate",
             "imu_history": "imu_history",
+            "pos_history": "pos_history",
             "rng_states": "rng_states",
             "step_counts": "step_counts",
             "num_agents": "num_agents",
