@@ -234,6 +234,12 @@ class KFACOptimizer(optim.Optimizer):
         self._step(closure)
         self.steps += 1
 
+class KFACOptimizerPlaceholder(KFACOptimizer):
+    """
+    Placeholder class for KFACOptimizer to ensure import compatibility.
+    """
+    pass
+
 # --- End KFAC Implementation ---
 
 class Autoencoder1D(nn.Module):
@@ -327,6 +333,6 @@ class DronePolicy(nn.Module):
              x = layer(x)
 
         action_logits = self.policy_head[-1](x)
-        value = self.value_head(rl_input)
+        value = self.value_head(x)
 
         return action_logits, value, recon, history
