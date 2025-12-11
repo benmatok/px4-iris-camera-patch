@@ -122,12 +122,12 @@ __global__ void step(
 
     // 2. Observations
     // Structure:
-    // Body Vel (3), Orientation(2: Roll, Pitch), IMU(3: Acc), Rates(3), Target(4), Camera(64)
-    // Total: 3 + 2 + 3 + 3 + 4 + 64 = 79 floats
-    int obs_offset = idx * 79;
+    // IMU (Acc Body: 3, Rates: 3) + Target (4) + Camera (64) = 74 floats
+    // REMOVED: Body Velocity (3), Orientation (2)
+    int obs_offset = idx * 74;
     int ptr = 0;
 
-    // Convert World Velocity to Body Velocity
+    // Convert World Velocity to Body Velocity (Needed for Reward, not for Obs)
     // R_wb = [ cy*cp, cy*sp*sr - sy*cr, cy*sp*cr + sy*sr ]
     //        [ sy*cp, sy*sp*sr + cy*cr, sy*sp*cr - cy*sr ]
     //        [ -sp,   cp*sr,            cp*cr            ]
@@ -152,24 +152,11 @@ __global__ void step(
     float vy_b = r21 * vx + r22 * vy + r23 * vz;
     float vz_b = r31 * vx + r32 * vy + r33 * vz;
 
-    observations[obs_offset + ptr++] = vx_b;
-    observations[obs_offset + ptr++] = vy_b;
-    observations[obs_offset + ptr++] = vz_b;
-
-    // Orientation (Roll, Pitch only - Yaw is relative)
-    observations[obs_offset + ptr++] = r;
-    observations[obs_offset + ptr++] = p;
+    // OBSERVATIONS UPDATE: Removed explicit velocity and orientation.
+    // Rely solely on IMU (Accel, Rates) and Camera (Depth).
 
     // IMU - Accelerometer (Body Frame)
     // Acc_w = [ax_thrust + ax_drag, ... ]
-    // Gravity is not measured by accelerometer usually?
-    // Accelerometers measure proper acceleration (Force / mass).
-    // In free fall, acc is 0. Sitting on ground, acc is +g up.
-    // Here, forces are Thrust + Drag. Gravity is external field.
-    // So Acc_measure = (Thrust + Drag) / mass.
-    // We already computed forces in world frame: ax_thrust, ax_drag.
-    // Acc_w_measure = (ax_thrust + ax_drag, ...).
-    // Convert to Body Frame.
     float acc_w_x = ax_thrust + ax_drag;
     float acc_w_y = ay_thrust + ay_drag;
     float acc_w_z = az_thrust + az_drag;
@@ -232,9 +219,6 @@ __global__ void step(
 
     // Penalties
     reward -= 0.01f * (r*r + p*p); // Keep flat-ish unless needed?
-    // Actually, to move fast, we need to tilt.
-    // But excessively large tilt might be bad. Let's reduce this penalty or remove it if it hinders movement.
-    // Let's keep a small penalty for extreme angles.
     if (fabsf(r) > 1.0f || fabsf(p) > 1.0f) reward -= 0.1f;
 
     if (collision) reward -= 10.0f;
@@ -388,15 +372,15 @@ class DroneEnv(CUDAEnvironmentState):
              "step_counts": {"shape": (self.num_agents,), "dtype": np.int32},
              "done_flags": {"shape": (self.num_agents,), "dtype": np.float32},
              "rewards": {"shape": (self.num_agents,), "dtype": np.float32},
-             "observations": {"shape": (self.num_agents, 79), "dtype": np.float32},
+             "observations": {"shape": (self.num_agents, 74), "dtype": np.float32},
         }
 
     def get_action_space(self):
         return (self.num_agents, 4)
 
     def get_observation_space(self):
-        # 3 (Vel Body) + 2 (Orient) + 3 (Acc) + 3 (Rates) + 4 (Cmd) + 64 (Cam) = 79
-        return (self.num_agents, 79)
+        # 3 (Acc) + 3 (Rates) + 4 (Cmd) + 64 (Cam) = 74
+        return (self.num_agents, 74)
 
     def get_reward_signature(self): return (self.num_agents,)
 
