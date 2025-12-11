@@ -122,9 +122,9 @@ __global__ void step(
 
     // 2. Observations
     // Structure:
-    // IMU (Acc Body: 3, Rates: 3) + Target (4) + Camera (64) = 74 floats
-    // REMOVED: Body Velocity (3), Orientation (2)
-    int obs_offset = idx * 74;
+    // IMU (Acc Body: 3, Rates: 3) + Target (4) = 10 floats
+    // REMOVED: Body Velocity (3), Orientation (2), Depth Map (64)
+    int obs_offset = idx * 10;
     int ptr = 0;
 
     // Convert World Velocity to Body Velocity (Needed for Reward, not for Obs)
@@ -152,8 +152,8 @@ __global__ void step(
     float vy_b = r21 * vx + r22 * vy + r23 * vz;
     float vz_b = r31 * vx + r32 * vy + r33 * vz;
 
-    // OBSERVATIONS UPDATE: Removed explicit velocity and orientation.
-    // Rely solely on IMU (Accel, Rates) and Camera (Depth).
+    // OBSERVATIONS UPDATE: Removed explicit velocity and orientation and depth map.
+    // Rely solely on IMU (Accel, Rates).
 
     // IMU - Accelerometer (Body Frame)
     // Acc_w = [ax_thrust + ax_drag, ... ]
@@ -184,27 +184,6 @@ __global__ void step(
     observations[obs_offset + ptr++] = tvy;
     observations[obs_offset + ptr++] = tvz;
     observations[obs_offset + ptr++] = tyr;
-
-    // Camera (8x8 = 64) - Depth Map
-    float fov_half_size = 5.0f;
-    int cam_res = 8;
-    for (int cy_i = 0; cy_i < cam_res; cy_i++) {
-        for (int cx_i = 0; cx_i < cam_res; cx_i++) {
-            float u = (float)cx_i / (cam_res - 1) * 2.0f - 1.0f;
-            float v = (float)cy_i / (cam_res - 1) * 2.0f - 1.0f;
-
-            // Simple raycast approximation: Assume camera looks down-ish or follows body?
-            // Original code: sample_x = px + u * fov, sample_y = py + v * fov.
-            // This assumes camera is looking down and aligned with world XY (or body XY if flat).
-            // Let's keep it simple as a "Terrain Sensor" below the drone.
-            float sample_x = px + u * fov_half_size;
-            float sample_y = py + v * fov_half_size;
-
-            float h = terrain_height(sample_x, sample_y);
-            float dist = pz - h;
-            observations[obs_offset + ptr++] = dist;
-        }
-    }
 
     // 3. Rewards
     // Target Tracking Error
@@ -372,15 +351,15 @@ class DroneEnv(CUDAEnvironmentState):
              "step_counts": {"shape": (self.num_agents,), "dtype": np.int32},
              "done_flags": {"shape": (self.num_agents,), "dtype": np.float32},
              "rewards": {"shape": (self.num_agents,), "dtype": np.float32},
-             "observations": {"shape": (self.num_agents, 74), "dtype": np.float32},
+             "observations": {"shape": (self.num_agents, 10), "dtype": np.float32},
         }
 
     def get_action_space(self):
         return (self.num_agents, 4)
 
     def get_observation_space(self):
-        # 3 (Acc) + 3 (Rates) + 4 (Cmd) + 64 (Cam) = 74
-        return (self.num_agents, 74)
+        # 3 (Acc) + 3 (Rates) + 4 (Cmd) = 10
+        return (self.num_agents, 10)
 
     def get_reward_signature(self): return (self.num_agents,)
 
