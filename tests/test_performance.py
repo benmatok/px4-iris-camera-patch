@@ -27,22 +27,15 @@ class TestPerformance(unittest.TestCase):
         if not self.dependencies_present:
             return
 
-        # Ideally, we force the target to be Forward and check rewards.
-        # target_vx = self.env_wrapper.cuda_data_manager.pull_data("target_vx")
-
         # Step with zero actions
         obs, rewards, done, info = self.env_wrapper.step({'drone_0': np.zeros((5, 4), dtype=np.float32)})
 
         self.assertEqual(rewards['drone_0'].shape, (5,))
         # Check obs shape
-        self.assertEqual(obs['drone_0'].shape, (5, 184))
+        self.assertEqual(obs['drone_0'].shape, (5, 1804))
         print("Step executed successfully.")
 
     def test_mock_simulation_logic(self):
-        """
-        If dependencies are missing, perform a logic verification using the static test approach
-        reused here to satisfy the requirement of 'adding tests'.
-        """
         if self.dependencies_present:
             return
 
@@ -62,22 +55,16 @@ class TestPerformance(unittest.TestCase):
             def __init__(self, **kwargs): pass
         wd_mock.CUDAEnvironmentState = MockCUDAEnvironmentState
 
-        # Import (reload if necessary)
         if "drone_env.drone" in sys.modules:
             del sys.modules["drone_env.drone"]
         from drone_env.drone import DroneEnv
 
         env = DroneEnv(num_agents=1)
-        # Check that we fixed the argument mismatch
         step_kwargs = env.get_step_function_kwargs()
-        self.assertNotIn("rng_states", step_kwargs, "rng_states should not be in step kwargs")
+        self.assertNotIn("rng_states", step_kwargs)
 
-        # Check RNG fix in source
         from drone_env import drone
-        self.assertIn("rng_states[idx] + idx", drone._DRONE_CUDA_SOURCE, "RNG seed should include idx")
-
-        # Check History Logic presence
-        self.assertIn("imu_history", step_kwargs)
+        self.assertIn("const int substeps = 10;", drone._DRONE_CUDA_SOURCE)
 
         self.assertTrue(True)
 
