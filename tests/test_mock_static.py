@@ -47,10 +47,6 @@ class TestDroneEnvStatic(unittest.TestCase):
         # Checks for Reward Logic (calculating errors)
         self.assertIn("float v_err_sq =", source_code)
 
-        # Check that we DO calculate vx_b for Reward, but verify it's NOT in Observation logic comments/structure if possible.
-        # But looking at C++ string via string search is hard for logic flow.
-        # Instead we rely on observation space size check.
-
     def test_all_command_cases_present(self):
         """
         Verifies that the reset logic includes cases for all required commands:
@@ -71,8 +67,8 @@ class TestDroneEnvStatic(unittest.TestCase):
     def test_observation_space_size(self):
         env = DroneEnv(num_agents=1)
         obs_dim = env.get_observation_space()[1]
-        # New size is 74
-        self.assertEqual(obs_dim, 74)
+        # New size is 10 (3 Acc + 3 Rates + 4 Cmds)
+        self.assertEqual(obs_dim, 10)
 
 if __name__ == '__main__':
     unittest.main()
