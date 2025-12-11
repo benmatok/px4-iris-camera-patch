@@ -1,0 +1,25 @@
+name: drone_env
+
+env:
+  num_agents: 1
+
+policy:
+  drone_policy:
+    model: FullyConnected
+    # Observation space is 9 + 6 + 64 = 79
+    # Action space is 4
+    hidden_dims: [128, 128]
+
+trainer:
+  num_envs: 1024       # Parallel environments on GPU
+  episode_length: 100
+  training_iterations: 1000
+  num_gpus: 1
+
+algorithm:
+  name: PPO
+  gamma: 0.99
+  lr: 0.001
+  clip_param: 0.2
+  vf_loss_coeff: 0.5
+  entropy_coeff: 0.01
