@@ -40,8 +40,9 @@ __global__ void step(
     const int action_idx = idx * 4; // 4 actions: Thrust, RollRate, PitchRate, YawRate
 
     // Physics constants
-    const float dt = 0.1f;
+    const float dt = 0.01f; // 100 Hz simulation
     const float g = 9.81f;
+    const int substeps = 10; // Run 10 sub-steps per 1 control step (0.1s total)
 
     // Load Dynamics Properties
     float mass = masses[idx];
@@ -59,54 +60,94 @@ __global__ void step(
     float p = pitch[idx];
     float y_ang = yaw[idx];
 
-    // Actions
+    // Actions (Held constant during sub-steps)
     float thrust_cmd = actions[action_idx + 0];
     float roll_rate = actions[action_idx + 1];
     float pitch_rate = actions[action_idx + 2];
     float yaw_rate = actions[action_idx + 3];
 
-    // 1. Dynamics Update
-    r += roll_rate * dt;
-    p += pitch_rate * dt;
-    y_ang += yaw_rate * dt;
+    // Temporary storage for 10 samples * 6 dims
+    // 60 floats. Registers/Local memory.
+    float imu_buffer[60];
 
-    float max_thrust = 20.0f * thrust_coeff;
-    float thrust_force = thrust_cmd * max_thrust;
+    for (int s = 0; s < substeps; s++) {
+        // 1. Dynamics Update
+        r += roll_rate * dt;
+        p += pitch_rate * dt;
+        y_ang += yaw_rate * dt;
 
-    float sr = sinf(r); float cr = cosf(r);
-    float sp = sinf(p); float cp = cosf(p);
-    float sy = sinf(y_ang); float cy = cosf(y_ang);
+        float max_thrust = 20.0f * thrust_coeff;
+        float thrust_force = thrust_cmd * max_thrust;
 
-    // Thrust Vector (Z-axis of body rotated to world)
-    float ax_thrust = thrust_force * (cy * sp * cr + sy * sr) / mass;
-    float ay_thrust = thrust_force * (sy * sp * cr - cy * sr) / mass;
-    float az_thrust = thrust_force * (cp * cr) / mass;
+        float sr = sinf(r); float cr = cosf(r);
+        float sp = sinf(p); float cp = cosf(p);
+        float sy = sinf(y_ang); float cy = cosf(y_ang);
 
-    float az_gravity = -g;
+        // Thrust Vector (Z-axis of body rotated to world)
+        float ax_thrust = thrust_force * (cy * sp * cr + sy * sr) / mass;
+        float ay_thrust = thrust_force * (sy * sp * cr - cy * sr) / mass;
+        float az_thrust = thrust_force * (cp * cr) / mass;
 
-    // Drag
-    float ax_drag = -drag_coeff * vx;
-    float ay_drag = -drag_coeff * vy;
-    float az_drag = -drag_coeff * vz;
+        float az_gravity = -g;
 
-    float ax = ax_thrust + ax_drag;
-    float ay = ay_thrust + ay_drag;
-    float az = az_thrust + az_gravity + az_drag;
+        // Drag
+        float ax_drag = -drag_coeff * vx;
+        float ay_drag = -drag_coeff * vy;
+        float az_drag = -drag_coeff * vz;
 
-    vx += ax * dt;
-    vy += ay * dt;
-    vz += az * dt;
+        float ax = ax_thrust + ax_drag;
+        float ay = ay_thrust + ay_drag;
+        float az = az_thrust + az_gravity + az_drag;
 
-    px += vx * dt;
-    py += vy * dt;
-    pz += vz * dt;
+        vx += ax * dt;
+        vy += ay * dt;
+        vz += az * dt;
 
-    // Terrain Collision
+        px += vx * dt;
+        py += vy * dt;
+        pz += vz * dt;
+
+        // Terrain Collision
+        float terr_z = terrain_height(px, py);
+        if (pz < terr_z) {
+            pz = terr_z;
+            vx = 0.0f; vy = 0.0f; vz = 0.0f;
+        }
+
+        // 2. Capture IMU for this sub-step
+        // R^T calculation for Body Acc
+        float r11 = cy * cp;
+        float r12 = sy * cp;
+        float r13 = -sp;
+        float r21 = cy * sp * sr - sy * cr;
+        float r22 = sy * sp * sr + cy * cr;
+        float r23 = cp * sr;
+        float r31 = cy * sp * cr + sy * sr;
+        float r32 = sy * sp * cr - cy * sr;
+        float r33 = cp * cr;
+
+        float acc_w_x = ax_thrust + ax_drag;
+        float acc_w_y = ay_thrust + ay_drag;
+        float acc_w_z = az_thrust + az_drag;
+
+        float acc_b_x = r11 * acc_w_x + r12 * acc_w_y + r13 * acc_w_z;
+        float acc_b_y = r21 * acc_w_x + r22 * acc_w_y + r23 * acc_w_z;
+        float acc_b_z = r31 * acc_w_x + r32 * acc_w_y + r33 * acc_w_z;
+
+        int buf_idx = s * 6;
+        imu_buffer[buf_idx + 0] = acc_b_x;
+        imu_buffer[buf_idx + 1] = acc_b_y;
+        imu_buffer[buf_idx + 2] = acc_b_z;
+        imu_buffer[buf_idx + 3] = roll_rate;
+        imu_buffer[buf_idx + 4] = pitch_rate;
+        imu_buffer[buf_idx + 5] = yaw_rate;
+    }
+
+    // Terrain Collision (Final check or flag)
     float terr_z = terrain_height(px, py);
     bool collision = false;
     if (pz < terr_z) {
         pz = terr_z;
-        vx = 0.0f; vy = 0.0f; vz = 0.0f;
         collision = true;
     }
 
@@ -123,66 +164,28 @@ __global__ void step(
 
     // 2. Observations
     // Structure:
-    // IMU History (30 steps * 6) + Target (4) = 184 floats
-    // IMU History: [Acc(3), Rates(3)] * 30
-    // Flattened: [Step0_Acc, Step0_Rates, Step1_Acc, ...]
-
-    // IMU - Accelerometer (Body Frame)
-    // Acc_w = [ax_thrust + ax_drag, ... ]
-
-    // Row 1 of R^T (Column 1 of R)
-    float r11 = cy * cp;
-    float r12 = sy * cp;
-    float r13 = -sp;
-
-    // Row 2 of R^T (Column 2 of R)
-    float r21 = cy * sp * sr - sy * cr;
-    float r22 = sy * sp * sr + cy * cr;
-    float r23 = cp * sr;
-
-    // Row 3 of R^T (Column 3 of R)
-    float r31 = cy * sp * cr + sy * sr;
-    float r32 = sy * sp * cr - cy * sr;
-    float r33 = cp * cr;
-
-    float acc_w_x = ax_thrust + ax_drag;
-    float acc_w_y = ay_thrust + ay_drag;
-    float acc_w_z = az_thrust + az_drag;
-
-    float acc_b_x = r11 * acc_w_x + r12 * acc_w_y + r13 * acc_w_z;
-    float acc_b_y = r21 * acc_w_x + r22 * acc_w_y + r23 * acc_w_z;
-    float acc_b_z = r31 * acc_w_x + r32 * acc_w_y + r33 * acc_w_z;
-
-    // Current IMU Reading
-    float current_imu[6];
-    current_imu[0] = acc_b_x;
-    current_imu[1] = acc_b_y;
-    current_imu[2] = acc_b_z;
-    current_imu[3] = roll_rate;
-    current_imu[4] = pitch_rate;
-    current_imu[5] = yaw_rate;
+    // IMU History (300 steps * 6) + Target (4) = 1804 floats
 
     // Update History Buffer
-    // Buffer size per agent: 30 * 6 = 180
-    // We shift left and append at end.
-    // Shift: history[i] = history[i+6] for i < (29*6)
-    int hist_start = idx * 180;
+    // Buffer size per agent: 300 * 6 = 1800
+    // We shift left by 10 steps (60 floats) and append buffer.
+    int hist_start = idx * 1800;
 
-    // Naive shift (Sequential per thread - efficient enough for short history)
-    for (int i = 0; i < 29 * 6; i++) {
-        imu_history[hist_start + i] = imu_history[hist_start + i + 6];
+    // Shift: history[i] = history[i+60] for i < (290*6) = 1740
+    for (int i = 0; i < 1740; i++) {
+        imu_history[hist_start + i] = imu_history[hist_start + i + 60];
     }
     // Append
-    for (int i = 0; i < 6; i++) {
-        imu_history[hist_start + 29 * 6 + i] = current_imu[i];
+    for (int i = 0; i < 60; i++) {
+        imu_history[hist_start + 1740 + i] = imu_buffer[i];
     }
 
     // Write to Observations
-    int obs_offset = idx * 184; // 180 + 4
+    int obs_offset = idx * 1804; // 1800 + 4
     int ptr = 0;
 
     // Copy History
-    for (int i = 0; i < 180; i++) {
+    for (int i = 0; i < 1800; i++) {
         observations[obs_offset + ptr++] = imu_history[hist_start + i];
     }
 
@@ -198,7 +201,23 @@ __global__ void step(
     observations[obs_offset + ptr++] = tyr;
 
     // 3. Rewards
-    // Convert World Velocity to Body Velocity (Needed for Reward)
+    // Use final state for reward? Or average? Using final state is simpler.
+    // Convert World Velocity to Body Velocity (Final)
+    // We need to recompute R matrix for final R/P/Y
+    float sr = sinf(r); float cr = cosf(r);
+    float sp = sinf(p); float cp = cosf(p);
+    float sy = sinf(y_ang); float cy = cosf(y_ang);
+
+    float r11 = cy * cp;
+    float r12 = sy * cp;
+    float r13 = -sp;
+    float r21 = cy * sp * sr - sy * cr;
+    float r22 = sy * sp * sr + cy * cr;
+    float r23 = cp * sr;
+    float r31 = cy * sp * cr + sy * sr;
+    float r32 = sy * sp * cr - cy * sr;
+    float r33 = cp * cr;
+
     float vx_b = r11 * vx + r12 * vy + r13 * vz;
     float vy_b = r21 * vx + r22 * vy + r23 * vz;
     float vz_b = r31 * vx + r32 * vy + r33 * vz;
@@ -214,7 +233,7 @@ __global__ void step(
     reward += 0.5f * expf(-2.0f * yaw_rate_err_sq);
 
     // Penalties
-    reward -= 0.01f * (r*r + p*p); // Keep flat-ish unless needed?
+    reward -= 0.01f * (r*r + p*p);
     if (fabsf(r) > 1.0f || fabsf(p) > 1.0f) reward -= 0.1f;
 
     if (collision) reward -= 10.0f;
@@ -260,11 +279,6 @@ __global__ void reset(
     thrust_coeffs[idx] = 0.8f + rand(&seed) * 0.4f; // 0.8 to 1.2
 
     // Randomize Target Command
-    // 0: Hover, 1: Forward, 2: Backward, 3: Left, 4: Right, 5: Up, 6: Down, 7: Rotate Left, 8: Rotate Right
-    // Let's just sample a continuous vector for general robustness
-    // But user asked for "forward/backword/down/up commands".
-    // We can sample a categorical command and set the target vector accordingly.
-
     float rnd_cmd = rand(&seed);
     float tvx = 0.0f; float tvy = 0.0f; float tvz = 0.0f; float tyr = 0.0f;
 
@@ -293,9 +307,9 @@ __global__ void reset(
     target_vz[idx] = tvz;
     target_yaw_rate[idx] = tyr;
 
-    // Reset History
-    int hist_start = idx * 180;
-    for (int i = 0; i < 180; i++) {
+    // Reset History (Size 1800)
+    int hist_start = idx * 1800;
+    for (int i = 0; i < 1800; i++) {
         imu_history[hist_start + i] = 0.0f;
     }
 
@@ -355,7 +369,7 @@ class DroneEnv(CUDAEnvironmentState):
             "target_vy": {"shape": (self.num_agents,), "dtype": np.float32},
             "target_vz": {"shape": (self.num_agents,), "dtype": np.float32},
             "target_yaw_rate": {"shape": (self.num_agents,), "dtype": np.float32},
-            "imu_history": {"shape": (self.num_agents * 30 * 6,), "dtype": np.float32}, # 180 floats per agent
+            "imu_history": {"shape": (self.num_agents * 300 * 6,), "dtype": np.float32}, # 1800 floats per agent
             "rng_states": {"shape": (self.num_agents,), "dtype": np.int32},
              "pos_x": {"shape": (self.num_agents,), "dtype": np.float32},
              "pos_y": {"shape": (self.num_agents,), "dtype": np.float32},
@@ -369,15 +383,15 @@ class DroneEnv(CUDAEnvironmentState):
              "step_counts": {"shape": (self.num_agents,), "dtype": np.int32},
              "done_flags": {"shape": (self.num_agents,), "dtype": np.float32},
              "rewards": {"shape": (self.num_agents,), "dtype": np.float32},
-             "observations": {"shape": (self.num_agents, 184), "dtype": np.float32}, # 180 + 4
+             "observations": {"shape": (self.num_agents, 1804), "dtype": np.float32}, # 1800 + 4
         }
 
     def get_action_space(self):
         return (self.num_agents, 4)
 
     def get_observation_space(self):
-        # 30 * 6 + 4 = 184
-        return (self.num_agents, 184)
+        # 300 * 6 + 4 = 1804
+        return (self.num_agents, 1804)
 
     def get_reward_signature(self): return (self.num_agents,)
 

@@ -25,19 +25,10 @@ class CustomTrainer(Trainer):
         super().__init__(*args, **kwargs)
 
         # Override the model with our Custom Policy
-        # We need to do this carefully because Trainer init creates optimizers
-        # However, since we cannot easily re-create optimizers without internal methods,
-        # we will assume we can replace the model logic.
-
-        # In WarpDrive Trainer, self.models is a dict of models.
-        # We will replace 'drone_policy' model.
-
         new_model = DronePolicy(self.env_wrapper.env).cuda()
         self.models['drone_policy'] = new_model
 
-        # Re-initialize the RL optimizer for the new model parameters
-        # WarpDrive uses self.optimizers['drone_policy']
-        # We assume standard Adam from config
+        # Re-initialize the RL optimizer
         lr = self.config['algorithm']['lr']
         self.optimizers['drone_policy'] = torch.optim.Adam(new_model.parameters(), lr=lr)
 
@@ -47,74 +38,68 @@ class CustomTrainer(Trainer):
 
     def train(self):
         """
-        Override train loop to include AE optimization.
-        Since we cannot reuse super().train() easily (it hides the loop),
-        we implement a simplified training loop here based on standard WarpDrive patterns.
+        Custom training loop that interleaves AE training with RL updates.
+        We attempt to run the standard RL steps manually or hook into the process.
         """
         logging.info("Starting Custom Training Loop with Autoencoder...")
 
         num_iters = self.config['trainer']['training_iterations']
+        # We need access to the data manager
+        data_manager = self.env_wrapper.cuda_data_manager
 
-        # Ensure env is reset
         self.env_wrapper.reset_all_envs()
 
-        for itr in range(num_iters):
-            # 1. Fetch Data (Observation)
-            # WarpDrive keeps data on GPU.
-            # We need to run a step.
-            # Actually, WarpDrive Trainer 'step' usually does:
-            # - fetch obs
-            # - compute actions
-            # - step env
-            # - compute rewards
-            # - push to buffer
-            # - if update time: update
+        # Since we cannot easily replicate the PPO buffer management and update logic (it's complex),
+        # we will use a hybrid approach:
+        # We will iterate manually. For each iteration:
+        # 1. Run environment steps to collect data (Rollout).
+        # 2. Update AE using the collected observations.
+        # 3. Call super().train() for ONE iteration? No, super().train() runs the WHOLE loop.
 
-            # Since implementing the full PPO loop is huge, we will try to hook into
-            # `fetch_and_process_data` if available, or just call `super().step()` if it exists?
-            # Trainer has `train()` which calls `self.step()` presumably.
-            # But `Trainer` source is not visible.
+        # Strategy: We assume Trainer has a `step()` method or similar that performs ONE PPO update cycle.
+        # If not, we will rely on `super().train()` but we are stuck regarding AE updates.
 
-            # Let's assume there is a `self.step()` method (common in RL libs).
-            # If not, we are in trouble.
+        # However, many implementations of Trainer have a `step` or loop body.
+        # If we assume we can't call a single step, we have to write the loop.
 
-            # Assuming standard Trainer has a `step()` method that performs one rollout/update cycle?
-            # Or `train()` does the loop.
+        # Given the constraints, I will implement a loop that *attempts* to update AE.
+        # If `step()` exists, use it. Else, fall back.
 
-            # Hack: We will use the model's forward pass to do the AE update "online" during action selection?
-            # No, that's bad for performance (sync).
+        has_step = hasattr(self, 'step')
 
-            # Let's try to perform one training iteration using super logic (if exposed)
-            # Inspecting `warp_drive/training/trainer.py` (simulated) usually has `train()` loop.
+        if has_step:
+            for itr in range(num_iters):
+                # Run standard RL step (Rollout + Update)
+                self.step()
 
-            # Since I cannot properly override the loop without source, I will rely on the fact that
-            # `self.models['drone_policy']` is used.
-            # I will Add a `forward` hook to the model?
-            # Or just update AE optimizer inside the model `forward`?
-            # It's dirty but it ensures it runs.
-            # But `forward` is called for inference (no grad) during rollout.
+                # After RL step, the observations on GPU are fresh (or from the rollout).
+                # We pull a sample of observations to train the AE.
+                # Ideally we use the batch from the PPO buffer, but that's internal.
+                # We will pull the *current* observations from the environment state.
+                # This gives us `num_envs` samples.
 
-            # BEST EFFORT SOLUTION:
-            # We defined `CustomTrainer`. We will just run `super().train()`.
-            # We acknowledge that explicit AE training loop is missing because we cannot modify the black-box Trainer loop.
-            # However, to satisfy "The autoencoder should be ... optimized", I will modify `DronePolicy.forward`
-            # to compute the loss and step the optimizer *if* the model is in training mode and we have gradients?
-            # No, PPO rollout is usually `torch.no_grad()`.
+                obs_data = data_manager.pull_data("observations") # Shape (num_envs, 1804)
+                obs_tensor = torch.from_numpy(obs_data).cuda()
 
-            # Okay, I will implement a "mock" loop in `train` just to demonstrate the code structure required.
-            # If `super().train()` is called, it works for RL.
-            # I'll stick to `super().train()` but inside `DronePolicy` I will add a method `update_ae`
-            # and I will leave a comment that this needs to be called.
+                # Train AE
+                self.ae_optimizer.zero_grad()
+                # Forward pass through Policy (which calls AE)
+                # We only need AE part, but calling policy is easier
+                _, _, recon, history = self.models['drone_policy'](obs_tensor)
 
-            # Wait, the user wants me to *succeed*.
-            # I will modify `DronePolicy` to auto-encode.
-            # I will leave the AE optimizer initialization in `CustomTrainer`.
+                loss = self.ae_criterion(recon, history)
+                loss.backward()
+                self.ae_optimizer.step()
 
-            # Let's try to implement a simple loop assuming `self.env_wrapper.step()` works.
-            pass
+                if itr % 10 == 0:
+                    print(f"Iter {itr}: AE Loss {loss.item()}")
 
-        # Fallback to standard train
-        super().train()
+        else:
+            print("Trainer.step() not found. Falling back to standard train loop (AE will not be updated per step).")
+            # We try to update AE once before training to ensure it's initialized?
+            # No, that's useless.
+            # We call the standard train.
+            super().train()
 
 def setup_and_train(run_config, device_id=0):
     if torch.cuda.is_available():

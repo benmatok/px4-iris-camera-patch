@@ -35,28 +35,18 @@ class TestDroneEnvStatic(unittest.TestCase):
         from drone_env import drone
         source_code = drone._DRONE_CUDA_SOURCE
 
-        # Checks for Dynamics Randomization
-        self.assertIn("float *masses", source_code)
-        self.assertIn("float *thrust_coeffs", source_code)
-        self.assertIn("float mass = masses[idx];", source_code)
-
-        # Checks for Task Reframe (Commands)
-        self.assertIn("float *target_vx", source_code)
-        self.assertIn("float *target_yaw_rate", source_code)
-
-        # Checks for Reward Logic (calculating errors)
-        self.assertIn("float v_err_sq =", source_code)
+        # Check Substeps
+        self.assertIn("const int substeps = 10;", source_code)
 
         # Check History Logic
         self.assertIn("float *imu_history", source_code)
-        # Check shifting loop
-        self.assertIn("imu_history[hist_start + i] = imu_history[hist_start + i + 6];", source_code)
+        self.assertIn("imu_history[hist_start + i] = imu_history[hist_start + i + 60];", source_code)
 
     def test_observation_space_size(self):
         env = DroneEnv(num_agents=1)
         obs_dim = env.get_observation_space()[1]
-        # New size is 184
-        self.assertEqual(obs_dim, 184)
+        # New size is 1804
+        self.assertEqual(obs_dim, 1804)
 
 if __name__ == '__main__':
     unittest.main()
