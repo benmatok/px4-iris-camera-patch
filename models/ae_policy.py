@@ -3,20 +3,21 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class KFACOptimizer(torch.optim.Optimizer):
+class KFACOptimizerPlaceholder(torch.optim.Optimizer):
     """
-    Simplified KFAC Optimizer approximation using diagonal scaling.
-    This mimics the Fisher Information Matrix behavior by scaling gradients
-    by the inverse of their running squared average (diagonal approximation),
-    similar to RMSProp or the diagonal blocks of KFAC.
+    Placeholder for KFAC Optimizer.
+    Full KFAC (Kronecker-factored Approximate Curvature) requires complex matrix
+    inversions and covariance tracking (fisher blocks) which typically require
+    external libraries (e.g. kfac-pytorch).
 
-    This is a "Simplified KFAC" as full block-diagonal inverse requires
-    complex hooks and matrix inversions which are out of scope for this
-    single-file implementation.
+    This implementation provides a Diagonal Preconditioning approximation (similar to RMSProp/Adagrad)
+    to satisfy the requirement for second-order-like optimization within a single file.
+
+    User is advised to replace this with a real KFAC library implementation in the target environment.
     """
     def __init__(self, params, lr=0.001, epsilon=1e-8, alpha=0.99):
         defaults = dict(lr=lr, epsilon=epsilon, alpha=alpha)
-        super(KFACOptimizer, self).__init__(params, defaults)
+        super(KFACOptimizerPlaceholder, self).__init__(params, defaults)
 
     def step(self, closure=None):
         loss = None

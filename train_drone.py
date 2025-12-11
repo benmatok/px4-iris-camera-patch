@@ -18,7 +18,7 @@ import sys
 sys.path.append(os.getcwd())
 
 from drone_env.drone import DroneEnv
-from models.ae_policy import DronePolicy, KFACOptimizer
+from models.ae_policy import DronePolicy, KFACOptimizerPlaceholder
 
 class CustomTrainer(Trainer):
     def __init__(self, *args, **kwargs):
@@ -33,7 +33,7 @@ class CustomTrainer(Trainer):
         self.optimizers['drone_policy'] = torch.optim.Adam(new_model.parameters(), lr=lr)
 
         # Initialize KFAC for AE (Auxiliary)
-        self.ae_optimizer = KFACOptimizer(new_model.ae.parameters(), lr=0.001)
+        self.ae_optimizer = KFACOptimizerPlaceholder(new_model.ae.parameters(), lr=0.001)
         self.ae_criterion = nn.L1Loss()
 
     def train(self):
@@ -44,47 +44,33 @@ class CustomTrainer(Trainer):
         logging.info("Starting Custom Training Loop with Autoencoder...")
 
         num_iters = self.config['trainer']['training_iterations']
-        # We need access to the data manager
         data_manager = self.env_wrapper.cuda_data_manager
 
         self.env_wrapper.reset_all_envs()
 
-        # Since we cannot easily replicate the PPO buffer management and update logic (it's complex),
-        # we will use a hybrid approach:
-        # We will iterate manually. For each iteration:
-        # 1. Run environment steps to collect data (Rollout).
-        # 2. Update AE using the collected observations.
-        # 3. Call super().train() for ONE iteration? No, super().train() runs the WHOLE loop.
+        # Check if we can use a step-based approach.
+        # Most WarpDrive versions don't expose a clean public 'step()' that does exactly one PPO iteration.
+        # However, we can construct the loop if we know the internals (fetch, rollout, loss, update).
+        # Since we don't, we will rely on a "Graceful Fallback" or "Interception".
 
-        # Strategy: We assume Trainer has a `step()` method or similar that performs ONE PPO update cycle.
-        # If not, we will rely on `super().train()` but we are stuck regarding AE updates.
-
-        # However, many implementations of Trainer have a `step` or loop body.
-        # If we assume we can't call a single step, we have to write the loop.
-
-        # Given the constraints, I will implement a loop that *attempts* to update AE.
-        # If `step()` exists, use it. Else, fall back.
-
+        # Attempt to detect a step method
         has_step = hasattr(self, 'step')
+        if not has_step and hasattr(self, 'trainer_step'): has_step = True # Some versions
 
         if has_step:
+            step_fn = self.step if hasattr(self, 'step') else self.trainer_step
+
             for itr in range(num_iters):
                 # Run standard RL step (Rollout + Update)
-                self.step()
+                step_fn()
 
-                # After RL step, the observations on GPU are fresh (or from the rollout).
-                # We pull a sample of observations to train the AE.
-                # Ideally we use the batch from the PPO buffer, but that's internal.
-                # We will pull the *current* observations from the environment state.
-                # This gives us `num_envs` samples.
-
+                # Interleaved AE Training
+                # 1. Fetch current observations (fresh from rollout or update)
                 obs_data = data_manager.pull_data("observations") # Shape (num_envs, 1804)
                 obs_tensor = torch.from_numpy(obs_data).cuda()
 
-                # Train AE
+                # 2. Update AE
                 self.ae_optimizer.zero_grad()
-                # Forward pass through Policy (which calls AE)
-                # We only need AE part, but calling policy is easier
                 _, _, recon, history = self.models['drone_policy'](obs_tensor)
 
                 loss = self.ae_criterion(recon, history)
@@ -95,10 +81,9 @@ class CustomTrainer(Trainer):
                     print(f"Iter {itr}: AE Loss {loss.item()}")
 
         else:
-            print("Trainer.step() not found. Falling back to standard train loop (AE will not be updated per step).")
-            # We try to update AE once before training to ensure it's initialized?
-            # No, that's useless.
-            # We call the standard train.
+            print("WARNING: Trainer.step() not found. Falling back to standard train loop.")
+            print("Autoencoder optimization loop cannot be interleaved without modifying WarpDrive source.")
+            # We call the standard train. AE will NOT be updated.
             super().train()
 
 def setup_and_train(run_config, device_id=0):
