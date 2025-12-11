@@ -21,6 +21,7 @@ __global__ void step(
     float *roll, float *pitch, float *yaw,
     float *masses, float *drag_coeffs, float *thrust_coeffs,
     float *target_vx, float *target_vy, float *target_vz, float *target_yaw_rate,
+    float *imu_history,
     float *observations,
     float *rewards,
     float *done_flags,
@@ -122,16 +123,12 @@ __global__ void step(
 
     // 2. Observations
     // Structure:
-    // IMU (Acc Body: 3, Rates: 3) + Target (4) = 10 floats
-    // REMOVED: Body Velocity (3), Orientation (2), Depth Map (64)
-    int obs_offset = idx * 10;
-    int ptr = 0;
+    // IMU History (30 steps * 6) + Target (4) = 184 floats
+    // IMU History: [Acc(3), Rates(3)] * 30
+    // Flattened: [Step0_Acc, Step0_Rates, Step1_Acc, ...]
 
-    // Convert World Velocity to Body Velocity (Needed for Reward, not for Obs)
-    // R_wb = [ cy*cp, cy*sp*sr - sy*cr, cy*sp*cr + sy*sr ]
-    //        [ sy*cp, sy*sp*sr + cy*cr, sy*sp*cr - cy*sr ]
-    //        [ -sp,   cp*sr,            cp*cr            ]
-    // V_b = R_wb^T * V_w
+    // IMU - Accelerometer (Body Frame)
+    // Acc_w = [ax_thrust + ax_drag, ... ]
 
     // Row 1 of R^T (Column 1 of R)
     float r11 = cy * cp;
@@ -148,15 +145,6 @@ __global__ void step(
     float r32 = sy * sp * cr - cy * sr;
     float r33 = cp * cr;
 
-    float vx_b = r11 * vx + r12 * vy + r13 * vz;
-    float vy_b = r21 * vx + r22 * vy + r23 * vz;
-    float vz_b = r31 * vx + r32 * vy + r33 * vz;
-
-    // OBSERVATIONS UPDATE: Removed explicit velocity and orientation and depth map.
-    // Rely solely on IMU (Accel, Rates).
-
-    // IMU - Accelerometer (Body Frame)
-    // Acc_w = [ax_thrust + ax_drag, ... ]
     float acc_w_x = ax_thrust + ax_drag;
     float acc_w_y = ay_thrust + ay_drag;
     float acc_w_z = az_thrust + az_drag;
@@ -165,14 +153,38 @@ __global__ void step(
     float acc_b_y = r21 * acc_w_x + r22 * acc_w_y + r23 * acc_w_z;
     float acc_b_z = r31 * acc_w_x + r32 * acc_w_y + r33 * acc_w_z;
 
-    observations[obs_offset + ptr++] = acc_b_x;
-    observations[obs_offset + ptr++] = acc_b_y;
-    observations[obs_offset + ptr++] = acc_b_z;
+    // Current IMU Reading
+    float current_imu[6];
+    current_imu[0] = acc_b_x;
+    current_imu[1] = acc_b_y;
+    current_imu[2] = acc_b_z;
+    current_imu[3] = roll_rate;
+    current_imu[4] = pitch_rate;
+    current_imu[5] = yaw_rate;
 
-    // Angular Rates (Body)
-    observations[obs_offset + ptr++] = roll_rate;
-    observations[obs_offset + ptr++] = pitch_rate;
-    observations[obs_offset + ptr++] = yaw_rate;
+    // Update History Buffer
+    // Buffer size per agent: 30 * 6 = 180
+    // We shift left and append at end.
+    // Shift: history[i] = history[i+6] for i < (29*6)
+    int hist_start = idx * 180;
+
+    // Naive shift (Sequential per thread - efficient enough for short history)
+    for (int i = 0; i < 29 * 6; i++) {
+        imu_history[hist_start + i] = imu_history[hist_start + i + 6];
+    }
+    // Append
+    for (int i = 0; i < 6; i++) {
+        imu_history[hist_start + 29 * 6 + i] = current_imu[i];
+    }
+
+    // Write to Observations
+    int obs_offset = idx * 184; // 180 + 4
+    int ptr = 0;
+
+    // Copy History
+    for (int i = 0; i < 180; i++) {
+        observations[obs_offset + ptr++] = imu_history[hist_start + i];
+    }
 
     // Target Commands
     float tvx = target_vx[idx];
@@ -186,6 +198,11 @@ __global__ void step(
     observations[obs_offset + ptr++] = tyr;
 
     // 3. Rewards
+    // Convert World Velocity to Body Velocity (Needed for Reward)
+    float vx_b = r11 * vx + r12 * vy + r13 * vz;
+    float vy_b = r21 * vx + r22 * vy + r23 * vz;
+    float vz_b = r31 * vx + r32 * vy + r33 * vz;
+
     // Target Tracking Error
     float v_err_sq = (vx_b - tvx)*(vx_b - tvx) + (vy_b - tvy)*(vy_b - tvy) + (vz_b - tvz)*(vz_b - tvz);
     float yaw_rate_err_sq = (yaw_rate - tyr)*(yaw_rate - tyr);
@@ -221,6 +238,7 @@ __global__ void reset(
     float *roll, float *pitch, float *yaw,
     float *masses, float *drag_coeffs, float *thrust_coeffs,
     float *target_vx, float *target_vy, float *target_vz, float *target_yaw_rate,
+    float *imu_history,
     int *rng_states,
     int *step_counts,
     const int num_agents,
@@ -275,6 +293,12 @@ __global__ void reset(
     target_vz[idx] = tvz;
     target_yaw_rate[idx] = tyr;
 
+    // Reset History
+    int hist_start = idx * 180;
+    for (int i = 0; i < 180; i++) {
+        imu_history[hist_start + i] = 0.0f;
+    }
+
     // Update seed state
     rng_states[idx] = seed;
 
@@ -300,9 +324,6 @@ class DroneEnv(CUDAEnvironmentState):
         self.episode_length = kwargs.get("episode_length", 100)
         self.agent_ids = [f"drone_{i}" for i in range(self.num_agents)]
 
-        self.cam_res = 8
-        self.cam_pixels = self.cam_res * self.cam_res
-
         # Compile CUDA Kernel
         self.cuda_module = SourceModule(_DRONE_CUDA_SOURCE, no_extern_c=True)
         self.step_function = self.cuda_module.get_function("step")
@@ -318,6 +339,7 @@ class DroneEnv(CUDAEnvironmentState):
                 "roll", "pitch", "yaw",
                 "masses", "drag_coeffs", "thrust_coeffs",
                 "target_vx", "target_vy", "target_vz", "target_yaw_rate",
+                "imu_history",
                 "rng_states",
                 "step_counts"
             ],
@@ -333,12 +355,8 @@ class DroneEnv(CUDAEnvironmentState):
             "target_vy": {"shape": (self.num_agents,), "dtype": np.float32},
             "target_vz": {"shape": (self.num_agents,), "dtype": np.float32},
             "target_yaw_rate": {"shape": (self.num_agents,), "dtype": np.float32},
+            "imu_history": {"shape": (self.num_agents * 30 * 6,), "dtype": np.float32}, # 180 floats per agent
             "rng_states": {"shape": (self.num_agents,), "dtype": np.int32},
-            # Common states if not automatically handled by super/get_state_names mapping
-            # (WarpDrive usually handles core states if they are in core_state_names and exist in dict)
-            # But we should probably define them to be safe if they weren't defined elsewhere.
-            # Assuming previous code worked without get_data_dictionary means they might be defaulted
-            # or inferred. But since we are adding new ones, let's be thorough.
              "pos_x": {"shape": (self.num_agents,), "dtype": np.float32},
              "pos_y": {"shape": (self.num_agents,), "dtype": np.float32},
              "pos_z": {"shape": (self.num_agents,), "dtype": np.float32},
@@ -351,15 +369,15 @@ class DroneEnv(CUDAEnvironmentState):
              "step_counts": {"shape": (self.num_agents,), "dtype": np.int32},
              "done_flags": {"shape": (self.num_agents,), "dtype": np.float32},
              "rewards": {"shape": (self.num_agents,), "dtype": np.float32},
-             "observations": {"shape": (self.num_agents, 10), "dtype": np.float32},
+             "observations": {"shape": (self.num_agents, 184), "dtype": np.float32}, # 180 + 4
         }
 
     def get_action_space(self):
         return (self.num_agents, 4)
 
     def get_observation_space(self):
-        # 3 (Acc) + 3 (Rates) + 4 (Cmd) = 10
-        return (self.num_agents, 10)
+        # 30 * 6 + 4 = 184
+        return (self.num_agents, 184)
 
     def get_reward_signature(self): return (self.num_agents,)
 
@@ -370,6 +388,7 @@ class DroneEnv(CUDAEnvironmentState):
                 "roll", "pitch", "yaw",
                 "masses", "drag_coeffs", "thrust_coeffs",
                 "target_vx", "target_vy", "target_vz", "target_yaw_rate",
+                "imu_history",
                 "rng_states",
                 "observations", "rewards", "done_flags",
                 "step_counts"
@@ -391,6 +410,7 @@ class DroneEnv(CUDAEnvironmentState):
             "roll": "roll", "pitch": "pitch", "yaw": "yaw",
             "masses": "masses", "drag_coeffs": "drag_coeffs", "thrust_coeffs": "thrust_coeffs",
             "target_vx": "target_vx", "target_vy": "target_vy", "target_vz": "target_vz", "target_yaw_rate": "target_yaw_rate",
+            "imu_history": "imu_history",
             "observations": "observations",
             "rewards": "rewards",
             "done_flags": "done_flags",
@@ -407,6 +427,7 @@ class DroneEnv(CUDAEnvironmentState):
             "roll": "roll", "pitch": "pitch", "yaw": "yaw",
             "masses": "masses", "drag_coeffs": "drag_coeffs", "thrust_coeffs": "thrust_coeffs",
             "target_vx": "target_vx", "target_vy": "target_vy", "target_vz": "target_vz", "target_yaw_rate": "target_yaw_rate",
+            "imu_history": "imu_history",
             "rng_states": "rng_states",
             "step_counts": "step_counts",
             "num_agents": "num_agents",

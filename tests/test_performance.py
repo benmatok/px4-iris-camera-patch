@@ -34,11 +34,9 @@ class TestPerformance(unittest.TestCase):
         obs, rewards, done, info = self.env_wrapper.step({'drone_0': np.zeros((5, 4), dtype=np.float32)})
 
         self.assertEqual(rewards['drone_0'].shape, (5,))
+        # Check obs shape
+        self.assertEqual(obs['drone_0'].shape, (5, 184))
         print("Step executed successfully.")
-
-        # Pull data back to verify targets are set (not all zeros)
-        # targets = self.env_wrapper.cuda_data_manager.pull_data("target_vx")
-        # self.assertTrue(np.any(targets != 0), "Targets should be randomized")
 
     def test_mock_simulation_logic(self):
         """
@@ -77,6 +75,9 @@ class TestPerformance(unittest.TestCase):
         # Check RNG fix in source
         from drone_env import drone
         self.assertIn("rng_states[idx] + idx", drone._DRONE_CUDA_SOURCE, "RNG seed should include idx")
+
+        # Check History Logic presence
+        self.assertIn("imu_history", step_kwargs)
 
         self.assertTrue(True)
 

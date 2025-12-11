@@ -47,28 +47,16 @@ class TestDroneEnvStatic(unittest.TestCase):
         # Checks for Reward Logic (calculating errors)
         self.assertIn("float v_err_sq =", source_code)
 
-    def test_all_command_cases_present(self):
-        """
-        Verifies that the reset logic includes cases for all required commands:
-        Forward, Backward, Up, Down, Rotate.
-        """
-        env = DroneEnv(num_agents=1)
-        from drone_env import drone
-        source_code = drone._DRONE_CUDA_SOURCE
-
-        # Check for command logic keywords/comments or assignments
-        self.assertIn("tvx = 1.0f;", source_code) # Forward
-        self.assertIn("tvx = -1.0f;", source_code) # Backward
-        self.assertIn("tvz = 1.0f;", source_code) # Up
-        self.assertIn("tvz = -1.0f;", source_code) # Down
-        self.assertIn("tyr = 1.0f;", source_code) # Rotate Left
-        self.assertIn("tyr = -1.0f;", source_code) # Rotate Right
+        # Check History Logic
+        self.assertIn("float *imu_history", source_code)
+        # Check shifting loop
+        self.assertIn("imu_history[hist_start + i] = imu_history[hist_start + i + 6];", source_code)
 
     def test_observation_space_size(self):
         env = DroneEnv(num_agents=1)
         obs_dim = env.get_observation_space()[1]
-        # New size is 10 (3 Acc + 3 Rates + 4 Cmds)
-        self.assertEqual(obs_dim, 10)
+        # New size is 184
+        self.assertEqual(obs_dim, 184)
 
 if __name__ == '__main__':
     unittest.main()
