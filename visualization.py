@@ -19,7 +19,8 @@ class Visualizer:
         """
         # We only keep one agent's trajectory for visualization clarity
         # Or a few. Let's keep the first agent's trajectory.
-        single_traj = trajectories[0] # (episode_length, 3)
+        # IMPORTANT: Use .copy() to ensure we store data, not a view into a buffer
+        single_traj = trajectories[0].copy() # (episode_length, 3)
         self.trajectory_snapshots.append((iteration, single_traj))
 
     def plot_rewards(self):
