@@ -381,157 +381,72 @@ def step_cpu(
     episode_length,
     env_ids,
 ):
-    # Pure NumPy implementation
-    # actions: (num_agents * 4,)
+    # Vectorized NumPy implementation
+    # actions: (num_agents * 4,) flattened, need to reshape
 
     total_agents = len(pos_x)
+
+    # Reshape actions to (N, 4)
+    actions_reshaped = actions.reshape(total_agents, 4)
+    thrust_cmd = actions_reshaped[:, 0]
+    roll_rate = actions_reshaped[:, 1]
+    pitch_rate = actions_reshaped[:, 2]
+    yaw_rate = actions_reshaped[:, 3]
 
     dt = 0.01
     g = 9.81
     substeps = 10
 
-    # Vectorized operations where possible?
-    # Or just loop. Loop is safer for ensuring we match kernel logic exactly without shape errors.
-    # Given segfaults, let's keep it simple (loop) but in Python. It's slow but won't segfault.
+    # Pre-allocate buffer for IMU data: (substeps, total_agents, 6)
+    # We will transpose later to (total_agents, substeps * 6)
+    imu_buffer_list = []
 
-    for idx in range(total_agents):
-        action_idx = idx * 4
-        thrust_cmd = actions[action_idx + 0]
-        roll_rate = actions[action_idx + 1]
-        pitch_rate = actions[action_idx + 2]
-        yaw_rate = actions[action_idx + 3]
+    for _ in range(substeps):
+        roll += roll_rate * dt
+        pitch += pitch_rate * dt
+        yaw += yaw_rate * dt
 
-        mass = masses[idx]
-        drag_coeff = drag_coeffs[idx]
-        thrust_coeff = thrust_coeffs[idx]
+        max_thrust = 20.0 * thrust_coeffs
+        thrust_force = thrust_cmd * max_thrust
 
-        px, py, pz = pos_x[idx], pos_y[idx], pos_z[idx]
-        vx, vy, vz = vel_x[idx], vel_y[idx], vel_z[idx]
-        r, p, y_ang = roll[idx], pitch[idx], yaw[idx]
+        sr, cr = np.sin(roll), np.cos(roll)
+        sp, cp = np.sin(pitch), np.cos(pitch)
+        sy, cy = np.sin(yaw), np.cos(yaw)
 
-        imu_buffer = []
+        # Thrust Vector (Z-axis of body rotated to world)
+        # Vectorized ops
+        ax_thrust = thrust_force * (cy * sp * cr + sy * sr) / masses
+        ay_thrust = thrust_force * (sy * sp * cr - cy * sr) / masses
+        az_thrust = thrust_force * (cp * cr) / masses
 
-        for _ in range(substeps):
-            r += roll_rate * dt
-            p += pitch_rate * dt
-            y_ang += yaw_rate * dt
+        az_gravity = -g
 
-            max_thrust = 20.0 * thrust_coeff
-            thrust_force = thrust_cmd * max_thrust
+        # Drag
+        ax_drag = -drag_coeffs * vel_x
+        ay_drag = -drag_coeffs * vel_y
+        az_drag = -drag_coeffs * vel_z
 
-            sr, cr = np.sin(r), np.cos(r)
-            sp, cp = np.sin(p), np.cos(p)
-            sy, cy = np.sin(y_ang), np.cos(y_ang)
+        ax = ax_thrust + ax_drag
+        ay = ay_thrust + ay_drag
+        az = az_thrust + az_gravity + az_drag
 
-            ax_thrust = thrust_force * (cy * sp * cr + sy * sr) / mass
-            ay_thrust = thrust_force * (sy * sp * cr - cy * sr) / mass
-            az_thrust = thrust_force * (cp * cr) / mass
+        vel_x += ax * dt
+        vel_y += ay * dt
+        vel_z += az * dt
 
-            az_gravity = -g
+        pos_x += vel_x * dt
+        pos_y += vel_y * dt
+        pos_z += vel_z * dt
 
-            ax_drag = -drag_coeff * vx
-            ay_drag = -drag_coeff * vy
-            az_drag = -drag_coeff * vz
+        # Terrain Collision
+        terr_z = terrain_height_cpu(pos_x, pos_y)
+        mask = pos_z < terr_z
+        pos_z[mask] = terr_z[mask]
+        vel_x[mask] = 0.0
+        vel_y[mask] = 0.0
+        vel_z[mask] = 0.0
 
-            ax = ax_thrust + ax_drag
-            ay = ay_thrust + ay_drag
-            az = az_thrust + az_gravity + az_drag
-
-            vx += ax * dt
-            vy += ay * dt
-            vz += az * dt
-
-            px += vx * dt
-            py += vy * dt
-            pz += vz * dt
-
-            terr_z = terrain_height_cpu(px, py)
-            if pz < terr_z:
-                pz = terr_z
-                vx, vy, vz = 0.0, 0.0, 0.0
-
-            # IMU
-            r11 = cy * cp
-            r12 = sy * cp
-            r13 = -sp
-            r21 = cy * sp * sr - sy * cr
-            r22 = sy * sp * sr + cy * cr
-            r23 = cp * sr
-            r31 = cy * sp * cr + sy * sr
-            r32 = sy * sp * cr - cy * sr
-            r33 = cp * cr
-
-            acc_w_x = ax_thrust + ax_drag
-            acc_w_y = ay_thrust + ay_drag
-            acc_w_z = az_thrust + az_drag
-
-            acc_b_x = r11 * acc_w_x + r12 * acc_w_y + r13 * acc_w_z
-            acc_b_y = r21 * acc_w_x + r22 * acc_w_y + r23 * acc_w_z
-            acc_b_z = r31 * acc_w_x + r32 * acc_w_y + r33 * acc_w_z
-
-            imu_buffer.extend([acc_b_x, acc_b_y, acc_b_z, roll_rate, pitch_rate, yaw_rate])
-
-        terr_z = terrain_height_cpu(px, py)
-        collision = False
-        if pz < terr_z:
-            pz = terr_z
-            collision = True
-
-        pos_x[idx], pos_y[idx], pos_z[idx] = px, py, pz
-        vel_x[idx], vel_y[idx], vel_z[idx] = vx, vy, vz
-        roll[idx], pitch[idx], yaw[idx] = r, p, y_ang
-
-        env_id = idx // num_agents
-        if (idx % num_agents) == 0:
-            step_counts[env_id] += 1
-        t = step_counts[env_id]
-
-        if t <= episode_length:
-            pos_hist_idx = idx * episode_length * 3 + (t-1) * 3
-            if 0 <= pos_hist_idx < len(pos_history) - 2:
-                pos_history[pos_hist_idx + 0] = px
-                pos_history[pos_hist_idx + 1] = py
-                pos_history[pos_hist_idx + 2] = pz
-
-        # Update History Buffer
-        hist_start = idx * 1800
-        # Numpy shift
-        # imu_history[hist_start : hist_start + 1740] = imu_history[hist_start + 60 : hist_start + 1800]
-        # imu_history[hist_start + 1740 : hist_start + 1800] = imu_buffer
-
-        # Manual copy to be safe with types/shapes if flattened
-        # imu_history is (N * 1800,) flattened? Yes.
-        current_hist = imu_history[hist_start : hist_start + 1800]
-        new_hist = np.concatenate([current_hist[60:], np.array(imu_buffer, dtype=np.float32)])
-        imu_history[hist_start : hist_start + 1800] = new_hist
-
-        # Obs
-        # observations is (num_agents, 1804) for consistency with dict shape
-        # But wait, in CUDA it's flattened. In CPU Dict it's (num_agents, 1804).
-        # We need to access it properly.
-        # If observations is flattened (N*1804):
-        # But get_data_dictionary says: "observations": {"shape": (self.num_agents, 1804), "dtype": np.float32}
-        # In reset_cpu/step_cpu we treat it as flat? No, we need to respect shape.
-
-        # In my manual init in train_drone.py:
-        # self.data[name] = np.zeros(shape, dtype=info["dtype"])
-        # So observations is (N, 1804).
-
-        # Numba kernel `step_cpu` receives `observations`.
-        # If I pass `self.data["observations"]`, it's 2D.
-
-        # Fix access for 2D array
-        observations[idx, :1800] = new_hist
-        observations[idx, 1800] = target_vx[idx]
-        observations[idx, 1801] = target_vy[idx]
-        observations[idx, 1802] = target_vz[idx]
-        observations[idx, 1803] = target_yaw_rate[idx]
-
-        # Reward
-        sr, cr = np.sin(r), np.cos(r)
-        sp, cp = np.sin(p), np.cos(p)
-        sy, cy = np.sin(y_ang), np.cos(y_ang)
-
+        # IMU Capture
         r11 = cy * cp
         r12 = sy * cp
         r13 = -sp
@@ -542,28 +457,118 @@ def step_cpu(
         r32 = sy * sp * cr - cy * sr
         r33 = cp * cr
 
-        vx_b = r11 * vx + r12 * vy + r13 * vz
-        vy_b = r21 * vx + r22 * vy + r23 * vz
-        vz_b = r31 * vx + r32 * vy + r33 * vz
+        acc_w_x = ax_thrust + ax_drag
+        acc_w_y = ay_thrust + ay_drag
+        acc_w_z = az_thrust + az_drag
 
-        v_err_sq = (vx_b - target_vx[idx])**2 + (vy_b - target_vy[idx])**2 + (vz_b - target_vz[idx])**2
-        yaw_rate_err_sq = (yaw_rate - target_yaw_rate[idx])**2
+        acc_b_x = r11 * acc_w_x + r12 * acc_w_y + r13 * acc_w_z
+        acc_b_y = r21 * acc_w_x + r22 * acc_w_y + r23 * acc_w_z
+        acc_b_z = r31 * acc_w_x + r32 * acc_w_y + r33 * acc_w_z
 
-        rew = 0.0
-        rew += 1.0 * np.exp(-2.0 * v_err_sq)
-        rew += 0.5 * np.exp(-2.0 * yaw_rate_err_sq)
-        rew -= 0.01 * (r*r + p*p)
-        if abs(r) > 1.0 or abs(p) > 1.0:
-            rew -= 0.1
-        if collision:
-            rew -= 10.0
-        rew += 0.1
-        rewards[idx] = rew
+        # Stack for this substep: (N, 6)
+        imu_step = np.stack([acc_b_x, acc_b_y, acc_b_z, roll_rate, pitch_rate, yaw_rate], axis=1)
+        imu_buffer_list.append(imu_step)
 
-        if t >= episode_length:
-            done_flags[idx] = 1.0
-        else:
-            done_flags[idx] = 0.0
+    # Collision Check Final
+    terr_z = terrain_height_cpu(pos_x, pos_y)
+    collision_mask = pos_z < terr_z
+    pos_z[collision_mask] = terr_z[collision_mask]
+
+    # Step Counts
+    # Assuming step_counts has shape (1,) if we treat all agents in one env,
+    # OR shape (num_envs,) if parallel.
+    # train_drone.py CPUTrainer: uses env.num_agents=20.
+    # reset_indices=[0] means env_id=0.
+    # So step_counts is probably length 1?
+    # Actually DroneEnv allocs step_counts based on num_agents? No.
+    # "step_counts": {"shape": (self.num_agents,), "dtype": np.int32} in `get_data_dictionary`
+    # But kernel uses `step_counts[env_id]`.
+    # If num_agents=20, and we treat it as 1 env with 20 agents?
+    # reset_cpu iterates `range(num_agents)`. `idx = env_id * num_agents + agent_id`.
+    # If `num_agents` passed to `reset_cpu` matches the total agents we allocated, then `env_id` must be 0 if we have only 1 env block.
+    # Let's assume env_id=0 for all agents.
+
+    # We only increment step_count once per environment, not per agent.
+    # But here we are vectorized.
+    # If we have only 1 env (id 0), we just increment step_counts[0].
+    # But if we support multiple envs, we need to handle it.
+    # For CPUTrainer, we use env_ids_to_step = np.array([0]).
+
+    for env_id in env_ids:
+        step_counts[env_id] += 1
+
+    t = step_counts[0] # Assuming single env for now based on CPUTrainer usage
+
+    # Store History
+    if t <= episode_length:
+        # Vectorized assignment to history
+        # pos_history shape: (total_agents * episode_length * 3)
+        # We need to reshape or index cleverly.
+        # reshape to (total_agents, episode_length, 3)
+        ph_reshaped = pos_history.reshape(total_agents, episode_length, 3)
+        ph_reshaped[:, t-1, 0] = pos_x
+        ph_reshaped[:, t-1, 1] = pos_y
+        ph_reshaped[:, t-1, 2] = pos_z
+
+    # Update IMU History
+    # imu_buffer_list is list of substeps (10), each (N, 6).
+    # We want (N, 60).
+    imu_buffer = np.concatenate(imu_buffer_list, axis=1) # (N, 60)
+
+    # imu_history shape in dict: (N * 300 * 6) -> 1800 floats per agent
+    # Reshape for easier access
+    ih_reshaped = imu_history.reshape(total_agents, 1800)
+
+    # Shift left by 60
+    ih_reshaped[:, :-60] = ih_reshaped[:, 60:]
+    # Append new
+    ih_reshaped[:, -60:] = imu_buffer
+
+    # Observations
+    # observations shape (N, 1804)
+    observations[:, :1800] = ih_reshaped
+    observations[:, 1800] = target_vx
+    observations[:, 1801] = target_vy
+    observations[:, 1802] = target_vz
+    observations[:, 1803] = target_yaw_rate
+
+    # Rewards
+    sr, cr = np.sin(roll), np.cos(roll)
+    sp, cp = np.sin(pitch), np.cos(pitch)
+    sy, cy = np.sin(yaw), np.cos(yaw)
+
+    r11 = cy * cp
+    r12 = sy * cp
+    r13 = -sp
+    r21 = cy * sp * sr - sy * cr
+    r22 = sy * sp * sr + cy * cr
+    r23 = cp * sr
+    r31 = cy * sp * cr + sy * sr
+    r32 = sy * sp * cr - cy * sr
+    r33 = cp * cr
+
+    vx_b = r11 * vel_x + r12 * vel_y + r13 * vel_z
+    vy_b = r21 * vel_x + r22 * vel_y + r23 * vel_z
+    vz_b = r31 * vel_x + r32 * vel_y + r33 * vel_z
+
+    v_err_sq = (vx_b - target_vx)**2 + (vy_b - target_vy)**2 + (vz_b - target_vz)**2
+    yaw_rate_err_sq = (yaw_rate - target_yaw_rate)**2
+
+    r_val = 1.0 * np.exp(-2.0 * v_err_sq) + 0.5 * np.exp(-2.0 * yaw_rate_err_sq)
+    r_val -= 0.01 * (roll**2 + pitch**2)
+
+    mask_unstable = (np.abs(roll) > 1.0) | (np.abs(pitch) > 1.0)
+    r_val[mask_unstable] -= 0.1
+
+    r_val[collision_mask] -= 10.0
+    r_val += 0.1
+
+    rewards[:] = r_val
+
+    if t >= episode_length:
+        done_flags[:] = 1.0
+    else:
+        done_flags[:] = 0.0
 
 def reset_cpu(
     pos_x, pos_y, pos_z,
@@ -578,59 +583,72 @@ def reset_cpu(
     num_agents,
     reset_indices
 ):
+    # Vectorized Reset
+    # reset_indices: array of env_ids to reset.
+    # Since we assume 1 env block (or consistent layout), we reset all agents corresponding to these envs.
+    # CPUTrainer logic: env_id=0, num_agents=20.
+
+    # We iterate over env_ids, but since we likely only have [0], we can optimize.
+    # For full correctness with "reset_indices":
+
     for env_id in reset_indices:
-        for agent_id in range(num_agents):
-            idx = env_id * num_agents + agent_id
+        # Range of agents for this env
+        start_idx = env_id * num_agents
+        end_idx = start_idx + num_agents
 
-            # Simple Python RNG
-            # We ignore rng_states for simplicity in pure python fallback or use numpy
-            # np.random.seed(...) ? No, we want randomness.
+        # Vectorized randoms
+        masses[start_idx:end_idx] = 0.5 + np.random.rand(num_agents) * 1.0
+        drag_coeffs[start_idx:end_idx] = 0.05 + np.random.rand(num_agents) * 0.1
+        thrust_coeffs[start_idx:end_idx] = 0.8 + np.random.rand(num_agents) * 0.4
 
-            masses[idx] = 0.5 + np.random.rand() * 1.0
-            drag_coeffs[idx] = 0.05 + np.random.rand() * 0.1
-            thrust_coeffs[idx] = 0.8 + np.random.rand() * 0.4
+        rnd_cmd = np.random.rand(num_agents)
+        tvx = np.zeros(num_agents)
+        tvy = np.zeros(num_agents)
+        tvz = np.zeros(num_agents)
+        tyr = np.zeros(num_agents)
 
-            rnd_cmd = np.random.rand()
-            if rnd_cmd < 0.2:
-                tvx, tvy, tvz, tyr = 0.0, 0.0, 0.0, 0.0
-            elif rnd_cmd < 0.3:
-                tvx, tvy, tvz, tyr = 1.0, 0.0, 0.0, 0.0
-            elif rnd_cmd < 0.4:
-                tvx, tvy, tvz, tyr = -1.0, 0.0, 0.0, 0.0
-            elif rnd_cmd < 0.5:
-                tvx, tvy, tvz, tyr = 0.0, 1.0, 0.0, 0.0
-            elif rnd_cmd < 0.6:
-                tvx, tvy, tvz, tyr = 0.0, -1.0, 0.0, 0.0
-            elif rnd_cmd < 0.7:
-                tvx, tvy, tvz, tyr = 0.0, 0.0, 1.0, 0.0
-            elif rnd_cmd < 0.8:
-                tvx, tvy, tvz, tyr = 0.0, 0.0, -1.0, 0.0
-            elif rnd_cmd < 0.9:
-                tvx, tvy, tvz, tyr = 0.0, 0.0, 0.0, 1.0
-            else:
-                tvx, tvy, tvz, tyr = 0.0, 0.0, 0.0, -1.0
+        # Masks
+        m1 = rnd_cmd < 0.2
+        m2 = (rnd_cmd >= 0.2) & (rnd_cmd < 0.3)
+        m3 = (rnd_cmd >= 0.3) & (rnd_cmd < 0.4)
+        m4 = (rnd_cmd >= 0.4) & (rnd_cmd < 0.5)
+        m5 = (rnd_cmd >= 0.5) & (rnd_cmd < 0.6)
+        m6 = (rnd_cmd >= 0.6) & (rnd_cmd < 0.7)
+        m7 = (rnd_cmd >= 0.7) & (rnd_cmd < 0.8)
+        m8 = (rnd_cmd >= 0.8) & (rnd_cmd < 0.9)
+        m9 = (rnd_cmd >= 0.9)
 
-            target_vx[idx] = tvx
-            target_vy[idx] = tvy
-            target_vz[idx] = tvz
-            target_yaw_rate[idx] = tyr
+        tvx[m2] = 1.0; tvx[m3] = -1.0
+        tvy[m4] = 1.0; tvy[m5] = -1.0
+        tvz[m6] = 1.0; tvz[m7] = -1.0
+        tyr[m8] = 1.0; tyr[m9] = -1.0
 
-            hist_start = idx * 1800
-            imu_history[hist_start : hist_start + 1800] = 0.0
+        target_vx[start_idx:end_idx] = tvx
+        target_vy[start_idx:end_idx] = tvy
+        target_vz[start_idx:end_idx] = tvz
+        target_yaw_rate[start_idx:end_idx] = tyr
 
-            pos_x[idx] = 0.0
-            pos_y[idx] = 0.0
-            pos_z[idx] = 10.0
+        # Reset History
+        # imu_history shape (N * 1800)
+        # We need to zero out the slice for these agents.
+        # But imu_history is flat.
+        # start offset: start_idx * 1800
+        # length: num_agents * 1800
+        imu_history[start_idx*1800 : end_idx*1800] = 0.0
 
-            vel_x[idx] = 0.0
-            vel_y[idx] = 0.0
-            vel_z[idx] = 0.0
-            roll[idx] = 0.0
-            pitch[idx] = 0.0
-            yaw[idx] = 0.0
+        pos_x[start_idx:end_idx] = 0.0
+        pos_y[start_idx:end_idx] = 0.0
+        pos_z[start_idx:end_idx] = 10.0
 
-            if agent_id == 0:
-                step_counts[env_id] = 0
+        vel_x[start_idx:end_idx] = 0.0
+        vel_y[start_idx:end_idx] = 0.0
+        vel_z[start_idx:end_idx] = 0.0
+
+        roll[start_idx:end_idx] = 0.0
+        pitch[start_idx:end_idx] = 0.0
+        yaw[start_idx:end_idx] = 0.0
+
+        step_counts[env_id] = 0
 
 class DroneEnv(CUDAEnvironmentState):
     def __init__(self, **kwargs):

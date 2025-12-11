@@ -359,7 +359,7 @@ def setup_and_train(run_config, device_id=0):
 
         # Override config for lightweight CPU run
         total_agents = 20 # Reduced from potentially 1024
-        run_config["trainer"]["training_iterations"] = 50 # Short run for verification
+        run_config["trainer"]["training_iterations"] = 10000 # Extended run for visualization
 
         print(f"CPU Mode: Reduced agents to {total_agents} and iterations to {run_config['trainer']['training_iterations']}")
 
