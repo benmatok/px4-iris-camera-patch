@@ -27,3 +27,19 @@ sudo docker ps  # Note the CONTAINER ID of your running px4 container
 sudo docker exec -it <CONTAINER_ID> bash
 inside-container> python3 /src/px4-iris-camera-patch/main.py
 ```
+
+## Running Drone RL Training
+
+To run the custom WarpDrive Drone RL training (requires CUDA-enabled GPU and environment):
+
+1.  Ensure you are inside a CUDA-capable environment with `warpdrive` installed.
+2.  Run the training script:
+
+```bash
+python3 train_drone.py
+```
+
+You can customize the configuration by editing `configs/drone.yaml` or passing a different config file:
+```bash
+python3 train_drone.py --config configs/my_custom_config.yaml
+```
