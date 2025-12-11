@@ -8,11 +8,19 @@ __device__ float terrain_height(float x, float y) {
     return 5.0f * sinf(0.1f * x) * cosf(0.1f * y);
 }
 
+// Pseudo-random number generator
+__device__ float rand(unsigned int *seed) {
+    *seed = *seed * 1664525 + 1013904223;
+    return (float)(*seed) / 4294967296.0f;
+}
+
 extern "C" {
 __global__ void step(
     float *pos_x, float *pos_y, float *pos_z,
     float *vel_x, float *vel_y, float *vel_z,
     float *roll, float *pitch, float *yaw,
+    float *masses, float *drag_coeffs, float *thrust_coeffs,
+    float *target_vx, float *target_vy, float *target_vz, float *target_yaw_rate,
     float *observations,
     float *rewards,
     float *done_flags,
@@ -33,8 +41,11 @@ __global__ void step(
     // Physics constants
     const float dt = 0.1f;
     const float g = 9.81f;
-    const float mass = 1.0f;
-    const float drag_coeff = 0.1f;
+
+    // Load Dynamics Properties
+    float mass = masses[idx];
+    float drag_coeff = drag_coeffs[idx];
+    float thrust_coeff = thrust_coeffs[idx];
 
     // Load State
     float px = pos_x[idx];
@@ -58,7 +69,7 @@ __global__ void step(
     p += pitch_rate * dt;
     y_ang += yaw_rate * dt;
 
-    float max_thrust = 20.0f;
+    float max_thrust = 20.0f * thrust_coeff;
     float thrust_force = thrust_cmd * max_thrust;
 
     float sr = sinf(r); float cr = cosf(r);
@@ -110,32 +121,82 @@ __global__ void step(
     int t = step_counts[env_id];
 
     // 2. Observations
-    // Structure: [State(9), IMU(6), Camera(64)] -> Total 79 floats
+    // Structure:
+    // Body Vel (3), Orientation(2: Roll, Pitch), IMU(3: Acc), Rates(3), Target(4), Camera(64)
+    // Total: 3 + 2 + 3 + 3 + 4 + 64 = 79 floats
     int obs_offset = idx * 79;
     int ptr = 0;
 
-    // State (9)
-    observations[obs_offset + ptr++] = px;
-    observations[obs_offset + ptr++] = py;
-    observations[obs_offset + ptr++] = pz;
-    observations[obs_offset + ptr++] = vx;
-    observations[obs_offset + ptr++] = vy;
-    observations[obs_offset + ptr++] = vz;
+    // Convert World Velocity to Body Velocity
+    // R_wb = [ cy*cp, cy*sp*sr - sy*cr, cy*sp*cr + sy*sr ]
+    //        [ sy*cp, sy*sp*sr + cy*cr, sy*sp*cr - cy*sr ]
+    //        [ -sp,   cp*sr,            cp*cr            ]
+    // V_b = R_wb^T * V_w
+
+    // Row 1 of R^T (Column 1 of R)
+    float r11 = cy * cp;
+    float r12 = sy * cp;
+    float r13 = -sp;
+
+    // Row 2 of R^T (Column 2 of R)
+    float r21 = cy * sp * sr - sy * cr;
+    float r22 = sy * sp * sr + cy * cr;
+    float r23 = cp * sr;
+
+    // Row 3 of R^T (Column 3 of R)
+    float r31 = cy * sp * cr + sy * sr;
+    float r32 = sy * sp * cr - cy * sr;
+    float r33 = cp * cr;
+
+    float vx_b = r11 * vx + r12 * vy + r13 * vz;
+    float vy_b = r21 * vx + r22 * vy + r23 * vz;
+    float vz_b = r31 * vx + r32 * vy + r33 * vz;
+
+    observations[obs_offset + ptr++] = vx_b;
+    observations[obs_offset + ptr++] = vy_b;
+    observations[obs_offset + ptr++] = vz_b;
+
+    // Orientation (Roll, Pitch only - Yaw is relative)
     observations[obs_offset + ptr++] = r;
     observations[obs_offset + ptr++] = p;
-    observations[obs_offset + ptr++] = y_ang;
 
-    // IMU (6) - Accelerometer (World Frame approximation) and Gyro
+    // IMU - Accelerometer (Body Frame)
+    // Acc_w = [ax_thrust + ax_drag, ... ]
+    // Gravity is not measured by accelerometer usually?
+    // Accelerometers measure proper acceleration (Force / mass).
+    // In free fall, acc is 0. Sitting on ground, acc is +g up.
+    // Here, forces are Thrust + Drag. Gravity is external field.
+    // So Acc_measure = (Thrust + Drag) / mass.
+    // We already computed forces in world frame: ax_thrust, ax_drag.
+    // Acc_w_measure = (ax_thrust + ax_drag, ...).
+    // Convert to Body Frame.
     float acc_w_x = ax_thrust + ax_drag;
     float acc_w_y = ay_thrust + ay_drag;
     float acc_w_z = az_thrust + az_drag;
 
-    observations[obs_offset + ptr++] = acc_w_x;
-    observations[obs_offset + ptr++] = acc_w_y;
-    observations[obs_offset + ptr++] = acc_w_z;
+    float acc_b_x = r11 * acc_w_x + r12 * acc_w_y + r13 * acc_w_z;
+    float acc_b_y = r21 * acc_w_x + r22 * acc_w_y + r23 * acc_w_z;
+    float acc_b_z = r31 * acc_w_x + r32 * acc_w_y + r33 * acc_w_z;
+
+    observations[obs_offset + ptr++] = acc_b_x;
+    observations[obs_offset + ptr++] = acc_b_y;
+    observations[obs_offset + ptr++] = acc_b_z;
+
+    // Angular Rates (Body)
     observations[obs_offset + ptr++] = roll_rate;
     observations[obs_offset + ptr++] = pitch_rate;
     observations[obs_offset + ptr++] = yaw_rate;
+
+    // Target Commands
+    float tvx = target_vx[idx];
+    float tvy = target_vy[idx];
+    float tvz = target_vz[idx];
+    float tyr = target_yaw_rate[idx];
+
+    observations[obs_offset + ptr++] = tvx;
+    observations[obs_offset + ptr++] = tvy;
+    observations[obs_offset + ptr++] = tvz;
+    observations[obs_offset + ptr++] = tyr;
 
     // Camera (8x8 = 64) - Depth Map
     float fov_half_size = 5.0f;
@@ -145,6 +206,10 @@ __global__ void step(
             float u = (float)cx_i / (cam_res - 1) * 2.0f - 1.0f;
             float v = (float)cy_i / (cam_res - 1) * 2.0f - 1.0f;
 
+            // Simple raycast approximation: Assume camera looks down-ish or follows body?
+            // Original code: sample_x = px + u * fov, sample_y = py + v * fov.
+            // This assumes camera is looking down and aligned with world XY (or body XY if flat).
+            // Let's keep it simple as a "Terrain Sensor" below the drone.
             float sample_x = px + u * fov_half_size;
             float sample_y = py + v * fov_half_size;
 
@@ -155,16 +220,27 @@ __global__ void step(
     }
 
     // 3. Rewards
-    float target_z = 10.0f;
-    float dist_xy = sqrtf(px*px + py*py);
-    float dist_z = fabsf(pz - target_z);
+    // Target Tracking Error
+    float v_err_sq = (vx_b - tvx)*(vx_b - tvx) + (vy_b - tvy)*(vy_b - tvy) + (vz_b - tvz)*(vz_b - tvz);
+    float yaw_rate_err_sq = (yaw_rate - tyr)*(yaw_rate - tyr);
 
     float reward = 0.0f;
-    reward -= dist_xy * 0.1f;
-    reward -= dist_z * 0.5f;
-    reward -= (roll*roll + pitch*pitch) * 0.1f; // Stability
-    reward -= 0.01f * (vx*vx + vy*vy + vz*vz); // Damping
-    if (collision) reward -= 100.0f;
+
+    // Reward for matching target velocity
+    reward += 1.0f * expf(-2.0f * v_err_sq);
+    reward += 0.5f * expf(-2.0f * yaw_rate_err_sq);
+
+    // Penalties
+    reward -= 0.01f * (r*r + p*p); // Keep flat-ish unless needed?
+    // Actually, to move fast, we need to tilt.
+    // But excessively large tilt might be bad. Let's reduce this penalty or remove it if it hinders movement.
+    // Let's keep a small penalty for extreme angles.
+    if (fabsf(r) > 1.0f || fabsf(p) > 1.0f) reward -= 0.1f;
+
+    if (collision) reward -= 10.0f;
+
+    // Survival reward?
+    reward += 0.1f;
 
     rewards[idx] = reward;
 
@@ -180,6 +256,9 @@ __global__ void reset(
     float *pos_x, float *pos_y, float *pos_z,
     float *vel_x, float *vel_y, float *vel_z,
     float *roll, float *pitch, float *yaw,
+    float *masses, float *drag_coeffs, float *thrust_coeffs,
+    float *target_vx, float *target_vy, float *target_vz, float *target_yaw_rate,
+    int *rng_states,
     int *step_counts,
     const int num_agents,
     const int *reset_indices
@@ -191,10 +270,55 @@ __global__ void reset(
     if (agent_id >= num_agents) return;
     int idx = env_id * num_agents + agent_id;
 
-    // Reset Logic
+    // Random Init
+    unsigned int seed = rng_states[idx] + idx + 12345 + step_counts[env_id]*6789;
+
+    // Randomize Dynamics
+    masses[idx] = 0.5f + rand(&seed) * 1.0f; // 0.5 to 1.5
+    drag_coeffs[idx] = 0.05f + rand(&seed) * 0.1f; // 0.05 to 0.15
+    thrust_coeffs[idx] = 0.8f + rand(&seed) * 0.4f; // 0.8 to 1.2
+
+    // Randomize Target Command
+    // 0: Hover, 1: Forward, 2: Backward, 3: Left, 4: Right, 5: Up, 6: Down, 7: Rotate Left, 8: Rotate Right
+    // Let's just sample a continuous vector for general robustness
+    // But user asked for "forward/backword/down/up commands".
+    // We can sample a categorical command and set the target vector accordingly.
+
+    float rnd_cmd = rand(&seed);
+    float tvx = 0.0f; float tvy = 0.0f; float tvz = 0.0f; float tyr = 0.0f;
+
+    if (rnd_cmd < 0.2f) { // Hover
+         tvx = 0.0f; tvy = 0.0f; tvz = 0.0f;
+    } else if (rnd_cmd < 0.3f) { // Forward
+         tvx = 1.0f;
+    } else if (rnd_cmd < 0.4f) { // Backward
+         tvx = -1.0f;
+    } else if (rnd_cmd < 0.5f) { // Left (Slide)
+         tvy = 1.0f;
+    } else if (rnd_cmd < 0.6f) { // Right (Slide)
+         tvy = -1.0f;
+    } else if (rnd_cmd < 0.7f) { // Up
+         tvz = 1.0f;
+    } else if (rnd_cmd < 0.8f) { // Down
+         tvz = -1.0f;
+    } else if (rnd_cmd < 0.9f) { // Rot Left
+         tyr = 1.0f;
+    } else { // Rot Right
+         tyr = -1.0f;
+    }
+
+    target_vx[idx] = tvx;
+    target_vy[idx] = tvy;
+    target_vz[idx] = tvz;
+    target_yaw_rate[idx] = tyr;
+
+    // Update seed state
+    rng_states[idx] = seed;
+
+    // Reset State
     pos_x[idx] = 0.0f;
     pos_y[idx] = 0.0f;
-    pos_z[idx] = 10.0f; // Reset to hover height
+    pos_z[idx] = 10.0f;
 
     vel_x[idx] = 0.0f; vel_y[idx] = 0.0f; vel_z[idx] = 0.0f;
     roll[idx] = 0.0f; pitch[idx] = 0.0f; yaw[idx] = 0.0f;
@@ -229,15 +353,50 @@ class DroneEnv(CUDAEnvironmentState):
                 "pos_x", "pos_y", "pos_z",
                 "vel_x", "vel_y", "vel_z",
                 "roll", "pitch", "yaw",
+                "masses", "drag_coeffs", "thrust_coeffs",
+                "target_vx", "target_vy", "target_vz", "target_yaw_rate",
+                "rng_states",
                 "step_counts"
             ],
+        }
+
+    def get_data_dictionary(self):
+        # Explicitly define data shapes and types for allocation
+        return {
+            "masses": {"shape": (self.num_agents,), "dtype": np.float32},
+            "drag_coeffs": {"shape": (self.num_agents,), "dtype": np.float32},
+            "thrust_coeffs": {"shape": (self.num_agents,), "dtype": np.float32},
+            "target_vx": {"shape": (self.num_agents,), "dtype": np.float32},
+            "target_vy": {"shape": (self.num_agents,), "dtype": np.float32},
+            "target_vz": {"shape": (self.num_agents,), "dtype": np.float32},
+            "target_yaw_rate": {"shape": (self.num_agents,), "dtype": np.float32},
+            "rng_states": {"shape": (self.num_agents,), "dtype": np.int32},
+            # Common states if not automatically handled by super/get_state_names mapping
+            # (WarpDrive usually handles core states if they are in core_state_names and exist in dict)
+            # But we should probably define them to be safe if they weren't defined elsewhere.
+            # Assuming previous code worked without get_data_dictionary means they might be defaulted
+            # or inferred. But since we are adding new ones, let's be thorough.
+             "pos_x": {"shape": (self.num_agents,), "dtype": np.float32},
+             "pos_y": {"shape": (self.num_agents,), "dtype": np.float32},
+             "pos_z": {"shape": (self.num_agents,), "dtype": np.float32},
+             "vel_x": {"shape": (self.num_agents,), "dtype": np.float32},
+             "vel_y": {"shape": (self.num_agents,), "dtype": np.float32},
+             "vel_z": {"shape": (self.num_agents,), "dtype": np.float32},
+             "roll": {"shape": (self.num_agents,), "dtype": np.float32},
+             "pitch": {"shape": (self.num_agents,), "dtype": np.float32},
+             "yaw": {"shape": (self.num_agents,), "dtype": np.float32},
+             "step_counts": {"shape": (self.num_agents,), "dtype": np.int32},
+             "done_flags": {"shape": (self.num_agents,), "dtype": np.float32},
+             "rewards": {"shape": (self.num_agents,), "dtype": np.float32},
+             "observations": {"shape": (self.num_agents, 79), "dtype": np.float32},
         }
 
     def get_action_space(self):
         return (self.num_agents, 4)
 
     def get_observation_space(self):
-        return (self.num_agents, 9 + 6 + self.cam_pixels)
+        # 3 (Vel Body) + 2 (Orient) + 3 (Acc) + 3 (Rates) + 4 (Cmd) + 64 (Cam) = 79
+        return (self.num_agents, 79)
 
     def get_reward_signature(self): return (self.num_agents,)
 
@@ -246,6 +405,9 @@ class DroneEnv(CUDAEnvironmentState):
                 "pos_x", "pos_y", "pos_z",
                 "vel_x", "vel_y", "vel_z",
                 "roll", "pitch", "yaw",
+                "masses", "drag_coeffs", "thrust_coeffs",
+                "target_vx", "target_vy", "target_vz", "target_yaw_rate",
+                "rng_states",
                 "observations", "rewards", "done_flags",
                 "step_counts"
         ]
@@ -264,6 +426,8 @@ class DroneEnv(CUDAEnvironmentState):
             "pos_x": "pos_x", "pos_y": "pos_y", "pos_z": "pos_z",
             "vel_x": "vel_x", "vel_y": "vel_y", "vel_z": "vel_z",
             "roll": "roll", "pitch": "pitch", "yaw": "yaw",
+            "masses": "masses", "drag_coeffs": "drag_coeffs", "thrust_coeffs": "thrust_coeffs",
+            "target_vx": "target_vx", "target_vy": "target_vy", "target_vz": "target_vz", "target_yaw_rate": "target_yaw_rate",
             "observations": "observations",
             "rewards": "rewards",
             "done_flags": "done_flags",
@@ -278,7 +442,10 @@ class DroneEnv(CUDAEnvironmentState):
             "pos_x": "pos_x", "pos_y": "pos_y", "pos_z": "pos_z",
             "vel_x": "vel_x", "vel_y": "vel_y", "vel_z": "vel_z",
             "roll": "roll", "pitch": "pitch", "yaw": "yaw",
+            "masses": "masses", "drag_coeffs": "drag_coeffs", "thrust_coeffs": "thrust_coeffs",
+            "target_vx": "target_vx", "target_vy": "target_vy", "target_vz": "target_vz", "target_yaw_rate": "target_yaw_rate",
+            "rng_states": "rng_states",
             "step_counts": "step_counts",
             "num_agents": "num_agents",
-            "reset_indices": "reset_indices" # Passed by EnvWrapper
+            "reset_indices": "reset_indices"
         }
