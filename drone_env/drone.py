@@ -32,7 +32,6 @@ __global__ void step(
     float *roll, float *pitch, float *yaw,
     float *masses, float *drag_coeffs, float *thrust_coeffs,
     float *target_vx, float *target_vy, float *target_vz, float *target_yaw_rate,
-    float *imu_history,
     float *pos_history,
     float *observations,
     float *rewards,
@@ -191,39 +190,30 @@ __global__ void step(
     // Structure:
     // IMU History (300 steps * 6) + Target (4) = 1804 floats
 
-    // Update History Buffer
-    // Buffer size per agent: 300 * 6 = 1800
+    // Update History directly in Observations
     // We shift left by 10 steps (60 floats) and append buffer.
-    int hist_start = idx * 1800;
+    int obs_offset = idx * 1804;
 
-    // Shift: history[i] = history[i+60] for i < (290*6) = 1740
+    // Shift History part (0 to 1800)
+    // Shift: obs[i] = obs[i+60] for i < 1740
     for (int i = 0; i < 1740; i++) {
-        imu_history[hist_start + i] = imu_history[hist_start + i + 60];
+        observations[obs_offset + i] = observations[obs_offset + i + 60];
     }
-    // Append
+    // Append new data
     for (int i = 0; i < 60; i++) {
-        imu_history[hist_start + 1740 + i] = imu_buffer[i];
+        observations[obs_offset + 1740 + i] = imu_buffer[i];
     }
 
-    // Write to Observations
-    int obs_offset = idx * 1804; // 1800 + 4
-    int ptr = 0;
-
-    // Copy History
-    for (int i = 0; i < 1800; i++) {
-        observations[obs_offset + ptr++] = imu_history[hist_start + i];
-    }
-
-    // Target Commands
+    // Target Commands (Indices 1800 to 1803)
     float tvx = target_vx[idx];
     float tvy = target_vy[idx];
     float tvz = target_vz[idx];
     float tyr = target_yaw_rate[idx];
 
-    observations[obs_offset + ptr++] = tvx;
-    observations[obs_offset + ptr++] = tvy;
-    observations[obs_offset + ptr++] = tvz;
-    observations[obs_offset + ptr++] = tyr;
+    observations[obs_offset + 1800] = tvx;
+    observations[obs_offset + 1801] = tvy;
+    observations[obs_offset + 1802] = tvz;
+    observations[obs_offset + 1803] = tyr;
 
     // 3. Rewards
     // Use final state for reward? Or average? Using final state is simpler.
@@ -282,8 +272,8 @@ __global__ void reset(
     float *roll, float *pitch, float *yaw,
     float *masses, float *drag_coeffs, float *thrust_coeffs,
     float *target_vx, float *target_vy, float *target_vz, float *target_yaw_rate,
-    float *imu_history,
     float *pos_history,
+    float *observations,
     int *rng_states,
     int *step_counts,
     const int num_agents,
@@ -333,11 +323,17 @@ __global__ void reset(
     target_vz[idx] = tvz;
     target_yaw_rate[idx] = tyr;
 
-    // Reset History (Size 1800)
-    int hist_start = idx * 1800;
+    // Reset History in Observations (Size 1800)
+    // Observations usually not in reset args? Wait, I added it to args above.
+    int obs_offset = idx * 1804;
     for (int i = 0; i < 1800; i++) {
-        imu_history[hist_start + i] = 0.0f;
+        observations[obs_offset + i] = 0.0f;
     }
+    // Set targets in observations too?
+    observations[obs_offset + 1800] = tvx;
+    observations[obs_offset + 1801] = tvy;
+    observations[obs_offset + 1802] = tvz;
+    observations[obs_offset + 1803] = tyr;
 
     // Update seed state
     rng_states[idx] = seed;
@@ -370,7 +366,6 @@ def step_cpu(
     roll, pitch, yaw,
     masses, drag_coeffs, thrust_coeffs,
     target_vx, target_vy, target_vz, target_yaw_rate,
-    imu_history,
     pos_history,
     observations,
     rewards,
@@ -493,35 +488,15 @@ def step_cpu(
                 pos_history[pos_hist_idx + 1] = py
                 pos_history[pos_hist_idx + 2] = pz
 
-        # Update History Buffer
-        hist_start = idx * 1800
-        # Numpy shift
-        # imu_history[hist_start : hist_start + 1740] = imu_history[hist_start + 60 : hist_start + 1800]
-        # imu_history[hist_start + 1740 : hist_start + 1800] = imu_buffer
+        # Update History in Observations
+        # observations shape: (num_agents, 1804)
 
-        # Manual copy to be safe with types/shapes if flattened
-        # imu_history is (N * 1800,) flattened? Yes.
-        current_hist = imu_history[hist_start : hist_start + 1800]
-        new_hist = np.concatenate([current_hist[60:], np.array(imu_buffer, dtype=np.float32)])
-        imu_history[hist_start : hist_start + 1800] = new_hist
+        # Shift History: obs[idx, 0:1740] = obs[idx, 60:1800]
+        observations[idx, 0:1740] = observations[idx, 60:1800]
+        # Append new data
+        observations[idx, 1740:1800] = np.array(imu_buffer, dtype=np.float32)
 
-        # Obs
-        # observations is (num_agents, 1804) for consistency with dict shape
-        # But wait, in CUDA it's flattened. In CPU Dict it's (num_agents, 1804).
-        # We need to access it properly.
-        # If observations is flattened (N*1804):
-        # But get_data_dictionary says: "observations": {"shape": (self.num_agents, 1804), "dtype": np.float32}
-        # In reset_cpu/step_cpu we treat it as flat? No, we need to respect shape.
-
-        # In my manual init in train_drone.py:
-        # self.data[name] = np.zeros(shape, dtype=info["dtype"])
-        # So observations is (N, 1804).
-
-        # Numba kernel `step_cpu` receives `observations`.
-        # If I pass `self.data["observations"]`, it's 2D.
-
-        # Fix access for 2D array
-        observations[idx, :1800] = new_hist
+        # Update targets
         observations[idx, 1800] = target_vx[idx]
         observations[idx, 1801] = target_vy[idx]
         observations[idx, 1802] = target_vz[idx]
@@ -571,8 +546,8 @@ def reset_cpu(
     roll, pitch, yaw,
     masses, drag_coeffs, thrust_coeffs,
     target_vx, target_vy, target_vz, target_yaw_rate,
-    imu_history,
     pos_history,
+    observations,
     rng_states,
     step_counts,
     num_agents,
@@ -615,8 +590,12 @@ def reset_cpu(
             target_vz[idx] = tvz
             target_yaw_rate[idx] = tyr
 
-            hist_start = idx * 1800
-            imu_history[hist_start : hist_start + 1800] = 0.0
+            # Reset Observations
+            observations[idx, :1800] = 0.0
+            observations[idx, 1800] = tvx
+            observations[idx, 1801] = tvy
+            observations[idx, 1802] = tvz
+            observations[idx, 1803] = tyr
 
             pos_x[idx] = 0.0
             pos_y[idx] = 0.0
@@ -661,7 +640,6 @@ class DroneEnv(CUDAEnvironmentState):
                 "roll", "pitch", "yaw",
                 "masses", "drag_coeffs", "thrust_coeffs",
                 "target_vx", "target_vy", "target_vz", "target_yaw_rate",
-                "imu_history",
                 "pos_history",
                 "rng_states",
                 "step_counts"
@@ -678,7 +656,6 @@ class DroneEnv(CUDAEnvironmentState):
             "target_vy": {"shape": (self.num_agents,), "dtype": np.float32},
             "target_vz": {"shape": (self.num_agents,), "dtype": np.float32},
             "target_yaw_rate": {"shape": (self.num_agents,), "dtype": np.float32},
-            "imu_history": {"shape": (self.num_agents * 300 * 6,), "dtype": np.float32}, # 1800 floats per agent
             "pos_history": {"shape": (self.num_agents * self.episode_length * 3,), "dtype": np.float32},
             "rng_states": {"shape": (self.num_agents,), "dtype": np.int32},
              "pos_x": {"shape": (self.num_agents,), "dtype": np.float32},
@@ -712,7 +689,6 @@ class DroneEnv(CUDAEnvironmentState):
                 "roll", "pitch", "yaw",
                 "masses", "drag_coeffs", "thrust_coeffs",
                 "target_vx", "target_vy", "target_vz", "target_yaw_rate",
-                "imu_history",
                 "pos_history",
                 "rng_states",
                 "observations", "rewards", "done_flags",
@@ -735,7 +711,6 @@ class DroneEnv(CUDAEnvironmentState):
             "roll": "roll", "pitch": "pitch", "yaw": "yaw",
             "masses": "masses", "drag_coeffs": "drag_coeffs", "thrust_coeffs": "thrust_coeffs",
             "target_vx": "target_vx", "target_vy": "target_vy", "target_vz": "target_vz", "target_yaw_rate": "target_yaw_rate",
-            "imu_history": "imu_history",
             "pos_history": "pos_history",
             "observations": "observations",
             "rewards": "rewards",
@@ -753,8 +728,8 @@ class DroneEnv(CUDAEnvironmentState):
             "roll": "roll", "pitch": "pitch", "yaw": "yaw",
             "masses": "masses", "drag_coeffs": "drag_coeffs", "thrust_coeffs": "thrust_coeffs",
             "target_vx": "target_vx", "target_vy": "target_vy", "target_vz": "target_vz", "target_yaw_rate": "target_yaw_rate",
-            "imu_history": "imu_history",
             "pos_history": "pos_history",
+            "observations": "observations",
             "rng_states": "rng_states",
             "step_counts": "step_counts",
             "num_agents": "num_agents",
