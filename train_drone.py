@@ -119,7 +119,16 @@ class CPUTrainer:
         # Initialize Model (CPU)
         # We wrap the policy to handle torch tensors
         self.policy = DronePolicy(env).to("cpu")
-        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=config['algorithm']['lr'])
+
+        # Separate optimizers:
+        # 1. RL Optimizer: Policy Head + Value Head
+        # 2. AE Optimizer: Autoencoder (Encoder + Decoder)
+        rl_params = list(self.policy.policy_head.parameters()) + list(self.policy.value_head.parameters())
+        ae_params = list(self.policy.ae.parameters())
+
+        self.optimizer = torch.optim.Adam(rl_params, lr=config['algorithm']['lr'])
+        self.ae_optimizer = torch.optim.Adam(ae_params, lr=0.001)
+
         self.ae_criterion = nn.L1Loss()
 
         # State Containers
@@ -294,14 +303,19 @@ class CPUTrainer:
             # AE Update
             ae_loss = self.ae_criterion(new_recon, new_hist)
 
-            # Combine losses
-            total_loss = loss + ae_loss
-
+            # Separate Updates
             self.optimizer.zero_grad()
+            self.ae_optimizer.zero_grad()
 
-            total_loss.backward()
-
+            # Backward RL Loss (Updates Heads)
+            # Note: If Encoder is not in optimizer, gradients accumulate there but step won't touch it.
+            loss.backward(retain_graph=True)
             self.optimizer.step()
+
+            # Backward AE Loss (Updates AE)
+            # This will add to encoder gradients.
+            ae_loss.backward()
+            self.ae_optimizer.step()
 
             # Logging
             mean_reward = torch.stack(reward_buffer).mean().item()
