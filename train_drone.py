@@ -195,55 +195,38 @@ class CPUTrainer:
                 num_agents=self.env.num_agents, reset_indices=np.array([0], dtype=np.int32)
             )
 
-            # Rollout storage
-            obs_buffer = []
-            action_buffer = []
-            reward_buffer = []
-            log_prob_buffer = []
-            value_buffer = []
+            # Pre-allocate Rollout Buffers (Tensors) to avoid list duplication/stack overhead
+            # obs: float16, others: float32
+            num_agents = self.env.num_agents
+            ep_len = self.episode_length
+
+            obs_buffer = torch.zeros((ep_len, num_agents, 1804), dtype=torch.float16)
+            action_buffer = torch.zeros((ep_len, num_agents, 4), dtype=torch.float32)
+            reward_buffer = torch.zeros((ep_len, num_agents), dtype=torch.float32)
+            value_buffer = torch.zeros((ep_len, num_agents), dtype=torch.float32)
+            log_prob_buffer = torch.zeros((ep_len, num_agents), dtype=torch.float32)
 
             for t in range(self.episode_length):
-                # Construct Observation
-                # The step/reset function fills `observations` array in self.data?
-                # No, reset function does NOT fill observations. We need to construct it?
-                # Actually, `step` fills it at end of step. `reset` does not.
-                # So we need an initial observation.
-                # Ideally we run a "dummy" step or extract obs logic.
-                # For simplicity, we assume obs is ready or we just run step.
-                # BUT PPO needs obs before action.
-                # Let's invoke a manual observation update or just use zeros for first step.
-                # Or invoke step with zero action?
-
-                # To get observations without stepping physics, we'd need a separate kernel.
-                # Hack: Just use the buffer `observations` (which is 0 initially).
-
-                # IMPORTANT: Clone to avoid shared memory issues when appending to buffer
-                current_obs = torch.from_numpy(self.data["observations"]).float().clone() # (Num_agents, Obs_dim)
+                # IMPORTANT: Use .float() for model input
+                current_obs_np = self.data["observations"]
+                current_obs = torch.from_numpy(current_obs_np).float()
 
                 # Forward Pass
-                # Model returns: action_mean, value, recon, history
-                # We need to sample actions.
-                # DronePolicy forward: x -> encoder -> features -> policy_head (mean)
-                # It doesn't sample. We need to add sampling or do it here.
-                # DronePolicy only outputs mu? `forward` returns `mu, v, recon, hist`.
-                # We need to sample around mu.
-
                 mu, v, recon, hist = self.policy(current_obs)
 
-                # Sample actions (Gaussian)
-                dist = torch.distributions.Normal(mu, torch.ones_like(mu)*0.5) # Fixed std dev for now
+                # Sample actions
+                dist = torch.distributions.Normal(mu, torch.ones_like(mu)*0.5)
                 action = dist.sample()
                 log_prob = dist.log_prob(action).sum(dim=-1)
 
-                obs_buffer.append(current_obs)
-                action_buffer.append(action)
-                value_buffer.append(v)
-                log_prob_buffer.append(log_prob)
+                # Store in pre-allocated buffers
+                obs_buffer[t] = current_obs.half() # implicit copy
+                action_buffer[t] = action.detach()
+                value_buffer[t] = v.squeeze().detach()
+                log_prob_buffer[t] = log_prob.detach()
 
                 # Execute Step
                 actions_np = action.detach().numpy().flatten()
-
-                # We assume 1 env block (id 0) containing all agents
                 env_ids_to_step = np.array([0], dtype=np.int32)
 
                 self.env.step_function(
@@ -260,67 +243,92 @@ class CPUTrainer:
                     env_ids=env_ids_to_step
                 )
 
-                # Clone reward tensor
-                reward_buffer.append(torch.from_numpy(self.data["rewards"]).float().clone())
+                # Store reward
+                reward_buffer[t] = torch.from_numpy(self.data["rewards"]).float()
 
-            # 2. Compute Advantages (GAE) - Simplified (just Returns)
-            # Returns
-            returns = []
+            # 2. Compute Advantages (GAE)
+            # We can do this in-place or separate tensor.
+            # Separate tensor for returns/advantages
+            returns = torch.zeros_like(reward_buffer)
             R = torch.zeros(self.env.num_agents)
-            for r in reversed(reward_buffer):
-                R = r + gamma * R
-                returns.insert(0, R)
-            returns = torch.stack(returns)
+            for t in reversed(range(self.episode_length)):
+                R = reward_buffer[t] + gamma * R
+                returns[t] = R
 
-            # Normalize advantages
-            values = torch.stack(value_buffer).squeeze()
-            advantages = returns - values
+            advantages = returns - value_buffer
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
-            # 3. Update Policy (PPO Step)
+            # 3. Update Policy (PPO Step) with Mini-batches
             # Flatten batch
-            b_obs = torch.stack(obs_buffer).reshape(-1, 1804)
-            b_actions = torch.stack(action_buffer).reshape(-1, 4)
-            b_log_probs = torch.stack(log_prob_buffer).reshape(-1)
+            b_obs_half = obs_buffer.reshape(-1, 1804)
+            b_actions = action_buffer.reshape(-1, 4)
+            b_log_probs = log_prob_buffer.reshape(-1)
+            b_returns = returns.reshape(-1)
+            b_advantages = advantages.reshape(-1)
             b_returns = returns.reshape(-1)
             b_advantages = advantages.reshape(-1)
 
-            # Re-evaluate
-            new_mu, new_v, new_recon, new_hist = self.policy(b_obs)
-            dist = torch.distributions.Normal(new_mu, torch.ones_like(new_mu)*0.5)
-            new_log_probs = dist.log_prob(b_actions).sum(dim=-1)
-            entropy = dist.entropy().mean()
+            # Mini-batch settings
+            batch_size = b_obs_half.shape[0]
+            minibatch_size = 4096
 
-            ratio = torch.exp(new_log_probs - b_log_probs)
-            surr1 = ratio * b_advantages
-            surr2 = torch.clamp(ratio, 1.0 - clip_param, 1.0 + clip_param) * b_advantages
-            policy_loss = -torch.min(surr1, surr2).mean()
+            # Accumulated metrics for logging
+            total_loss = 0
+            total_ae_loss = 0
+            num_updates = 0
 
-            value_loss = (b_returns - new_v.squeeze()).pow(2).mean()
+            indices = torch.randperm(batch_size)
 
-            loss = policy_loss + vf_loss_coeff * value_loss - entropy_coeff * entropy
+            for start_idx in range(0, batch_size, minibatch_size):
+                end_idx = min(start_idx + minibatch_size, batch_size)
+                mb_indices = indices[start_idx:end_idx]
 
-            # AE Update
-            ae_loss = self.ae_criterion(new_recon, new_hist)
+                # Fetch mini-batch and cast to float
+                mb_obs = b_obs_half[mb_indices].float()
+                mb_actions = b_actions[mb_indices]
+                mb_log_probs = b_log_probs[mb_indices]
+                mb_returns = b_returns[mb_indices]
+                mb_advantages = b_advantages[mb_indices]
 
-            # Separate Updates
-            self.optimizer.zero_grad()
-            self.ae_optimizer.zero_grad()
+                # Re-evaluate
+                new_mu, new_v, new_recon, new_hist = self.policy(mb_obs)
+                dist = torch.distributions.Normal(new_mu, torch.ones_like(new_mu)*0.5)
+                new_log_probs = dist.log_prob(mb_actions).sum(dim=-1)
+                entropy = dist.entropy().mean()
 
-            # Backward RL Loss (Updates Heads)
-            # Note: If Encoder is not in optimizer, gradients accumulate there but step won't touch it.
-            loss.backward(retain_graph=True)
-            self.optimizer.step()
+                ratio = torch.exp(new_log_probs - mb_log_probs)
+                surr1 = ratio * mb_advantages
+                surr2 = torch.clamp(ratio, 1.0 - clip_param, 1.0 + clip_param) * mb_advantages
+                policy_loss = -torch.min(surr1, surr2).mean()
 
-            # Backward AE Loss (Updates AE)
-            # This will add to encoder gradients.
-            ae_loss.backward()
-            self.ae_optimizer.step()
+                value_loss = (mb_returns - new_v.squeeze()).pow(2).mean()
 
-            # Logging
-            mean_reward = torch.stack(reward_buffer).mean().item()
+                loss = policy_loss + vf_loss_coeff * value_loss - entropy_coeff * entropy
+
+                # AE Update
+                ae_loss = self.ae_criterion(new_recon, new_hist)
+
+                # Separate Updates
+                self.optimizer.zero_grad()
+                self.ae_optimizer.zero_grad()
+
+                loss.backward(retain_graph=True)
+                self.optimizer.step()
+
+                ae_loss.backward()
+                self.ae_optimizer.step()
+
+                total_loss += loss.item()
+                total_ae_loss += ae_loss.item()
+                num_updates += 1
+
+            # Logging (Average over minibatches)
+            mean_reward = reward_buffer.mean().item()
+            avg_loss = total_loss / num_updates
+            avg_ae_loss = total_ae_loss / num_updates
+
             if itr % 5 == 0:
-                print(f"Iter {itr}: Reward {mean_reward:.3f} Loss {loss.item():.3f} AE {ae_loss.item():.3f}")
+                print(f"Iter {itr}: Reward {mean_reward:.3f} Loss {avg_loss:.3f} AE {avg_ae_loss:.3f}")
 
             self.visualizer.log_reward(itr, mean_reward)
 
@@ -369,8 +377,8 @@ def setup_and_train(run_config, device_id=0):
         # We must reduce the load significantly to avoid OOM/Timeout on CPU
 
         # Override config for lightweight CPU run
-        total_agents = 20 # Reduced from potentially 1024
-        run_config["trainer"]["training_iterations"] = 50 # Short run for verification
+        total_agents = 5000
+        run_config["trainer"]["training_iterations"] = 500
 
         print(f"CPU Mode: Reduced agents to {total_agents} and iterations to {run_config['trainer']['training_iterations']}")
 
