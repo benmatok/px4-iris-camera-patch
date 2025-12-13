@@ -8,10 +8,14 @@ class Visualizer:
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
         self.rewards_history = []
+        self.ae_loss_history = []
         self.trajectory_snapshots = [] # List of tuples: (iteration, trajectories)
 
     def log_reward(self, iteration, reward):
         self.rewards_history.append((iteration, reward))
+
+    def log_ae_loss(self, iteration, loss):
+        self.ae_loss_history.append((iteration, loss))
 
     def log_trajectory(self, iteration, trajectories):
         """
@@ -24,6 +28,8 @@ class Visualizer:
         self.trajectory_snapshots.append((iteration, single_traj))
 
     def plot_rewards(self):
+        if not self.rewards_history:
+            return
         iterations, rewards = zip(*self.rewards_history)
         plt.figure(figsize=(10, 6))
         plt.plot(iterations, rewards)
@@ -33,6 +39,67 @@ class Visualizer:
         plt.grid(True)
         plt.savefig(os.path.join(self.output_dir, "reward_plot.png"))
         plt.close()
+
+    def plot_ae_loss(self):
+        if not self.ae_loss_history:
+            return
+        iterations, losses = zip(*self.ae_loss_history)
+        plt.figure(figsize=(10, 6))
+        plt.plot(iterations, losses, color='orange')
+        plt.xlabel("Iteration")
+        plt.ylabel("AE Loss")
+        plt.title("AE Loss vs Time")
+        plt.grid(True)
+        plt.savefig(os.path.join(self.output_dir, "ae_loss_plot.png"))
+        plt.close()
+
+    def generate_ae_loss_gif(self):
+        if not self.ae_loss_history:
+            return
+
+        images = []
+        filenames = []
+
+        iterations, losses = zip(*self.ae_loss_history)
+
+        # Determine y-axis bounds to keep scale fixed
+        y_min, y_max = min(losses), max(losses)
+        margin = (y_max - y_min) * 0.1
+        if margin == 0: margin = 0.1
+        y_lim = (y_min - margin, y_max + margin)
+        x_lim = (min(iterations), max(iterations))
+
+        # Generate frames
+        # If too many points, maybe subsample? But let's assume it's fine for now.
+        # If user runs 5000 iters, logging every 5 -> 1000 frames. That's a bit heavy but okay.
+
+        for i in range(len(iterations)):
+            current_iters = iterations[:i+1]
+            current_losses = losses[:i+1]
+
+            plt.figure(figsize=(10, 6))
+            plt.plot(current_iters, current_losses, color='orange')
+            plt.xlim(x_lim)
+            plt.ylim(y_lim)
+            plt.xlabel("Iteration")
+            plt.ylabel("AE Loss")
+            plt.title(f"AE Loss Evolution (Iter {current_iters[-1]})")
+            plt.grid(True)
+
+            filename = os.path.join(self.output_dir, f"ae_loss_{i}.png")
+            plt.savefig(filename)
+            plt.close()
+            filenames.append(filename)
+            images.append(imageio.imread(filename))
+
+        gif_path = os.path.join(self.output_dir, "ae_loss_evolution.gif")
+        imageio.mimsave(gif_path, images, fps=5)
+
+        # Cleanup
+        for f in filenames:
+            os.remove(f)
+
+        return gif_path
 
     def generate_trajectory_gif(self):
         if not self.trajectory_snapshots:

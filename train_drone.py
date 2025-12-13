@@ -310,6 +310,7 @@ class CPUTrainer:
             mean_reward = torch.stack(reward_buffer).mean().item()
             if itr % 5 == 0:
                 print(f"Iter {itr}: Reward {mean_reward:.3f} Loss {loss.item():.3f} AE {ae_loss.item():.3f}")
+                self.visualizer.log_ae_loss(itr, ae_loss.item())
 
             self.visualizer.log_reward(itr, mean_reward)
 
@@ -322,8 +323,10 @@ class CPUTrainer:
 
         # Generate Plots
         self.visualizer.plot_rewards()
+        self.visualizer.plot_ae_loss()
         gif_path = self.visualizer.generate_trajectory_gif()
-        print(f"Visualization complete. GIF saved at {gif_path}")
+        ae_gif_path = self.visualizer.generate_ae_loss_gif()
+        print(f"Visualization complete. GIFs saved at {gif_path} and {ae_gif_path}")
 
 
 def setup_and_train(run_config, device_id=0):
