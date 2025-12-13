@@ -210,16 +210,11 @@ class CPUTrainer:
                 # Hack: Just use the buffer `observations` (which is 0 initially).
 
                 # IMPORTANT: Clone to avoid shared memory issues when appending to buffer
+                # Store as float16 to save memory
                 current_obs = torch.from_numpy(self.data["observations"]).float().clone() # (Num_agents, Obs_dim)
 
                 # Forward Pass
-                # Model returns: action_mean, value, recon, history
-                # We need to sample actions.
-                # DronePolicy forward: x -> encoder -> features -> policy_head (mean)
-                # It doesn't sample. We need to add sampling or do it here.
-                # DronePolicy only outputs mu? `forward` returns `mu, v, recon, hist`.
-                # We need to sample around mu.
-
+                # Policy needs float32
                 mu, v, recon, hist = self.policy(current_obs)
 
                 # Sample actions (Gaussian)
@@ -227,10 +222,10 @@ class CPUTrainer:
                 action = dist.sample()
                 log_prob = dist.log_prob(action).sum(dim=-1)
 
-                obs_buffer.append(current_obs)
-                action_buffer.append(action)
-                value_buffer.append(v)
-                log_prob_buffer.append(log_prob)
+                obs_buffer.append(current_obs.half()) # Store as half
+                action_buffer.append(action.detach()) # Keep float32 (small)
+                value_buffer.append(v.detach())
+                log_prob_buffer.append(log_prob.detach())
 
                 # Execute Step
                 actions_np = action.detach().numpy().flatten()
@@ -271,42 +266,77 @@ class CPUTrainer:
 
             # 3. Update Policy (PPO Step)
             # Flatten batch
-            b_obs = torch.stack(obs_buffer).reshape(-1, 1804)
+            # Stack floats (converting back to float32 for processing if needed, but we do it in chunks)
+            # We keep them as half in the list until needed to avoid OOM
+            # Actually, torch.stack on half tensors creates a half tensor.
+
+            b_obs = torch.stack(obs_buffer).reshape(-1, 1804) # half
             b_actions = torch.stack(action_buffer).reshape(-1, 4)
             b_log_probs = torch.stack(log_prob_buffer).reshape(-1)
             b_returns = returns.reshape(-1)
             b_advantages = advantages.reshape(-1)
 
-            # Re-evaluate
-            new_mu, new_v, new_recon, new_hist = self.policy(b_obs)
-            dist = torch.distributions.Normal(new_mu, torch.ones_like(new_mu)*0.5)
-            new_log_probs = dist.log_prob(b_actions).sum(dim=-1)
-            entropy = dist.entropy().mean()
+            # Mini-batch Update
+            batch_size = b_obs.shape[0]
+            mini_batch_size = 4096
+            indices = np.arange(batch_size)
+            np.random.shuffle(indices)
 
-            ratio = torch.exp(new_log_probs - b_log_probs)
-            surr1 = ratio * b_advantages
-            surr2 = torch.clamp(ratio, 1.0 - clip_param, 1.0 + clip_param) * b_advantages
-            policy_loss = -torch.min(surr1, surr2).mean()
+            total_policy_loss = 0
+            total_value_loss = 0
+            total_ae_loss = 0
+            updates = 0
 
-            value_loss = (b_returns - new_v.squeeze()).pow(2).mean()
+            for start in range(0, batch_size, mini_batch_size):
+                end = start + mini_batch_size
+                mb_idx = indices[start:end]
 
-            loss = policy_loss + vf_loss_coeff * value_loss - entropy_coeff * entropy
+                mb_obs = b_obs[mb_idx].float() # Convert to float32 for model
+                mb_actions = b_actions[mb_idx]
+                mb_log_probs = b_log_probs[mb_idx]
+                mb_returns = b_returns[mb_idx]
+                mb_advantages = b_advantages[mb_idx]
 
-            # AE Update
-            ae_loss = self.ae_criterion(new_recon, new_hist)
+                # Re-evaluate
+                new_mu, new_v, new_recon, new_hist = self.policy(mb_obs)
+                dist = torch.distributions.Normal(new_mu, torch.ones_like(new_mu)*0.5)
+                new_log_probs = dist.log_prob(mb_actions).sum(dim=-1)
+                entropy = dist.entropy().mean()
 
-            # Combine losses
-            total_loss = loss + ae_loss
+                ratio = torch.exp(new_log_probs - mb_log_probs)
+                surr1 = ratio * mb_advantages
+                surr2 = torch.clamp(ratio, 1.0 - clip_param, 1.0 + clip_param) * mb_advantages
+                policy_loss = -torch.min(surr1, surr2).mean()
 
-            self.optimizer.zero_grad()
-            self.ae_optimizer.zero_grad()
+                value_loss = (mb_returns - new_v.squeeze()).pow(2).mean()
 
-            total_loss.backward()
+                loss = policy_loss + vf_loss_coeff * value_loss - entropy_coeff * entropy
 
-            self.optimizer.step()
-            self.ae_optimizer.step()
+                # AE Update
+                ae_loss = self.ae_criterion(new_recon, new_hist)
+
+                # Combine losses
+                total_loss = loss + ae_loss
+
+                self.optimizer.zero_grad()
+                self.ae_optimizer.zero_grad()
+
+                total_loss.backward()
+
+                self.optimizer.step()
+                self.ae_optimizer.step()
+
+                total_policy_loss += loss.item()
+                total_ae_loss += ae_loss.item()
+                updates += 1
+
+            avg_loss = total_policy_loss / updates
+            avg_ae_loss = total_ae_loss / updates
 
             # Logging
+            loss = type('obj', (object,), {'item': lambda: avg_loss})
+            ae_loss = type('obj', (object,), {'item': lambda: avg_ae_loss})
+
             mean_reward = torch.stack(reward_buffer).mean().item()
             if itr % 5 == 0:
                 print(f"Iter {itr}: Reward {mean_reward:.3f} Loss {loss.item():.3f} AE {ae_loss.item():.3f}")
@@ -361,10 +391,10 @@ def setup_and_train(run_config, device_id=0):
         # We must reduce the load significantly to avoid OOM/Timeout on CPU
 
         # Override config for lightweight CPU run
-        total_agents = 20 # Reduced from potentially 1024
-        run_config["trainer"]["training_iterations"] = 50 # Short run for verification
+        total_agents = 50 # User requested 50 agents
+        run_config["trainer"]["training_iterations"] = 50000 # User requested 50000 iterations
 
-        print(f"CPU Mode: Reduced agents to {total_agents} and iterations to {run_config['trainer']['training_iterations']}")
+        print(f"CPU Mode: Adjusted agents to {total_agents} and iterations to {run_config['trainer']['training_iterations']}")
 
         # Instantiate DroneEnv with num_agents = total_agents
         # Note: DroneEnv original expects num_agents per env.

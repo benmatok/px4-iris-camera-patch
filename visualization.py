@@ -53,7 +53,7 @@ class Visualizer:
         plt.savefig(os.path.join(self.output_dir, "ae_loss_plot.png"))
         plt.close()
 
-    def generate_ae_loss_gif(self):
+    def generate_ae_loss_gif(self, max_frames=100):
         if not self.ae_loss_history:
             return
 
@@ -69,13 +69,18 @@ class Visualizer:
         y_lim = (y_min - margin, y_max + margin)
         x_lim = (min(iterations), max(iterations))
 
-        # Generate frames
-        # If too many points, maybe subsample? But let's assume it's fine for now.
-        # If user runs 5000 iters, logging every 5 -> 1000 frames. That's a bit heavy but okay.
+        # Subsample frames if too many
+        num_points = len(iterations)
+        if num_points > max_frames:
+            # We want to show evolution, so we pick indices
+            indices = np.linspace(0, num_points - 1, max_frames, dtype=int)
+            indices = np.unique(indices) # Ensure unique
+        else:
+            indices = np.arange(num_points)
 
-        for i in range(len(iterations)):
-            current_iters = iterations[:i+1]
-            current_losses = losses[:i+1]
+        for idx in indices:
+            current_iters = iterations[:idx+1]
+            current_losses = losses[:idx+1]
 
             plt.figure(figsize=(10, 6))
             plt.plot(current_iters, current_losses, color='orange')
@@ -83,17 +88,17 @@ class Visualizer:
             plt.ylim(y_lim)
             plt.xlabel("Iteration")
             plt.ylabel("AE Loss")
-            plt.title(f"AE Loss Evolution (Iter {current_iters[-1]})")
+            plt.title(f"AE Loss Evolution (Iter {iterations[idx]})")
             plt.grid(True)
 
-            filename = os.path.join(self.output_dir, f"ae_loss_{i}.png")
+            filename = os.path.join(self.output_dir, f"ae_loss_{idx}.png")
             plt.savefig(filename)
             plt.close()
             filenames.append(filename)
             images.append(imageio.imread(filename))
 
         gif_path = os.path.join(self.output_dir, "ae_loss_evolution.gif")
-        imageio.mimsave(gif_path, images, fps=5)
+        imageio.mimsave(gif_path, images, fps=10) # Faster FPS for summary
 
         # Cleanup
         for f in filenames:
@@ -122,7 +127,14 @@ class Visualizer:
         y_lim = (y_min - pad, y_max + pad)
         z_lim = (z_min - pad, z_max + pad) # Z should be > 0 ideally, but let's see.
 
-        for i, (itr, traj) in enumerate(self.trajectory_snapshots):
+        # Limit snapshots if too many (though trajectories are logged less frequently usually)
+        # But for safety:
+        snapshots_to_plot = self.trajectory_snapshots
+        if len(snapshots_to_plot) > 100:
+             indices = np.linspace(0, len(snapshots_to_plot) - 1, 100, dtype=int)
+             snapshots_to_plot = [self.trajectory_snapshots[i] for i in np.unique(indices)]
+
+        for i, (itr, traj) in enumerate(snapshots_to_plot):
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
 
             # Top-down view (X vs Y)
