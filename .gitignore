@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.o
+*.so
+build/
+*.egg-info/
+drone_env/drone_cython.c
