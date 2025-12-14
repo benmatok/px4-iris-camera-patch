@@ -7,7 +7,7 @@ extensions = [
         "drone_env.drone_cython",
         ["drone_env/drone_cython.pyx"],
         include_dirs=[numpy.get_include()],
-        extra_compile_args=["-O3", "-fopenmp", "-march=native", "-ffast-math", "-mavx2", "-mfma"],
+        extra_compile_args=["-O3", "-fopenmp"],
         extra_link_args=["-fopenmp"],
     )
 ]
