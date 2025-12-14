@@ -13,6 +13,13 @@ except ImportError:
         def __init__(self, **kwargs):
             pass
 
+# Try importing the Cython extension
+try:
+    from drone_env.drone_cython import step_cython, reset_cython
+    _HAS_CYTHON = True
+except ImportError:
+    _HAS_CYTHON = False
+
 _DRONE_CUDA_SOURCE = """
 // Helper functions
 __device__ float terrain_height(float x, float y) {
@@ -651,9 +658,14 @@ class DroneEnv(CUDAEnvironmentState):
             self.step_function = self.cuda_module.get_function("step")
             self.reset_function = self.cuda_module.get_function("reset")
         else:
-            logging.info("DroneEnv: Using CPU/NumPy backend.")
-            self.step_function = step_cpu
-            self.reset_function = reset_cpu
+            if _HAS_CYTHON:
+                logging.info("DroneEnv: Using CPU/Cython backend.")
+                self.step_function = step_cython
+                self.reset_function = reset_cython
+            else:
+                logging.info("DroneEnv: Using CPU/NumPy backend.")
+                self.step_function = step_cpu
+                self.reset_function = reset_cpu
 
     def get_environment_info(self):
         return {
@@ -744,6 +756,7 @@ class DroneEnv(CUDAEnvironmentState):
             "actions": "actions",
             "num_agents": "num_agents",
             "episode_length": "episode_length",
+            "env_ids": "env_ids",
         }
 
     def get_reset_function_kwargs(self):
