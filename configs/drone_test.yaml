@@ -1,0 +1,23 @@
+name: drone_env_test
+
+env:
+  num_agents: 1
+
+policy:
+  drone_policy:
+    model: FullyConnected
+    hidden_dims: [128, 128]
+
+trainer:
+  num_envs: 10
+  episode_length: 10
+  training_iterations: 5
+  num_gpus: 0
+
+algorithm:
+  name: PPO
+  gamma: 0.99
+  lr: 0.001
+  clip_param: 0.2
+  vf_loss_coeff: 0.5
+  entropy_coeff: 0.01
