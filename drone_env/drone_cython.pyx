@@ -10,6 +10,7 @@ import numpy as np
 cimport numpy as np
 from libc.math cimport sin, cos, exp, fabs, sqrt, M_PI
 from libc.stdlib cimport rand, RAND_MAX
+from libc.string cimport memmove, memset
 from cython.parallel import prange
 
 # Define float32 type for numpy
@@ -17,14 +18,32 @@ DTYPE = np.float32
 ctypedef np.float32_t DTYPE_t
 ctypedef np.int32_t DTYPE_INT_t
 
+cdef extern from "physics_avx.hpp":
+    void step_agents_avx2(
+        int i,
+        float* pos_x, float* pos_y, float* pos_z,
+        float* vel_x, float* vel_y, float* vel_z,
+        float* roll, float* pitch, float* yaw,
+        float* masses, float* drag_coeffs, float* thrust_coeffs,
+        float* target_vx, float* target_vy, float* target_vz, float* target_yaw_rate,
+        float* pos_history,
+        float* observations,
+        float* rewards,
+        float* done_flags,
+        float* actions,
+        int episode_length,
+        int t,
+        int num_agents
+    ) nogil
+
 cdef inline float terrain_height(float x, float y) nogil:
     return 5.0 * sin(0.1 * x) * cos(0.1 * y)
 
 cdef inline float rand_float() nogil:
     return <float>rand() / <float>RAND_MAX
 
-# Helper function for single agent step
-cdef void _step_agent(
+# Scalar Fallback Helper function for single agent step
+cdef void _step_agent_scalar(
     int i,
     float[:] pos_x, float[:] pos_y, float[:] pos_z,
     float[:] vel_x, float[:] vel_y, float[:] vel_z,
@@ -64,7 +83,6 @@ cdef void _step_agent(
     cdef float v_err_sq, yaw_rate_err_sq
     cdef float rew
     cdef int collision
-    cdef int ph_idx
 
     # Load state
     px = pos_x[i]
@@ -87,8 +105,7 @@ cdef void _step_agent(
     yaw_rate_cmd = actions[i * 4 + 3]
 
     # Shift Observations
-    for k in range(1740):
-        observations[i, k] = observations[i, k + 60]
+    memmove(&observations[i, 0], &observations[i, 60], 1740 * 4)
 
     # Substeps
     for s in range(substeps):
@@ -154,7 +171,6 @@ cdef void _step_agent(
         acc_b_z = r31 * acc_w_x + r32 * acc_w_y + r33 * acc_w_z
 
         # Write directly to observations end buffer
-        # 1740 + s*6
         observations[i, 1740 + s*6 + 0] = acc_b_x
         observations[i, 1740 + s*6 + 1] = acc_b_y
         observations[i, 1740 + s*6 + 2] = acc_b_z
@@ -183,10 +199,10 @@ cdef void _step_agent(
     # Pos History
     if t <= episode_length:
         # pos_history is flat: idx * episode_length * 3 + (t-1) * 3
-        ph_idx = i * episode_length * 3 + (t-1) * 3
-        pos_history[ph_idx + 0] = px
-        pos_history[ph_idx + 1] = py
-        pos_history[ph_idx + 2] = pz
+        # But here pos_history is memoryview.
+        pos_history[i * episode_length * 3 + (t-1) * 3 + 0] = px
+        pos_history[i * episode_length * 3 + (t-1) * 3 + 1] = py
+        pos_history[i * episode_length * 3 + (t-1) * 3 + 2] = pz
 
     # Targets
     tvx = target_vx[i]
@@ -200,7 +216,6 @@ cdef void _step_agent(
     observations[i, 1803] = tyr
 
     # Rewards
-    # Recompute Rotation Matrix for final state
     sr = sin(r); cr = cos(r)
     sp = sin(p); cp = cos(p)
     sy = sin(y_ang); cy = cos(y_ang)
@@ -241,7 +256,7 @@ cdef void _step_agent(
         done_flags[i] = 0.0
 
 # Helper function for single agent reset
-cdef void _reset_agent(
+cdef void _reset_agent_scalar(
     int i,
     float[:] pos_x, float[:] pos_y, float[:] pos_z,
     float[:] vel_x, float[:] vel_y, float[:] vel_z,
@@ -287,8 +302,7 @@ cdef void _reset_agent(
     target_yaw_rate[i] = tyr
 
     # Reset Observations
-    for k in range(1800):
-        observations[i, k] = 0.0
+    memset(&observations[i, 0], 0, 1800 * 4)
 
     observations[i, 1800] = tvx
     observations[i, 1801] = tvy
@@ -326,9 +340,32 @@ def step_cython(
     step_counts[0] += 1
     cdef int t = step_counts[0]
 
+    # Determine split for AVX (multiples of 8)
+    cdef int limit_avx = (num_agents // 8) * 8
+
     with nogil:
-        for i in prange(num_agents):
-            _step_agent(
+        # AVX Loop (stride 8)
+        for i in prange(0, limit_avx, 8):
+            step_agents_avx2(
+                i,
+                &pos_x[0], &pos_y[0], &pos_z[0],
+                &vel_x[0], &vel_y[0], &vel_z[0],
+                &roll[0], &pitch[0], &yaw[0],
+                &masses[0], &drag_coeffs[0], &thrust_coeffs[0],
+                &target_vx[0], &target_vy[0], &target_vz[0], &target_yaw_rate[0],
+                &pos_history[0],
+                &observations[0,0],
+                &rewards[0],
+                &done_flags[0],
+                &actions[0],
+                episode_length,
+                t,
+                num_agents
+            )
+
+        # Scalar Loop for remainder
+        for i in range(limit_avx, num_agents):
+            _step_agent_scalar(
                 i,
                 pos_x, pos_y, pos_z,
                 vel_x, vel_y, vel_z,
@@ -359,9 +396,11 @@ def reset_cython(
 ):
     cdef int i
 
+    # We use scalar loop for reset since it's just randoms, and AVX rand is complex.
+    # But we parallelize.
     with nogil:
         for i in prange(num_agents):
-            _reset_agent(
+            _reset_agent_scalar(
                 i,
                 pos_x, pos_y, pos_z,
                 vel_x, vel_y, vel_z,
