@@ -199,7 +199,7 @@ class AETrainer:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--agents", type=int, default=2000)
-    parser.add_argument("--episodes", type=int, default=100)
+    parser.add_argument("--episodes", type=int, default=1000)
     parser.add_argument("--load", type=str, default=None)
     args = parser.parse_args()
 
