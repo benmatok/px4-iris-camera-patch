@@ -216,4 +216,123 @@ inline v8sf cos256_ps(v8sf x) {
   return sin256_ps(x);
 }
 
+inline void sincos256_ps(v8sf x, v8sf *s, v8sf *c) {
+  v8sf xmm1, xmm2, xmm3 = _mm256_setzero_ps(), sign_bit_sin, y;
+  v8si imm0, imm2, imm4;
+
+  v8sf sign_mask = *(v8sf*)_ps256_sign_mask;
+  v8sf inv_sign_mask = *(v8sf*)_ps256_inv_sign_mask;
+  v8sf fo_pi = *(v8sf*)_ps256_fo_pi;
+  v8sf dp1 = *(v8sf*)_ps256_dp1;
+  v8sf dp2 = *(v8sf*)_ps256_dp2;
+  v8sf dp3 = *(v8sf*)_ps256_dp3;
+
+  sign_bit_sin = x;
+  x = _mm256_and_ps(x, inv_sign_mask);
+  sign_bit_sin = _mm256_and_ps(sign_bit_sin, sign_mask);
+
+  y = _mm256_mul_ps(x, fo_pi);
+  imm2 = _mm256_cvttps_epi32(y);
+  imm2 = _mm256_add_epi32(imm2, *(v8si*)_pi32_256_1);
+  imm2 = _mm256_and_si256(imm2, *(v8si*)_pi32_256_inv1);
+  y = _mm256_cvtepi32_ps(imm2);
+
+  v8si quadrant = imm2; // Save quadrant for cos sign calc
+
+  // Sin Sign
+  imm0 = _mm256_and_si256(imm2, *(v8si*)_pi32_256_4);
+  imm0 = _mm256_slli_epi32(imm0, 29);
+  v8sf swap_sign_bit_sin = _mm256_castsi256_ps(imm0);
+
+  // Poly Mask
+  imm2 = _mm256_and_si256(imm2, *(v8si*)_pi32_256_2);
+  imm2 = _mm256_cmpeq_epi32(imm2, _mm256_setzero_si256());
+  v8sf poly_mask = _mm256_castsi256_ps(imm2);
+
+  // Range Reduction
+  xmm1 = _mm256_mul_ps(y, dp1);
+  xmm2 = _mm256_mul_ps(y, dp2);
+  xmm3 = _mm256_mul_ps(y, dp3);
+  x = _mm256_add_ps(x, xmm1);
+  x = _mm256_add_ps(x, xmm2);
+  x = _mm256_add_ps(x, xmm3);
+
+  // Apply Sin Sign Bit
+  sign_bit_sin = _mm256_xor_ps(sign_bit_sin, swap_sign_bit_sin);
+
+  v8sf z = _mm256_mul_ps(x,x);
+
+  // Cosine Poly
+  y = *(v8sf*)_ps256_coscof_p0;
+  y = _mm256_mul_ps(y, z);
+  y = _mm256_add_ps(y, *(v8sf*)_ps256_coscof_p1);
+  y = _mm256_mul_ps(y, z);
+  y = _mm256_add_ps(y, *(v8sf*)_ps256_coscof_p2);
+  y = _mm256_mul_ps(y, z);
+  y = _mm256_mul_ps(y, z);
+  y = _mm256_sub_ps(y, _mm256_mul_ps(z, *(v8sf*)_ps256_0p5));
+  y = _mm256_add_ps(y, *(v8sf*)_ps256_1);
+
+  // Sine Poly
+  v8sf y2 = *(v8sf*)_ps256_sincof_p0;
+  y2 = _mm256_mul_ps(y2, z);
+  y2 = _mm256_add_ps(y2, *(v8sf*)_ps256_sincof_p1);
+  y2 = _mm256_mul_ps(y2, z);
+  y2 = _mm256_add_ps(y2, *(v8sf*)_ps256_sincof_p2);
+  y2 = _mm256_mul_ps(y2, z);
+  y2 = _mm256_mul_ps(y2, x);
+  y2 = _mm256_add_ps(y2, x);
+
+  // Sin Selection
+  v8sf ysin2 = _mm256_and_ps(poly_mask, y2);
+  v8sf ysin1 = _mm256_andnot_ps(poly_mask, y);
+  *s = _mm256_add_ps(ysin1, ysin2);
+  *s = _mm256_xor_ps(*s, sign_bit_sin);
+
+  // Cos Selection
+  // If poly_mask is set (Sin Poly used for Sin), then for Cos we use Cos Poly (y).
+  // No!
+  // Quadrant 0 (imm2=0): Sin uses y2 (Sin Poly). Cos uses y (Cos Poly).
+  // Quadrant 1 (imm2=2): Sin uses y (Cos Poly). Cos uses y2 (Sin Poly).
+  // poly_mask = (imm2 & 2) == 0 ? 0xFF : 0.
+  // So if imm2=0, poly_mask=1. Sin uses ysin2=y2 (sin poly). Correct.
+  // Then Cos should use y (cos poly).
+  // So for Cos: if poly_mask=1, use y.
+  // v8sf ycos2 = _mm256_and_ps(poly_mask, y);
+  // v8sf ycos1 = _mm256_andnot_ps(poly_mask, y2);
+  // *c = _mm256_add_ps(ycos1, ycos2);
+  // Wait, I reused 'y' variable for Cosine Poly result.
+  // And 'y2' for Sine Poly.
+  // So yes, I can reuse them.
+
+  v8sf ycos2 = _mm256_and_ps(poly_mask, y);
+  v8sf ycos1 = _mm256_andnot_ps(poly_mask, y2);
+  *c = _mm256_add_ps(ycos1, ycos2);
+
+  // Cos Sign
+  imm4 = _mm256_sub_epi32(quadrant, *(v8si*)_pi32_256_2);
+  imm4 = _mm256_andnot_si256(imm4, *(v8si*)_pi32_256_4);
+  imm4 = _mm256_slli_epi32(imm4, 29);
+  v8sf swap_sign_bit_cos = _mm256_castsi256_ps(imm4);
+
+  // Note: original sign_bit_sin variable has been modified!
+  // I need the ORIGINAL x sign bit.
+  // But I overwrote sign_bit_sin.
+  // `sign_bit_sin = _mm256_and_ps(sign_bit_sin, sign_mask);`
+  // And then `sign_bit_sin = _mm256_xor_ps(...)`.
+  // So I can't recover x sign from it easily without reversing xor.
+  // But I can recalculate it or save it?
+  // Actually, I should have saved `x_sign_bit`.
+  // Wait, `sign_bit_sin` is initialized to `x` then masked.
+  // I will introduce `x_sign_bit` variable.
+
+  // Re-deriving x sign bit (simpler than changing above code layout significantly):
+  // Or simpler:
+  // x_sign_bit = sign_bit_sin ^ swap_sign_bit_sin
+  v8sf x_sign_bit = _mm256_xor_ps(sign_bit_sin, swap_sign_bit_sin);
+
+  v8sf sign_bit_cos = _mm256_xor_ps(x_sign_bit, swap_sign_bit_cos);
+  *c = _mm256_xor_ps(*c, sign_bit_cos);
+}
+
 #endif

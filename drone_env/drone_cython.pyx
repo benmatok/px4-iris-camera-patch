@@ -9,6 +9,10 @@
 import numpy as np
 cimport numpy as np
 from libc.math cimport sin, cos, exp, fabs, sqrt, M_PI
+# sincosf is not in standard libc.math pxd, need extern
+cdef extern from "math.h" nogil:
+    void sincosf(float x, float *sin, float *cos)
+
 from libc.stdlib cimport rand, RAND_MAX
 from libc.string cimport memmove, memset
 from cython.parallel import prange
@@ -117,9 +121,9 @@ cdef void _step_agent_scalar(
         max_thrust = 20.0 * thrust_coeff
         thrust_force = thrust_cmd * max_thrust
 
-        sr = sin(r); cr = cos(r)
-        sp = sin(p); cp = cos(p)
-        sy = sin(y_ang); cy = cos(y_ang)
+        sincosf(r, &sr, &cr)
+        sincosf(p, &sp, &cp)
+        sincosf(y_ang, &sy, &cy)
 
         ax_thrust = thrust_force * (cy * sp * cr + sy * sr) / mass
         ay_thrust = thrust_force * (sy * sp * cr - cy * sr) / mass
@@ -216,9 +220,9 @@ cdef void _step_agent_scalar(
     observations[i, 1803] = tyr
 
     # Rewards
-    sr = sin(r); cr = cos(r)
-    sp = sin(p); cp = cos(p)
-    sy = sin(y_ang); cy = cos(y_ang)
+    sincosf(r, &sr, &cr)
+    sincosf(p, &sp, &cp)
+    sincosf(y_ang, &sy, &cy)
 
     r11 = cy * cp
     r12 = sy * cp
