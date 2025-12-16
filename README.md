@@ -60,6 +60,29 @@ When a GPU is unavailable or for debugging/unit-testing, the system falls back t
 - **Multi-Threading**: Uses `prange` (OpenMP) to parallelize agent updates across all available CPU cores.
 - **Performance**: Benchmarks show an **~11.3x speedup** compared to a standard vectorized NumPy implementation (0.24s vs 2.75s for 100 steps of 5000 agents).
 
+### Autoencoder Training
+
+A separate script `train_ae.py` is provided to train the IMU Autoencoder independently using data generated from large-scale simulations. This script uses the Cython-optimized CPU environment to generate diverse flight trajectories (using a proportional controller) and trains the `Autoencoder1D` model using KFAC optimization.
+
+#### Usage
+
+To train the autoencoder from scratch:
+```bash
+python train_ae.py --agents 2000 --episodes 1000
+```
+
+To resume training from a checkpoint:
+```bash
+python train_ae.py --agents 2000 --episodes 1000 --load ae_model.pth
+```
+
+#### Arguments
+- `--agents`: Number of parallel drones to simulate (default: 2000).
+- `--episodes`: Number of episodes to train (default: 1000).
+- `--load`: Path to a checkpoint file (e.g., `ae_model.pth`) to resume training.
+
+The script saves the trained model to `ae_model.pth` and a loss plot to `ae_training_loss.png` after each episode.
+
 ### Training Visualization
 
 The training script automatically generates visualizations of the agent's performance.
