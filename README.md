@@ -76,6 +76,24 @@ To resume training from a checkpoint:
 python train_ae.py --agents 2000 --episodes 1000 --load ae_model.pth
 ```
 
+### Installation & Compilation
+
+To run the project (especially the CPU-optimized Cython backend) on a clean installation, you must compile the C++ extensions.
+
+#### Prerequisites
+- **Python 3.x**
+- **C++ Compiler**: `g++` or `clang++` with OpenMP support.
+- **Python Packages**: `numpy`, `Cython`, `setuptools`.
+
+#### Compilation Command
+Run the following command in the root directory to build the Cython extension in place:
+
+```bash
+python setup.py build_ext --inplace
+```
+
+This compiles `drone_env/drone_cython.pyx` into a shared object (`.so`) file that the Python scripts import automatically.
+
 #### Arguments
 - `--agents`: Number of parallel drones to simulate (default: 2000).
 - `--episodes`: Number of episodes to train (default: 1000).

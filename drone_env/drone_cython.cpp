@@ -1176,7 +1176,6 @@ static int __Pyx_init_co_variables(void) {
 #include "numpy/arrayscalars.h"
 #include "numpy/ufuncobject.h"
 #include <math.h>
-#include "math.h"
 #include <stdlib.h>
 #include "physics_avx.hpp"
 #include "pythread.h"
@@ -1826,7 +1825,7 @@ typedef npy_double __pyx_t_5numpy_double_t;
 */
 typedef npy_longdouble __pyx_t_5numpy_longdouble_t;
 
-/* "drone_env/drone_cython.pyx":22
+/* "drone_env/drone_cython.pyx":18
  * # Define float32 type for numpy
  * DTYPE = np.float32
  * ctypedef np.float32_t DTYPE_t             # <<<<<<<<<<<<<<
@@ -1835,7 +1834,7 @@ typedef npy_longdouble __pyx_t_5numpy_longdouble_t;
 */
 typedef __pyx_t_5numpy_float32_t __pyx_t_9drone_env_12drone_cython_DTYPE_t;
 
-/* "drone_env/drone_cython.pyx":23
+/* "drone_env/drone_cython.pyx":19
  * DTYPE = np.float32
  * ctypedef np.float32_t DTYPE_t
  * ctypedef np.int32_t DTYPE_INT_t             # <<<<<<<<<<<<<<
@@ -18802,7 +18801,7 @@ static CYTHON_INLINE NPY_DATETIMEUNIT __pyx_f_5numpy_get_datetime64_unit(PyObjec
   return __pyx_r;
 }
 
-/* "drone_env/drone_cython.pyx":43
+/* "drone_env/drone_cython.pyx":39
  *     ) nogil
  *
  * cdef inline float terrain_height(float x, float y) nogil:             # <<<<<<<<<<<<<<
@@ -18813,7 +18812,7 @@ static CYTHON_INLINE NPY_DATETIMEUNIT __pyx_f_5numpy_get_datetime64_unit(PyObjec
 static CYTHON_INLINE float __pyx_f_9drone_env_12drone_cython_terrain_height(float __pyx_v_x, float __pyx_v_y) {
   float __pyx_r;
 
-  /* "drone_env/drone_cython.pyx":44
+  /* "drone_env/drone_cython.pyx":40
  *
  * cdef inline float terrain_height(float x, float y) nogil:
  *     return 5.0 * sin(0.1 * x) * cos(0.1 * y)             # <<<<<<<<<<<<<<
@@ -18823,7 +18822,7 @@ static CYTHON_INLINE float __pyx_f_9drone_env_12drone_cython_terrain_height(floa
   __pyx_r = ((5.0 * sin((0.1 * __pyx_v_x))) * cos((0.1 * __pyx_v_y)));
   goto __pyx_L0;
 
-  /* "drone_env/drone_cython.pyx":43
+  /* "drone_env/drone_cython.pyx":39
  *     ) nogil
  *
  * cdef inline float terrain_height(float x, float y) nogil:             # <<<<<<<<<<<<<<
@@ -18836,7 +18835,7 @@ static CYTHON_INLINE float __pyx_f_9drone_env_12drone_cython_terrain_height(floa
   return __pyx_r;
 }
 
-/* "drone_env/drone_cython.pyx":46
+/* "drone_env/drone_cython.pyx":42
  *     return 5.0 * sin(0.1 * x) * cos(0.1 * y)
  *
  * cdef inline float rand_float() nogil:             # <<<<<<<<<<<<<<
@@ -18847,7 +18846,7 @@ static CYTHON_INLINE float __pyx_f_9drone_env_12drone_cython_terrain_height(floa
 static CYTHON_INLINE float __pyx_f_9drone_env_12drone_cython_rand_float(void) {
   float __pyx_r;
 
-  /* "drone_env/drone_cython.pyx":47
+  /* "drone_env/drone_cython.pyx":43
  *
  * cdef inline float rand_float() nogil:
  *     return <float>rand() / <float>RAND_MAX             # <<<<<<<<<<<<<<
@@ -18857,7 +18856,7 @@ static CYTHON_INLINE float __pyx_f_9drone_env_12drone_cython_rand_float(void) {
   __pyx_r = (((float)rand()) / ((float)RAND_MAX));
   goto __pyx_L0;
 
-  /* "drone_env/drone_cython.pyx":46
+  /* "drone_env/drone_cython.pyx":42
  *     return 5.0 * sin(0.1 * x) * cos(0.1 * y)
  *
  * cdef inline float rand_float() nogil:             # <<<<<<<<<<<<<<
@@ -18870,7 +18869,7 @@ static CYTHON_INLINE float __pyx_f_9drone_env_12drone_cython_rand_float(void) {
   return __pyx_r;
 }
 
-/* "drone_env/drone_cython.pyx":50
+/* "drone_env/drone_cython.pyx":46
  *
  * # Scalar Fallback Helper function for single agent step
  * cdef void _step_agent_scalar(             # <<<<<<<<<<<<<<
@@ -18959,7 +18958,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   int __pyx_clineno = 0;
   PyGILState_STATE __pyx_gilstate_save;
 
-  /* "drone_env/drone_cython.pyx":66
+  /* "drone_env/drone_cython.pyx":62
  * ) noexcept nogil:
  *     cdef int s, k
  *     cdef int substeps = 10             # <<<<<<<<<<<<<<
@@ -18968,7 +18967,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_substeps = 10;
 
-  /* "drone_env/drone_cython.pyx":67
+  /* "drone_env/drone_cython.pyx":63
  *     cdef int s, k
  *     cdef int substeps = 10
  *     cdef float dt = 0.01             # <<<<<<<<<<<<<<
@@ -18977,7 +18976,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_dt = 0.01;
 
-  /* "drone_env/drone_cython.pyx":68
+  /* "drone_env/drone_cython.pyx":64
  *     cdef int substeps = 10
  *     cdef float dt = 0.01
  *     cdef float g = 9.81             # <<<<<<<<<<<<<<
@@ -18986,7 +18985,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_g = 9.81;
 
-  /* "drone_env/drone_cython.pyx":92
+  /* "drone_env/drone_cython.pyx":88
  *
  *     # Load state
  *     px = pos_x[i]             # <<<<<<<<<<<<<<
@@ -18996,7 +18995,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_1 = __pyx_v_i;
   __pyx_v_px = (*((float *) ( /* dim=0 */ (__pyx_v_pos_x.data + __pyx_t_1 * __pyx_v_pos_x.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":93
+  /* "drone_env/drone_cython.pyx":89
  *     # Load state
  *     px = pos_x[i]
  *     py = pos_y[i]             # <<<<<<<<<<<<<<
@@ -19006,7 +19005,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_1 = __pyx_v_i;
   __pyx_v_py = (*((float *) ( /* dim=0 */ (__pyx_v_pos_y.data + __pyx_t_1 * __pyx_v_pos_y.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":94
+  /* "drone_env/drone_cython.pyx":90
  *     px = pos_x[i]
  *     py = pos_y[i]
  *     pz = pos_z[i]             # <<<<<<<<<<<<<<
@@ -19016,7 +19015,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_1 = __pyx_v_i;
   __pyx_v_pz = (*((float *) ( /* dim=0 */ (__pyx_v_pos_z.data + __pyx_t_1 * __pyx_v_pos_z.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":95
+  /* "drone_env/drone_cython.pyx":91
  *     py = pos_y[i]
  *     pz = pos_z[i]
  *     vx = vel_x[i]             # <<<<<<<<<<<<<<
@@ -19026,7 +19025,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_1 = __pyx_v_i;
   __pyx_v_vx = (*((float *) ( /* dim=0 */ (__pyx_v_vel_x.data + __pyx_t_1 * __pyx_v_vel_x.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":96
+  /* "drone_env/drone_cython.pyx":92
  *     pz = pos_z[i]
  *     vx = vel_x[i]
  *     vy = vel_y[i]             # <<<<<<<<<<<<<<
@@ -19036,7 +19035,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_1 = __pyx_v_i;
   __pyx_v_vy = (*((float *) ( /* dim=0 */ (__pyx_v_vel_y.data + __pyx_t_1 * __pyx_v_vel_y.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":97
+  /* "drone_env/drone_cython.pyx":93
  *     vx = vel_x[i]
  *     vy = vel_y[i]
  *     vz = vel_z[i]             # <<<<<<<<<<<<<<
@@ -19046,7 +19045,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_1 = __pyx_v_i;
   __pyx_v_vz = (*((float *) ( /* dim=0 */ (__pyx_v_vel_z.data + __pyx_t_1 * __pyx_v_vel_z.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":98
+  /* "drone_env/drone_cython.pyx":94
  *     vy = vel_y[i]
  *     vz = vel_z[i]
  *     r = roll[i]             # <<<<<<<<<<<<<<
@@ -19056,7 +19055,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_1 = __pyx_v_i;
   __pyx_v_r = (*((float *) ( /* dim=0 */ (__pyx_v_roll.data + __pyx_t_1 * __pyx_v_roll.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":99
+  /* "drone_env/drone_cython.pyx":95
  *     vz = vel_z[i]
  *     r = roll[i]
  *     p = pitch[i]             # <<<<<<<<<<<<<<
@@ -19066,7 +19065,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_1 = __pyx_v_i;
   __pyx_v_p = (*((float *) ( /* dim=0 */ (__pyx_v_pitch.data + __pyx_t_1 * __pyx_v_pitch.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":100
+  /* "drone_env/drone_cython.pyx":96
  *     r = roll[i]
  *     p = pitch[i]
  *     y_ang = yaw[i]             # <<<<<<<<<<<<<<
@@ -19076,7 +19075,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_1 = __pyx_v_i;
   __pyx_v_y_ang = (*((float *) ( /* dim=0 */ (__pyx_v_yaw.data + __pyx_t_1 * __pyx_v_yaw.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":102
+  /* "drone_env/drone_cython.pyx":98
  *     y_ang = yaw[i]
  *
  *     mass = masses[i]             # <<<<<<<<<<<<<<
@@ -19086,7 +19085,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_1 = __pyx_v_i;
   __pyx_v_mass = (*((float *) ( /* dim=0 */ (__pyx_v_masses.data + __pyx_t_1 * __pyx_v_masses.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":103
+  /* "drone_env/drone_cython.pyx":99
  *
  *     mass = masses[i]
  *     drag = drag_coeffs[i]             # <<<<<<<<<<<<<<
@@ -19096,7 +19095,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_1 = __pyx_v_i;
   __pyx_v_drag = (*((float *) ( /* dim=0 */ (__pyx_v_drag_coeffs.data + __pyx_t_1 * __pyx_v_drag_coeffs.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":104
+  /* "drone_env/drone_cython.pyx":100
  *     mass = masses[i]
  *     drag = drag_coeffs[i]
  *     thrust_coeff = thrust_coeffs[i]             # <<<<<<<<<<<<<<
@@ -19106,7 +19105,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_1 = __pyx_v_i;
   __pyx_v_thrust_coeff = (*((float *) ( /* dim=0 */ (__pyx_v_thrust_coeffs.data + __pyx_t_1 * __pyx_v_thrust_coeffs.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":106
+  /* "drone_env/drone_cython.pyx":102
  *     thrust_coeff = thrust_coeffs[i]
  *
  *     thrust_cmd = actions[i * 4 + 0]             # <<<<<<<<<<<<<<
@@ -19116,7 +19115,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_1 = ((__pyx_v_i * 4) + 0);
   __pyx_v_thrust_cmd = (*((float *) ( /* dim=0 */ (__pyx_v_actions.data + __pyx_t_1 * __pyx_v_actions.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":107
+  /* "drone_env/drone_cython.pyx":103
  *
  *     thrust_cmd = actions[i * 4 + 0]
  *     roll_rate_cmd = actions[i * 4 + 1]             # <<<<<<<<<<<<<<
@@ -19126,7 +19125,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_1 = ((__pyx_v_i * 4) + 1);
   __pyx_v_roll_rate_cmd = (*((float *) ( /* dim=0 */ (__pyx_v_actions.data + __pyx_t_1 * __pyx_v_actions.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":108
+  /* "drone_env/drone_cython.pyx":104
  *     thrust_cmd = actions[i * 4 + 0]
  *     roll_rate_cmd = actions[i * 4 + 1]
  *     pitch_rate_cmd = actions[i * 4 + 2]             # <<<<<<<<<<<<<<
@@ -19136,7 +19135,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_1 = ((__pyx_v_i * 4) + 2);
   __pyx_v_pitch_rate_cmd = (*((float *) ( /* dim=0 */ (__pyx_v_actions.data + __pyx_t_1 * __pyx_v_actions.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":109
+  /* "drone_env/drone_cython.pyx":105
  *     roll_rate_cmd = actions[i * 4 + 1]
  *     pitch_rate_cmd = actions[i * 4 + 2]
  *     yaw_rate_cmd = actions[i * 4 + 3]             # <<<<<<<<<<<<<<
@@ -19146,7 +19145,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_1 = ((__pyx_v_i * 4) + 3);
   __pyx_v_yaw_rate_cmd = (*((float *) ( /* dim=0 */ (__pyx_v_actions.data + __pyx_t_1 * __pyx_v_actions.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":112
+  /* "drone_env/drone_cython.pyx":108
  *
  *     # Shift Observations
  *     memmove(&observations[i, 0], &observations[i, 60], 1740 * 4)             # <<<<<<<<<<<<<<
@@ -19159,7 +19158,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_4 = 60;
   (void)(memmove((&(*((float *) ( /* dim=1 */ (( /* dim=0 */ (__pyx_v_observations.data + __pyx_t_1 * __pyx_v_observations.strides[0]) ) + __pyx_t_2 * __pyx_v_observations.strides[1]) )))), (&(*((float *) ( /* dim=1 */ (( /* dim=0 */ (__pyx_v_observations.data + __pyx_t_3 * __pyx_v_observations.strides[0]) ) + __pyx_t_4 * __pyx_v_observations.strides[1]) )))), 0x1b30));
 
-  /* "drone_env/drone_cython.pyx":115
+  /* "drone_env/drone_cython.pyx":111
  *
  *     # Substeps
  *     for s in range(substeps):             # <<<<<<<<<<<<<<
@@ -19171,7 +19170,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   for (__pyx_t_7 = 0; __pyx_t_7 < __pyx_t_6; __pyx_t_7+=1) {
     __pyx_v_s = __pyx_t_7;
 
-    /* "drone_env/drone_cython.pyx":117
+    /* "drone_env/drone_cython.pyx":113
  *     for s in range(substeps):
  *         # 1. Dynamics
  *         r += roll_rate_cmd * dt             # <<<<<<<<<<<<<<
@@ -19180,7 +19179,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_r = (__pyx_v_r + (__pyx_v_roll_rate_cmd * __pyx_v_dt));
 
-    /* "drone_env/drone_cython.pyx":118
+    /* "drone_env/drone_cython.pyx":114
  *         # 1. Dynamics
  *         r += roll_rate_cmd * dt
  *         p += pitch_rate_cmd * dt             # <<<<<<<<<<<<<<
@@ -19189,7 +19188,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_p = (__pyx_v_p + (__pyx_v_pitch_rate_cmd * __pyx_v_dt));
 
-    /* "drone_env/drone_cython.pyx":119
+    /* "drone_env/drone_cython.pyx":115
  *         r += roll_rate_cmd * dt
  *         p += pitch_rate_cmd * dt
  *         y_ang += yaw_rate_cmd * dt             # <<<<<<<<<<<<<<
@@ -19198,7 +19197,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_y_ang = (__pyx_v_y_ang + (__pyx_v_yaw_rate_cmd * __pyx_v_dt));
 
-    /* "drone_env/drone_cython.pyx":121
+    /* "drone_env/drone_cython.pyx":117
  *         y_ang += yaw_rate_cmd * dt
  *
  *         max_thrust = 20.0 * thrust_coeff             # <<<<<<<<<<<<<<
@@ -19207,44 +19206,47 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_max_thrust = (20.0 * __pyx_v_thrust_coeff);
 
-    /* "drone_env/drone_cython.pyx":122
+    /* "drone_env/drone_cython.pyx":118
  *
  *         max_thrust = 20.0 * thrust_coeff
  *         thrust_force = thrust_cmd * max_thrust             # <<<<<<<<<<<<<<
  *
- *         sincosf(r, &sr, &cr)
+ *         sr = sin(r); cr = cos(r)
 */
     __pyx_v_thrust_force = (__pyx_v_thrust_cmd * __pyx_v_max_thrust);
 
-    /* "drone_env/drone_cython.pyx":124
+    /* "drone_env/drone_cython.pyx":120
  *         thrust_force = thrust_cmd * max_thrust
  *
- *         sincosf(r, &sr, &cr)             # <<<<<<<<<<<<<<
- *         sincosf(p, &sp, &cp)
- *         sincosf(y_ang, &sy, &cy)
+ *         sr = sin(r); cr = cos(r)             # <<<<<<<<<<<<<<
+ *         sp = sin(p); cp = cos(p)
+ *         sy = sin(y_ang); cy = cos(y_ang)
 */
-    sincosf(__pyx_v_r, (&__pyx_v_sr), (&__pyx_v_cr));
+    __pyx_v_sr = sin(__pyx_v_r);
+    __pyx_v_cr = cos(__pyx_v_r);
 
-    /* "drone_env/drone_cython.pyx":125
+    /* "drone_env/drone_cython.pyx":121
  *
- *         sincosf(r, &sr, &cr)
- *         sincosf(p, &sp, &cp)             # <<<<<<<<<<<<<<
- *         sincosf(y_ang, &sy, &cy)
+ *         sr = sin(r); cr = cos(r)
+ *         sp = sin(p); cp = cos(p)             # <<<<<<<<<<<<<<
+ *         sy = sin(y_ang); cy = cos(y_ang)
  *
 */
-    sincosf(__pyx_v_p, (&__pyx_v_sp), (&__pyx_v_cp));
+    __pyx_v_sp = sin(__pyx_v_p);
+    __pyx_v_cp = cos(__pyx_v_p);
 
-    /* "drone_env/drone_cython.pyx":126
- *         sincosf(r, &sr, &cr)
- *         sincosf(p, &sp, &cp)
- *         sincosf(y_ang, &sy, &cy)             # <<<<<<<<<<<<<<
+    /* "drone_env/drone_cython.pyx":122
+ *         sr = sin(r); cr = cos(r)
+ *         sp = sin(p); cp = cos(p)
+ *         sy = sin(y_ang); cy = cos(y_ang)             # <<<<<<<<<<<<<<
  *
  *         ax_thrust = thrust_force * (cy * sp * cr + sy * sr) / mass
 */
-    sincosf(__pyx_v_y_ang, (&__pyx_v_sy), (&__pyx_v_cy));
+    __pyx_v_sy = sin(__pyx_v_y_ang);
+    __pyx_v_cy = cos(__pyx_v_y_ang);
 
-    /* "drone_env/drone_cython.pyx":128
- *         sincosf(y_ang, &sy, &cy)
+    /* "drone_env/drone_cython.pyx":124
+ *         sy = sin(y_ang); cy = cos(y_ang)
  *
  *         ax_thrust = thrust_force * (cy * sp * cr + sy * sr) / mass             # <<<<<<<<<<<<<<
  *         ay_thrust = thrust_force * (sy * sp * cr - cy * sr) / mass
@@ -19252,7 +19254,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_ax_thrust = ((__pyx_v_thrust_force * (((__pyx_v_cy * __pyx_v_sp) * __pyx_v_cr) + (__pyx_v_sy * __pyx_v_sr))) / __pyx_v_mass);
 
-    /* "drone_env/drone_cython.pyx":129
+    /* "drone_env/drone_cython.pyx":125
  *
  *         ax_thrust = thrust_force * (cy * sp * cr + sy * sr) / mass
  *         ay_thrust = thrust_force * (sy * sp * cr - cy * sr) / mass             # <<<<<<<<<<<<<<
@@ -19261,7 +19263,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_ay_thrust = ((__pyx_v_thrust_force * (((__pyx_v_sy * __pyx_v_sp) * __pyx_v_cr) - (__pyx_v_cy * __pyx_v_sr))) / __pyx_v_mass);
 
-    /* "drone_env/drone_cython.pyx":130
+    /* "drone_env/drone_cython.pyx":126
  *         ax_thrust = thrust_force * (cy * sp * cr + sy * sr) / mass
  *         ay_thrust = thrust_force * (sy * sp * cr - cy * sr) / mass
  *         az_thrust = thrust_force * (cp * cr) / mass             # <<<<<<<<<<<<<<
@@ -19270,7 +19272,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_az_thrust = ((__pyx_v_thrust_force * (__pyx_v_cp * __pyx_v_cr)) / __pyx_v_mass);
 
-    /* "drone_env/drone_cython.pyx":132
+    /* "drone_env/drone_cython.pyx":128
  *         az_thrust = thrust_force * (cp * cr) / mass
  *
  *         az_gravity = -g             # <<<<<<<<<<<<<<
@@ -19279,7 +19281,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_az_gravity = (-__pyx_v_g);
 
-    /* "drone_env/drone_cython.pyx":134
+    /* "drone_env/drone_cython.pyx":130
  *         az_gravity = -g
  *
  *         ax_drag = -drag * vx             # <<<<<<<<<<<<<<
@@ -19288,7 +19290,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_ax_drag = ((-__pyx_v_drag) * __pyx_v_vx);
 
-    /* "drone_env/drone_cython.pyx":135
+    /* "drone_env/drone_cython.pyx":131
  *
  *         ax_drag = -drag * vx
  *         ay_drag = -drag * vy             # <<<<<<<<<<<<<<
@@ -19297,7 +19299,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_ay_drag = ((-__pyx_v_drag) * __pyx_v_vy);
 
-    /* "drone_env/drone_cython.pyx":136
+    /* "drone_env/drone_cython.pyx":132
  *         ax_drag = -drag * vx
  *         ay_drag = -drag * vy
  *         az_drag = -drag * vz             # <<<<<<<<<<<<<<
@@ -19306,7 +19308,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_az_drag = ((-__pyx_v_drag) * __pyx_v_vz);
 
-    /* "drone_env/drone_cython.pyx":138
+    /* "drone_env/drone_cython.pyx":134
  *         az_drag = -drag * vz
  *
  *         ax = ax_thrust + ax_drag             # <<<<<<<<<<<<<<
@@ -19315,7 +19317,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_ax = (__pyx_v_ax_thrust + __pyx_v_ax_drag);
 
-    /* "drone_env/drone_cython.pyx":139
+    /* "drone_env/drone_cython.pyx":135
  *
  *         ax = ax_thrust + ax_drag
  *         ay = ay_thrust + ay_drag             # <<<<<<<<<<<<<<
@@ -19324,7 +19326,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_ay = (__pyx_v_ay_thrust + __pyx_v_ay_drag);
 
-    /* "drone_env/drone_cython.pyx":140
+    /* "drone_env/drone_cython.pyx":136
  *         ax = ax_thrust + ax_drag
  *         ay = ay_thrust + ay_drag
  *         az = az_thrust + az_gravity + az_drag             # <<<<<<<<<<<<<<
@@ -19333,7 +19335,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_az = ((__pyx_v_az_thrust + __pyx_v_az_gravity) + __pyx_v_az_drag);
 
-    /* "drone_env/drone_cython.pyx":142
+    /* "drone_env/drone_cython.pyx":138
  *         az = az_thrust + az_gravity + az_drag
  *
  *         vx += ax * dt             # <<<<<<<<<<<<<<
@@ -19342,7 +19344,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_vx = (__pyx_v_vx + (__pyx_v_ax * __pyx_v_dt));
 
-    /* "drone_env/drone_cython.pyx":143
+    /* "drone_env/drone_cython.pyx":139
  *
  *         vx += ax * dt
  *         vy += ay * dt             # <<<<<<<<<<<<<<
@@ -19351,7 +19353,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_vy = (__pyx_v_vy + (__pyx_v_ay * __pyx_v_dt));
 
-    /* "drone_env/drone_cython.pyx":144
+    /* "drone_env/drone_cython.pyx":140
  *         vx += ax * dt
  *         vy += ay * dt
  *         vz += az * dt             # <<<<<<<<<<<<<<
@@ -19360,7 +19362,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_vz = (__pyx_v_vz + (__pyx_v_az * __pyx_v_dt));
 
-    /* "drone_env/drone_cython.pyx":146
+    /* "drone_env/drone_cython.pyx":142
  *         vz += az * dt
  *
  *         px += vx * dt             # <<<<<<<<<<<<<<
@@ -19369,7 +19371,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_px = (__pyx_v_px + (__pyx_v_vx * __pyx_v_dt));
 
-    /* "drone_env/drone_cython.pyx":147
+    /* "drone_env/drone_cython.pyx":143
  *
  *         px += vx * dt
  *         py += vy * dt             # <<<<<<<<<<<<<<
@@ -19378,7 +19380,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_py = (__pyx_v_py + (__pyx_v_vy * __pyx_v_dt));
 
-    /* "drone_env/drone_cython.pyx":148
+    /* "drone_env/drone_cython.pyx":144
  *         px += vx * dt
  *         py += vy * dt
  *         pz += vz * dt             # <<<<<<<<<<<<<<
@@ -19387,17 +19389,17 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_pz = (__pyx_v_pz + (__pyx_v_vz * __pyx_v_dt));
 
-    /* "drone_env/drone_cython.pyx":151
+    /* "drone_env/drone_cython.pyx":147
  *
  *         # Terrain Collision
  *         terr_z = terrain_height(px, py)             # <<<<<<<<<<<<<<
  *         if pz < terr_z:
  *             pz = terr_z
 */
-    __pyx_t_8 = __pyx_f_9drone_env_12drone_cython_terrain_height(__pyx_v_px, __pyx_v_py); if (unlikely(__pyx_t_8 == ((float)-1) && __Pyx_ErrOccurredWithGIL())) __PYX_ERR(0, 151, __pyx_L1_error)
+    __pyx_t_8 = __pyx_f_9drone_env_12drone_cython_terrain_height(__pyx_v_px, __pyx_v_py); if (unlikely(__pyx_t_8 == ((float)-1) && __Pyx_ErrOccurredWithGIL())) __PYX_ERR(0, 147, __pyx_L1_error)
     __pyx_v_terr_z = __pyx_t_8;
 
-    /* "drone_env/drone_cython.pyx":152
+    /* "drone_env/drone_cython.pyx":148
  *         # Terrain Collision
  *         terr_z = terrain_height(px, py)
  *         if pz < terr_z:             # <<<<<<<<<<<<<<
@@ -19407,7 +19409,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
     __pyx_t_9 = (__pyx_v_pz < __pyx_v_terr_z);
     if (__pyx_t_9) {
 
-      /* "drone_env/drone_cython.pyx":153
+      /* "drone_env/drone_cython.pyx":149
  *         terr_z = terrain_height(px, py)
  *         if pz < terr_z:
  *             pz = terr_z             # <<<<<<<<<<<<<<
@@ -19416,7 +19418,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
       __pyx_v_pz = __pyx_v_terr_z;
 
-      /* "drone_env/drone_cython.pyx":154
+      /* "drone_env/drone_cython.pyx":150
  *         if pz < terr_z:
  *             pz = terr_z
  *             vx = 0.0             # <<<<<<<<<<<<<<
@@ -19425,7 +19427,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
       __pyx_v_vx = 0.0;
 
-      /* "drone_env/drone_cython.pyx":155
+      /* "drone_env/drone_cython.pyx":151
  *             pz = terr_z
  *             vx = 0.0
  *             vy = 0.0             # <<<<<<<<<<<<<<
@@ -19434,7 +19436,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
       __pyx_v_vy = 0.0;
 
-      /* "drone_env/drone_cython.pyx":156
+      /* "drone_env/drone_cython.pyx":152
  *             vx = 0.0
  *             vy = 0.0
  *             vz = 0.0             # <<<<<<<<<<<<<<
@@ -19443,7 +19445,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
       __pyx_v_vz = 0.0;
 
-      /* "drone_env/drone_cython.pyx":152
+      /* "drone_env/drone_cython.pyx":148
  *         # Terrain Collision
  *         terr_z = terrain_height(px, py)
  *         if pz < terr_z:             # <<<<<<<<<<<<<<
@@ -19452,7 +19454,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     }
 
-    /* "drone_env/drone_cython.pyx":159
+    /* "drone_env/drone_cython.pyx":155
  *
  *         # 2. Capture IMU
  *         r11 = cy * cp             # <<<<<<<<<<<<<<
@@ -19461,7 +19463,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_r11 = (__pyx_v_cy * __pyx_v_cp);
 
-    /* "drone_env/drone_cython.pyx":160
+    /* "drone_env/drone_cython.pyx":156
  *         # 2. Capture IMU
  *         r11 = cy * cp
  *         r12 = sy * cp             # <<<<<<<<<<<<<<
@@ -19470,7 +19472,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_r12 = (__pyx_v_sy * __pyx_v_cp);
 
-    /* "drone_env/drone_cython.pyx":161
+    /* "drone_env/drone_cython.pyx":157
  *         r11 = cy * cp
  *         r12 = sy * cp
  *         r13 = -sp             # <<<<<<<<<<<<<<
@@ -19479,7 +19481,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_r13 = (-__pyx_v_sp);
 
-    /* "drone_env/drone_cython.pyx":162
+    /* "drone_env/drone_cython.pyx":158
  *         r12 = sy * cp
  *         r13 = -sp
  *         r21 = cy * sp * sr - sy * cr             # <<<<<<<<<<<<<<
@@ -19488,7 +19490,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_r21 = (((__pyx_v_cy * __pyx_v_sp) * __pyx_v_sr) - (__pyx_v_sy * __pyx_v_cr));
 
-    /* "drone_env/drone_cython.pyx":163
+    /* "drone_env/drone_cython.pyx":159
  *         r13 = -sp
  *         r21 = cy * sp * sr - sy * cr
  *         r22 = sy * sp * sr + cy * cr             # <<<<<<<<<<<<<<
@@ -19497,7 +19499,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_r22 = (((__pyx_v_sy * __pyx_v_sp) * __pyx_v_sr) + (__pyx_v_cy * __pyx_v_cr));
 
-    /* "drone_env/drone_cython.pyx":164
+    /* "drone_env/drone_cython.pyx":160
  *         r21 = cy * sp * sr - sy * cr
  *         r22 = sy * sp * sr + cy * cr
  *         r23 = cp * sr             # <<<<<<<<<<<<<<
@@ -19506,7 +19508,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_r23 = (__pyx_v_cp * __pyx_v_sr);
 
-    /* "drone_env/drone_cython.pyx":165
+    /* "drone_env/drone_cython.pyx":161
  *         r22 = sy * sp * sr + cy * cr
  *         r23 = cp * sr
  *         r31 = cy * sp * cr + sy * sr             # <<<<<<<<<<<<<<
@@ -19515,7 +19517,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_r31 = (((__pyx_v_cy * __pyx_v_sp) * __pyx_v_cr) + (__pyx_v_sy * __pyx_v_sr));
 
-    /* "drone_env/drone_cython.pyx":166
+    /* "drone_env/drone_cython.pyx":162
  *         r23 = cp * sr
  *         r31 = cy * sp * cr + sy * sr
  *         r32 = sy * sp * cr - cy * sr             # <<<<<<<<<<<<<<
@@ -19524,7 +19526,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_r32 = (((__pyx_v_sy * __pyx_v_sp) * __pyx_v_cr) - (__pyx_v_cy * __pyx_v_sr));
 
-    /* "drone_env/drone_cython.pyx":167
+    /* "drone_env/drone_cython.pyx":163
  *         r31 = cy * sp * cr + sy * sr
  *         r32 = sy * sp * cr - cy * sr
  *         r33 = cp * cr             # <<<<<<<<<<<<<<
@@ -19533,7 +19535,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_r33 = (__pyx_v_cp * __pyx_v_cr);
 
-    /* "drone_env/drone_cython.pyx":169
+    /* "drone_env/drone_cython.pyx":165
  *         r33 = cp * cr
  *
  *         acc_w_x = ax_thrust + ax_drag             # <<<<<<<<<<<<<<
@@ -19542,7 +19544,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_acc_w_x = (__pyx_v_ax_thrust + __pyx_v_ax_drag);
 
-    /* "drone_env/drone_cython.pyx":170
+    /* "drone_env/drone_cython.pyx":166
  *
  *         acc_w_x = ax_thrust + ax_drag
  *         acc_w_y = ay_thrust + ay_drag             # <<<<<<<<<<<<<<
@@ -19551,7 +19553,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_acc_w_y = (__pyx_v_ay_thrust + __pyx_v_ay_drag);
 
-    /* "drone_env/drone_cython.pyx":171
+    /* "drone_env/drone_cython.pyx":167
  *         acc_w_x = ax_thrust + ax_drag
  *         acc_w_y = ay_thrust + ay_drag
  *         acc_w_z = az_thrust + az_drag             # <<<<<<<<<<<<<<
@@ -19560,7 +19562,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_acc_w_z = (__pyx_v_az_thrust + __pyx_v_az_drag);
 
-    /* "drone_env/drone_cython.pyx":173
+    /* "drone_env/drone_cython.pyx":169
  *         acc_w_z = az_thrust + az_drag
  *
  *         acc_b_x = r11 * acc_w_x + r12 * acc_w_y + r13 * acc_w_z             # <<<<<<<<<<<<<<
@@ -19569,7 +19571,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_acc_b_x = (((__pyx_v_r11 * __pyx_v_acc_w_x) + (__pyx_v_r12 * __pyx_v_acc_w_y)) + (__pyx_v_r13 * __pyx_v_acc_w_z));
 
-    /* "drone_env/drone_cython.pyx":174
+    /* "drone_env/drone_cython.pyx":170
  *
  *         acc_b_x = r11 * acc_w_x + r12 * acc_w_y + r13 * acc_w_z
  *         acc_b_y = r21 * acc_w_x + r22 * acc_w_y + r23 * acc_w_z             # <<<<<<<<<<<<<<
@@ -19578,7 +19580,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_acc_b_y = (((__pyx_v_r21 * __pyx_v_acc_w_x) + (__pyx_v_r22 * __pyx_v_acc_w_y)) + (__pyx_v_r23 * __pyx_v_acc_w_z));
 
-    /* "drone_env/drone_cython.pyx":175
+    /* "drone_env/drone_cython.pyx":171
  *         acc_b_x = r11 * acc_w_x + r12 * acc_w_y + r13 * acc_w_z
  *         acc_b_y = r21 * acc_w_x + r22 * acc_w_y + r23 * acc_w_z
  *         acc_b_z = r31 * acc_w_x + r32 * acc_w_y + r33 * acc_w_z             # <<<<<<<<<<<<<<
@@ -19587,7 +19589,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_acc_b_z = (((__pyx_v_r31 * __pyx_v_acc_w_x) + (__pyx_v_r32 * __pyx_v_acc_w_y)) + (__pyx_v_r33 * __pyx_v_acc_w_z));
 
-    /* "drone_env/drone_cython.pyx":178
+    /* "drone_env/drone_cython.pyx":174
  *
  *         # Write directly to observations end buffer
  *         observations[i, 1740 + s*6 + 0] = acc_b_x             # <<<<<<<<<<<<<<
@@ -19598,7 +19600,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
     __pyx_t_3 = ((0x6CC + (__pyx_v_s * 6)) + 0);
     *((float *) ( /* dim=1 */ (( /* dim=0 */ (__pyx_v_observations.data + __pyx_t_4 * __pyx_v_observations.strides[0]) ) + __pyx_t_3 * __pyx_v_observations.strides[1]) )) = __pyx_v_acc_b_x;
 
-    /* "drone_env/drone_cython.pyx":179
+    /* "drone_env/drone_cython.pyx":175
  *         # Write directly to observations end buffer
  *         observations[i, 1740 + s*6 + 0] = acc_b_x
  *         observations[i, 1740 + s*6 + 1] = acc_b_y             # <<<<<<<<<<<<<<
@@ -19609,7 +19611,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
     __pyx_t_4 = ((0x6CC + (__pyx_v_s * 6)) + 1);
     *((float *) ( /* dim=1 */ (( /* dim=0 */ (__pyx_v_observations.data + __pyx_t_3 * __pyx_v_observations.strides[0]) ) + __pyx_t_4 * __pyx_v_observations.strides[1]) )) = __pyx_v_acc_b_y;
 
-    /* "drone_env/drone_cython.pyx":180
+    /* "drone_env/drone_cython.pyx":176
  *         observations[i, 1740 + s*6 + 0] = acc_b_x
  *         observations[i, 1740 + s*6 + 1] = acc_b_y
  *         observations[i, 1740 + s*6 + 2] = acc_b_z             # <<<<<<<<<<<<<<
@@ -19620,7 +19622,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
     __pyx_t_3 = ((0x6CC + (__pyx_v_s * 6)) + 2);
     *((float *) ( /* dim=1 */ (( /* dim=0 */ (__pyx_v_observations.data + __pyx_t_4 * __pyx_v_observations.strides[0]) ) + __pyx_t_3 * __pyx_v_observations.strides[1]) )) = __pyx_v_acc_b_z;
 
-    /* "drone_env/drone_cython.pyx":181
+    /* "drone_env/drone_cython.pyx":177
  *         observations[i, 1740 + s*6 + 1] = acc_b_y
  *         observations[i, 1740 + s*6 + 2] = acc_b_z
  *         observations[i, 1740 + s*6 + 3] = roll_rate_cmd             # <<<<<<<<<<<<<<
@@ -19631,7 +19633,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
     __pyx_t_4 = ((0x6CC + (__pyx_v_s * 6)) + 3);
     *((float *) ( /* dim=1 */ (( /* dim=0 */ (__pyx_v_observations.data + __pyx_t_3 * __pyx_v_observations.strides[0]) ) + __pyx_t_4 * __pyx_v_observations.strides[1]) )) = __pyx_v_roll_rate_cmd;
 
-    /* "drone_env/drone_cython.pyx":182
+    /* "drone_env/drone_cython.pyx":178
  *         observations[i, 1740 + s*6 + 2] = acc_b_z
  *         observations[i, 1740 + s*6 + 3] = roll_rate_cmd
  *         observations[i, 1740 + s*6 + 4] = pitch_rate_cmd             # <<<<<<<<<<<<<<
@@ -19642,7 +19644,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
     __pyx_t_3 = ((0x6CC + (__pyx_v_s * 6)) + 4);
     *((float *) ( /* dim=1 */ (( /* dim=0 */ (__pyx_v_observations.data + __pyx_t_4 * __pyx_v_observations.strides[0]) ) + __pyx_t_3 * __pyx_v_observations.strides[1]) )) = __pyx_v_pitch_rate_cmd;
 
-    /* "drone_env/drone_cython.pyx":183
+    /* "drone_env/drone_cython.pyx":179
  *         observations[i, 1740 + s*6 + 3] = roll_rate_cmd
  *         observations[i, 1740 + s*6 + 4] = pitch_rate_cmd
  *         observations[i, 1740 + s*6 + 5] = yaw_rate_cmd             # <<<<<<<<<<<<<<
@@ -19654,17 +19656,17 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
     *((float *) ( /* dim=1 */ (( /* dim=0 */ (__pyx_v_observations.data + __pyx_t_3 * __pyx_v_observations.strides[0]) ) + __pyx_t_4 * __pyx_v_observations.strides[1]) )) = __pyx_v_yaw_rate_cmd;
   }
 
-  /* "drone_env/drone_cython.pyx":186
+  /* "drone_env/drone_cython.pyx":182
  *
  *     # Final terrain check
  *     terr_z = terrain_height(px, py)             # <<<<<<<<<<<<<<
  *     collision = 0
  *     if pz < terr_z:
 */
-  __pyx_t_8 = __pyx_f_9drone_env_12drone_cython_terrain_height(__pyx_v_px, __pyx_v_py); if (unlikely(__pyx_t_8 == ((float)-1) && __Pyx_ErrOccurredWithGIL())) __PYX_ERR(0, 186, __pyx_L1_error)
+  __pyx_t_8 = __pyx_f_9drone_env_12drone_cython_terrain_height(__pyx_v_px, __pyx_v_py); if (unlikely(__pyx_t_8 == ((float)-1) && __Pyx_ErrOccurredWithGIL())) __PYX_ERR(0, 182, __pyx_L1_error)
   __pyx_v_terr_z = __pyx_t_8;
 
-  /* "drone_env/drone_cython.pyx":187
+  /* "drone_env/drone_cython.pyx":183
  *     # Final terrain check
  *     terr_z = terrain_height(px, py)
  *     collision = 0             # <<<<<<<<<<<<<<
@@ -19673,7 +19675,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_collision = 0;
 
-  /* "drone_env/drone_cython.pyx":188
+  /* "drone_env/drone_cython.pyx":184
  *     terr_z = terrain_height(px, py)
  *     collision = 0
  *     if pz < terr_z:             # <<<<<<<<<<<<<<
@@ -19683,7 +19685,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_9 = (__pyx_v_pz < __pyx_v_terr_z);
   if (__pyx_t_9) {
 
-    /* "drone_env/drone_cython.pyx":189
+    /* "drone_env/drone_cython.pyx":185
  *     collision = 0
  *     if pz < terr_z:
  *         pz = terr_z             # <<<<<<<<<<<<<<
@@ -19692,7 +19694,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_pz = __pyx_v_terr_z;
 
-    /* "drone_env/drone_cython.pyx":190
+    /* "drone_env/drone_cython.pyx":186
  *     if pz < terr_z:
  *         pz = terr_z
  *         collision = 1             # <<<<<<<<<<<<<<
@@ -19701,7 +19703,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_collision = 1;
 
-    /* "drone_env/drone_cython.pyx":188
+    /* "drone_env/drone_cython.pyx":184
  *     terr_z = terrain_height(px, py)
  *     collision = 0
  *     if pz < terr_z:             # <<<<<<<<<<<<<<
@@ -19710,7 +19712,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   }
 
-  /* "drone_env/drone_cython.pyx":193
+  /* "drone_env/drone_cython.pyx":189
  *
  *     # Store State
  *     pos_x[i] = px             # <<<<<<<<<<<<<<
@@ -19720,7 +19722,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_4 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_pos_x.data + __pyx_t_4 * __pyx_v_pos_x.strides[0]) )) = __pyx_v_px;
 
-  /* "drone_env/drone_cython.pyx":194
+  /* "drone_env/drone_cython.pyx":190
  *     # Store State
  *     pos_x[i] = px
  *     pos_y[i] = py             # <<<<<<<<<<<<<<
@@ -19730,7 +19732,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_4 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_pos_y.data + __pyx_t_4 * __pyx_v_pos_y.strides[0]) )) = __pyx_v_py;
 
-  /* "drone_env/drone_cython.pyx":195
+  /* "drone_env/drone_cython.pyx":191
  *     pos_x[i] = px
  *     pos_y[i] = py
  *     pos_z[i] = pz             # <<<<<<<<<<<<<<
@@ -19740,7 +19742,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_4 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_pos_z.data + __pyx_t_4 * __pyx_v_pos_z.strides[0]) )) = __pyx_v_pz;
 
-  /* "drone_env/drone_cython.pyx":196
+  /* "drone_env/drone_cython.pyx":192
  *     pos_y[i] = py
  *     pos_z[i] = pz
  *     vel_x[i] = vx             # <<<<<<<<<<<<<<
@@ -19750,7 +19752,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_4 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_vel_x.data + __pyx_t_4 * __pyx_v_vel_x.strides[0]) )) = __pyx_v_vx;
 
-  /* "drone_env/drone_cython.pyx":197
+  /* "drone_env/drone_cython.pyx":193
  *     pos_z[i] = pz
  *     vel_x[i] = vx
  *     vel_y[i] = vy             # <<<<<<<<<<<<<<
@@ -19760,7 +19762,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_4 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_vel_y.data + __pyx_t_4 * __pyx_v_vel_y.strides[0]) )) = __pyx_v_vy;
 
-  /* "drone_env/drone_cython.pyx":198
+  /* "drone_env/drone_cython.pyx":194
  *     vel_x[i] = vx
  *     vel_y[i] = vy
  *     vel_z[i] = vz             # <<<<<<<<<<<<<<
@@ -19770,7 +19772,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_4 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_vel_z.data + __pyx_t_4 * __pyx_v_vel_z.strides[0]) )) = __pyx_v_vz;
 
-  /* "drone_env/drone_cython.pyx":199
+  /* "drone_env/drone_cython.pyx":195
  *     vel_y[i] = vy
  *     vel_z[i] = vz
  *     roll[i] = r             # <<<<<<<<<<<<<<
@@ -19780,7 +19782,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_4 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_roll.data + __pyx_t_4 * __pyx_v_roll.strides[0]) )) = __pyx_v_r;
 
-  /* "drone_env/drone_cython.pyx":200
+  /* "drone_env/drone_cython.pyx":196
  *     vel_z[i] = vz
  *     roll[i] = r
  *     pitch[i] = p             # <<<<<<<<<<<<<<
@@ -19790,7 +19792,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_4 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_pitch.data + __pyx_t_4 * __pyx_v_pitch.strides[0]) )) = __pyx_v_p;
 
-  /* "drone_env/drone_cython.pyx":201
+  /* "drone_env/drone_cython.pyx":197
  *     roll[i] = r
  *     pitch[i] = p
  *     yaw[i] = y_ang             # <<<<<<<<<<<<<<
@@ -19800,7 +19802,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_4 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_yaw.data + __pyx_t_4 * __pyx_v_yaw.strides[0]) )) = __pyx_v_y_ang;
 
-  /* "drone_env/drone_cython.pyx":204
+  /* "drone_env/drone_cython.pyx":200
  *
  *     # Pos History
  *     if t <= episode_length:             # <<<<<<<<<<<<<<
@@ -19810,7 +19812,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_9 = (__pyx_v_t <= __pyx_v_episode_length);
   if (__pyx_t_9) {
 
-    /* "drone_env/drone_cython.pyx":207
+    /* "drone_env/drone_cython.pyx":203
  *         # pos_history is flat: idx * episode_length * 3 + (t-1) * 3
  *         # But here pos_history is memoryview.
  *         pos_history[i * episode_length * 3 + (t-1) * 3 + 0] = px             # <<<<<<<<<<<<<<
@@ -19820,7 +19822,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
     __pyx_t_4 = ((((__pyx_v_i * __pyx_v_episode_length) * 3) + ((__pyx_v_t - 1) * 3)) + 0);
     *((float *) ( /* dim=0 */ (__pyx_v_pos_history.data + __pyx_t_4 * __pyx_v_pos_history.strides[0]) )) = __pyx_v_px;
 
-    /* "drone_env/drone_cython.pyx":208
+    /* "drone_env/drone_cython.pyx":204
  *         # But here pos_history is memoryview.
  *         pos_history[i * episode_length * 3 + (t-1) * 3 + 0] = px
  *         pos_history[i * episode_length * 3 + (t-1) * 3 + 1] = py             # <<<<<<<<<<<<<<
@@ -19830,7 +19832,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
     __pyx_t_4 = ((((__pyx_v_i * __pyx_v_episode_length) * 3) + ((__pyx_v_t - 1) * 3)) + 1);
     *((float *) ( /* dim=0 */ (__pyx_v_pos_history.data + __pyx_t_4 * __pyx_v_pos_history.strides[0]) )) = __pyx_v_py;
 
-    /* "drone_env/drone_cython.pyx":209
+    /* "drone_env/drone_cython.pyx":205
  *         pos_history[i * episode_length * 3 + (t-1) * 3 + 0] = px
  *         pos_history[i * episode_length * 3 + (t-1) * 3 + 1] = py
  *         pos_history[i * episode_length * 3 + (t-1) * 3 + 2] = pz             # <<<<<<<<<<<<<<
@@ -19840,7 +19842,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
     __pyx_t_4 = ((((__pyx_v_i * __pyx_v_episode_length) * 3) + ((__pyx_v_t - 1) * 3)) + 2);
     *((float *) ( /* dim=0 */ (__pyx_v_pos_history.data + __pyx_t_4 * __pyx_v_pos_history.strides[0]) )) = __pyx_v_pz;
 
-    /* "drone_env/drone_cython.pyx":204
+    /* "drone_env/drone_cython.pyx":200
  *
  *     # Pos History
  *     if t <= episode_length:             # <<<<<<<<<<<<<<
@@ -19849,7 +19851,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   }
 
-  /* "drone_env/drone_cython.pyx":212
+  /* "drone_env/drone_cython.pyx":208
  *
  *     # Targets
  *     tvx = target_vx[i]             # <<<<<<<<<<<<<<
@@ -19859,7 +19861,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_4 = __pyx_v_i;
   __pyx_v_tvx = (*((float *) ( /* dim=0 */ (__pyx_v_target_vx.data + __pyx_t_4 * __pyx_v_target_vx.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":213
+  /* "drone_env/drone_cython.pyx":209
  *     # Targets
  *     tvx = target_vx[i]
  *     tvy = target_vy[i]             # <<<<<<<<<<<<<<
@@ -19869,7 +19871,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_4 = __pyx_v_i;
   __pyx_v_tvy = (*((float *) ( /* dim=0 */ (__pyx_v_target_vy.data + __pyx_t_4 * __pyx_v_target_vy.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":214
+  /* "drone_env/drone_cython.pyx":210
  *     tvx = target_vx[i]
  *     tvy = target_vy[i]
  *     tvz = target_vz[i]             # <<<<<<<<<<<<<<
@@ -19879,7 +19881,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_4 = __pyx_v_i;
   __pyx_v_tvz = (*((float *) ( /* dim=0 */ (__pyx_v_target_vz.data + __pyx_t_4 * __pyx_v_target_vz.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":215
+  /* "drone_env/drone_cython.pyx":211
  *     tvy = target_vy[i]
  *     tvz = target_vz[i]
  *     tyr = target_yaw_rate[i]             # <<<<<<<<<<<<<<
@@ -19889,7 +19891,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_4 = __pyx_v_i;
   __pyx_v_tyr = (*((float *) ( /* dim=0 */ (__pyx_v_target_yaw_rate.data + __pyx_t_4 * __pyx_v_target_yaw_rate.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":217
+  /* "drone_env/drone_cython.pyx":213
  *     tyr = target_yaw_rate[i]
  *
  *     observations[i, 1800] = tvx             # <<<<<<<<<<<<<<
@@ -19900,7 +19902,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_3 = 0x708;
   *((float *) ( /* dim=1 */ (( /* dim=0 */ (__pyx_v_observations.data + __pyx_t_4 * __pyx_v_observations.strides[0]) ) + __pyx_t_3 * __pyx_v_observations.strides[1]) )) = __pyx_v_tvx;
 
-  /* "drone_env/drone_cython.pyx":218
+  /* "drone_env/drone_cython.pyx":214
  *
  *     observations[i, 1800] = tvx
  *     observations[i, 1801] = tvy             # <<<<<<<<<<<<<<
@@ -19911,7 +19913,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_4 = 0x709;
   *((float *) ( /* dim=1 */ (( /* dim=0 */ (__pyx_v_observations.data + __pyx_t_3 * __pyx_v_observations.strides[0]) ) + __pyx_t_4 * __pyx_v_observations.strides[1]) )) = __pyx_v_tvy;
 
-  /* "drone_env/drone_cython.pyx":219
+  /* "drone_env/drone_cython.pyx":215
  *     observations[i, 1800] = tvx
  *     observations[i, 1801] = tvy
  *     observations[i, 1802] = tvz             # <<<<<<<<<<<<<<
@@ -19922,7 +19924,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_3 = 0x70A;
   *((float *) ( /* dim=1 */ (( /* dim=0 */ (__pyx_v_observations.data + __pyx_t_4 * __pyx_v_observations.strides[0]) ) + __pyx_t_3 * __pyx_v_observations.strides[1]) )) = __pyx_v_tvz;
 
-  /* "drone_env/drone_cython.pyx":220
+  /* "drone_env/drone_cython.pyx":216
  *     observations[i, 1801] = tvy
  *     observations[i, 1802] = tvz
  *     observations[i, 1803] = tyr             # <<<<<<<<<<<<<<
@@ -19933,35 +19935,38 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_4 = 0x70B;
   *((float *) ( /* dim=1 */ (( /* dim=0 */ (__pyx_v_observations.data + __pyx_t_3 * __pyx_v_observations.strides[0]) ) + __pyx_t_4 * __pyx_v_observations.strides[1]) )) = __pyx_v_tyr;
 
-  /* "drone_env/drone_cython.pyx":223
+  /* "drone_env/drone_cython.pyx":219
  *
  *     # Rewards
- *     sincosf(r, &sr, &cr)             # <<<<<<<<<<<<<<
- *     sincosf(p, &sp, &cp)
- *     sincosf(y_ang, &sy, &cy)
+ *     sr = sin(r); cr = cos(r)             # <<<<<<<<<<<<<<
+ *     sp = sin(p); cp = cos(p)
+ *     sy = sin(y_ang); cy = cos(y_ang)
 */
-  sincosf(__pyx_v_r, (&__pyx_v_sr), (&__pyx_v_cr));
+  __pyx_v_sr = sin(__pyx_v_r);
+  __pyx_v_cr = cos(__pyx_v_r);
 
-  /* "drone_env/drone_cython.pyx":224
+  /* "drone_env/drone_cython.pyx":220
  *     # Rewards
- *     sincosf(r, &sr, &cr)
- *     sincosf(p, &sp, &cp)             # <<<<<<<<<<<<<<
- *     sincosf(y_ang, &sy, &cy)
+ *     sr = sin(r); cr = cos(r)
+ *     sp = sin(p); cp = cos(p)             # <<<<<<<<<<<<<<
+ *     sy = sin(y_ang); cy = cos(y_ang)
  *
 */
-  sincosf(__pyx_v_p, (&__pyx_v_sp), (&__pyx_v_cp));
+  __pyx_v_sp = sin(__pyx_v_p);
+  __pyx_v_cp = cos(__pyx_v_p);
 
-  /* "drone_env/drone_cython.pyx":225
- *     sincosf(r, &sr, &cr)
- *     sincosf(p, &sp, &cp)
- *     sincosf(y_ang, &sy, &cy)             # <<<<<<<<<<<<<<
+  /* "drone_env/drone_cython.pyx":221
+ *     sr = sin(r); cr = cos(r)
+ *     sp = sin(p); cp = cos(p)
+ *     sy = sin(y_ang); cy = cos(y_ang)             # <<<<<<<<<<<<<<
  *
  *     r11 = cy * cp
 */
-  sincosf(__pyx_v_y_ang, (&__pyx_v_sy), (&__pyx_v_cy));
+  __pyx_v_sy = sin(__pyx_v_y_ang);
+  __pyx_v_cy = cos(__pyx_v_y_ang);
 
-  /* "drone_env/drone_cython.pyx":227
- *     sincosf(y_ang, &sy, &cy)
+  /* "drone_env/drone_cython.pyx":223
+ *     sy = sin(y_ang); cy = cos(y_ang)
  *
  *     r11 = cy * cp             # <<<<<<<<<<<<<<
  *     r12 = sy * cp
@@ -19969,7 +19974,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_r11 = (__pyx_v_cy * __pyx_v_cp);
 
-  /* "drone_env/drone_cython.pyx":228
+  /* "drone_env/drone_cython.pyx":224
  *
  *     r11 = cy * cp
  *     r12 = sy * cp             # <<<<<<<<<<<<<<
@@ -19978,7 +19983,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_r12 = (__pyx_v_sy * __pyx_v_cp);
 
-  /* "drone_env/drone_cython.pyx":229
+  /* "drone_env/drone_cython.pyx":225
  *     r11 = cy * cp
  *     r12 = sy * cp
  *     r13 = -sp             # <<<<<<<<<<<<<<
@@ -19987,7 +19992,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_r13 = (-__pyx_v_sp);
 
-  /* "drone_env/drone_cython.pyx":230
+  /* "drone_env/drone_cython.pyx":226
  *     r12 = sy * cp
  *     r13 = -sp
  *     r21 = cy * sp * sr - sy * cr             # <<<<<<<<<<<<<<
@@ -19996,7 +20001,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_r21 = (((__pyx_v_cy * __pyx_v_sp) * __pyx_v_sr) - (__pyx_v_sy * __pyx_v_cr));
 
-  /* "drone_env/drone_cython.pyx":231
+  /* "drone_env/drone_cython.pyx":227
  *     r13 = -sp
  *     r21 = cy * sp * sr - sy * cr
  *     r22 = sy * sp * sr + cy * cr             # <<<<<<<<<<<<<<
@@ -20005,7 +20010,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_r22 = (((__pyx_v_sy * __pyx_v_sp) * __pyx_v_sr) + (__pyx_v_cy * __pyx_v_cr));
 
-  /* "drone_env/drone_cython.pyx":232
+  /* "drone_env/drone_cython.pyx":228
  *     r21 = cy * sp * sr - sy * cr
  *     r22 = sy * sp * sr + cy * cr
  *     r23 = cp * sr             # <<<<<<<<<<<<<<
@@ -20014,7 +20019,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_r23 = (__pyx_v_cp * __pyx_v_sr);
 
-  /* "drone_env/drone_cython.pyx":233
+  /* "drone_env/drone_cython.pyx":229
  *     r22 = sy * sp * sr + cy * cr
  *     r23 = cp * sr
  *     r31 = cy * sp * cr + sy * sr             # <<<<<<<<<<<<<<
@@ -20023,7 +20028,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_r31 = (((__pyx_v_cy * __pyx_v_sp) * __pyx_v_cr) + (__pyx_v_sy * __pyx_v_sr));
 
-  /* "drone_env/drone_cython.pyx":234
+  /* "drone_env/drone_cython.pyx":230
  *     r23 = cp * sr
  *     r31 = cy * sp * cr + sy * sr
  *     r32 = sy * sp * cr - cy * sr             # <<<<<<<<<<<<<<
@@ -20032,7 +20037,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_r32 = (((__pyx_v_sy * __pyx_v_sp) * __pyx_v_cr) - (__pyx_v_cy * __pyx_v_sr));
 
-  /* "drone_env/drone_cython.pyx":235
+  /* "drone_env/drone_cython.pyx":231
  *     r31 = cy * sp * cr + sy * sr
  *     r32 = sy * sp * cr - cy * sr
  *     r33 = cp * cr             # <<<<<<<<<<<<<<
@@ -20041,7 +20046,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_r33 = (__pyx_v_cp * __pyx_v_cr);
 
-  /* "drone_env/drone_cython.pyx":237
+  /* "drone_env/drone_cython.pyx":233
  *     r33 = cp * cr
  *
  *     vx_b = r11 * vx + r12 * vy + r13 * vz             # <<<<<<<<<<<<<<
@@ -20050,7 +20055,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_vx_b = (((__pyx_v_r11 * __pyx_v_vx) + (__pyx_v_r12 * __pyx_v_vy)) + (__pyx_v_r13 * __pyx_v_vz));
 
-  /* "drone_env/drone_cython.pyx":238
+  /* "drone_env/drone_cython.pyx":234
  *
  *     vx_b = r11 * vx + r12 * vy + r13 * vz
  *     vy_b = r21 * vx + r22 * vy + r23 * vz             # <<<<<<<<<<<<<<
@@ -20059,7 +20064,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_vy_b = (((__pyx_v_r21 * __pyx_v_vx) + (__pyx_v_r22 * __pyx_v_vy)) + (__pyx_v_r23 * __pyx_v_vz));
 
-  /* "drone_env/drone_cython.pyx":239
+  /* "drone_env/drone_cython.pyx":235
  *     vx_b = r11 * vx + r12 * vy + r13 * vz
  *     vy_b = r21 * vx + r22 * vy + r23 * vz
  *     vz_b = r31 * vx + r32 * vy + r33 * vz             # <<<<<<<<<<<<<<
@@ -20068,7 +20073,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_vz_b = (((__pyx_v_r31 * __pyx_v_vx) + (__pyx_v_r32 * __pyx_v_vy)) + (__pyx_v_r33 * __pyx_v_vz));
 
-  /* "drone_env/drone_cython.pyx":241
+  /* "drone_env/drone_cython.pyx":237
  *     vz_b = r31 * vx + r32 * vy + r33 * vz
  *
  *     v_err_sq = (vx_b - tvx)*(vx_b - tvx) + (vy_b - tvy)*(vy_b - tvy) + (vz_b - tvz)*(vz_b - tvz)             # <<<<<<<<<<<<<<
@@ -20077,7 +20082,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_v_err_sq = ((((__pyx_v_vx_b - __pyx_v_tvx) * (__pyx_v_vx_b - __pyx_v_tvx)) + ((__pyx_v_vy_b - __pyx_v_tvy) * (__pyx_v_vy_b - __pyx_v_tvy))) + ((__pyx_v_vz_b - __pyx_v_tvz) * (__pyx_v_vz_b - __pyx_v_tvz)));
 
-  /* "drone_env/drone_cython.pyx":242
+  /* "drone_env/drone_cython.pyx":238
  *
  *     v_err_sq = (vx_b - tvx)*(vx_b - tvx) + (vy_b - tvy)*(vy_b - tvy) + (vz_b - tvz)*(vz_b - tvz)
  *     yaw_rate_err_sq = (yaw_rate_cmd - tyr)*(yaw_rate_cmd - tyr)             # <<<<<<<<<<<<<<
@@ -20086,7 +20091,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_yaw_rate_err_sq = ((__pyx_v_yaw_rate_cmd - __pyx_v_tyr) * (__pyx_v_yaw_rate_cmd - __pyx_v_tyr));
 
-  /* "drone_env/drone_cython.pyx":244
+  /* "drone_env/drone_cython.pyx":240
  *     yaw_rate_err_sq = (yaw_rate_cmd - tyr)*(yaw_rate_cmd - tyr)
  *
  *     rew = 1.0 * exp(-2.0 * v_err_sq)             # <<<<<<<<<<<<<<
@@ -20095,7 +20100,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_rew = (1.0 * exp((-2.0 * __pyx_v_v_err_sq)));
 
-  /* "drone_env/drone_cython.pyx":245
+  /* "drone_env/drone_cython.pyx":241
  *
  *     rew = 1.0 * exp(-2.0 * v_err_sq)
  *     rew += 0.5 * exp(-2.0 * yaw_rate_err_sq)             # <<<<<<<<<<<<<<
@@ -20104,7 +20109,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_rew = (__pyx_v_rew + (0.5 * exp((-2.0 * __pyx_v_yaw_rate_err_sq))));
 
-  /* "drone_env/drone_cython.pyx":246
+  /* "drone_env/drone_cython.pyx":242
  *     rew = 1.0 * exp(-2.0 * v_err_sq)
  *     rew += 0.5 * exp(-2.0 * yaw_rate_err_sq)
  *     rew -= 0.01 * (r*r + p*p)             # <<<<<<<<<<<<<<
@@ -20113,7 +20118,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_rew = (__pyx_v_rew - (0.01 * ((__pyx_v_r * __pyx_v_r) + (__pyx_v_p * __pyx_v_p))));
 
-  /* "drone_env/drone_cython.pyx":248
+  /* "drone_env/drone_cython.pyx":244
  *     rew -= 0.01 * (r*r + p*p)
  *
  *     if fabs(r) > 1.0 or fabs(p) > 1.0:             # <<<<<<<<<<<<<<
@@ -20131,7 +20136,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_L9_bool_binop_done:;
   if (__pyx_t_9) {
 
-    /* "drone_env/drone_cython.pyx":249
+    /* "drone_env/drone_cython.pyx":245
  *
  *     if fabs(r) > 1.0 or fabs(p) > 1.0:
  *         rew -= 0.1             # <<<<<<<<<<<<<<
@@ -20140,7 +20145,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_rew = (__pyx_v_rew - 0.1);
 
-    /* "drone_env/drone_cython.pyx":248
+    /* "drone_env/drone_cython.pyx":244
  *     rew -= 0.01 * (r*r + p*p)
  *
  *     if fabs(r) > 1.0 or fabs(p) > 1.0:             # <<<<<<<<<<<<<<
@@ -20149,7 +20154,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   }
 
-  /* "drone_env/drone_cython.pyx":251
+  /* "drone_env/drone_cython.pyx":247
  *         rew -= 0.1
  *
  *     if collision == 1:             # <<<<<<<<<<<<<<
@@ -20159,7 +20164,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_9 = (__pyx_v_collision == 1);
   if (__pyx_t_9) {
 
-    /* "drone_env/drone_cython.pyx":252
+    /* "drone_env/drone_cython.pyx":248
  *
  *     if collision == 1:
  *         rew -= 10.0             # <<<<<<<<<<<<<<
@@ -20168,7 +20173,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
     __pyx_v_rew = (__pyx_v_rew - 10.0);
 
-    /* "drone_env/drone_cython.pyx":251
+    /* "drone_env/drone_cython.pyx":247
  *         rew -= 0.1
  *
  *     if collision == 1:             # <<<<<<<<<<<<<<
@@ -20177,7 +20182,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   }
 
-  /* "drone_env/drone_cython.pyx":254
+  /* "drone_env/drone_cython.pyx":250
  *         rew -= 10.0
  *
  *     rew += 0.1             # <<<<<<<<<<<<<<
@@ -20186,7 +20191,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
 */
   __pyx_v_rew = (__pyx_v_rew + 0.1);
 
-  /* "drone_env/drone_cython.pyx":255
+  /* "drone_env/drone_cython.pyx":251
  *
  *     rew += 0.1
  *     rewards[i] = rew             # <<<<<<<<<<<<<<
@@ -20196,7 +20201,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_4 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_rewards.data + __pyx_t_4 * __pyx_v_rewards.strides[0]) )) = __pyx_v_rew;
 
-  /* "drone_env/drone_cython.pyx":257
+  /* "drone_env/drone_cython.pyx":253
  *     rewards[i] = rew
  *
  *     if t >= episode_length:             # <<<<<<<<<<<<<<
@@ -20206,7 +20211,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_t_9 = (__pyx_v_t >= __pyx_v_episode_length);
   if (__pyx_t_9) {
 
-    /* "drone_env/drone_cython.pyx":258
+    /* "drone_env/drone_cython.pyx":254
  *
  *     if t >= episode_length:
  *         done_flags[i] = 1.0             # <<<<<<<<<<<<<<
@@ -20216,7 +20221,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
     __pyx_t_4 = __pyx_v_i;
     *((float *) ( /* dim=0 */ (__pyx_v_done_flags.data + __pyx_t_4 * __pyx_v_done_flags.strides[0]) )) = 1.0;
 
-    /* "drone_env/drone_cython.pyx":257
+    /* "drone_env/drone_cython.pyx":253
  *     rewards[i] = rew
  *
  *     if t >= episode_length:             # <<<<<<<<<<<<<<
@@ -20226,7 +20231,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
     goto __pyx_L12;
   }
 
-  /* "drone_env/drone_cython.pyx":260
+  /* "drone_env/drone_cython.pyx":256
  *         done_flags[i] = 1.0
  *     else:
  *         done_flags[i] = 0.0             # <<<<<<<<<<<<<<
@@ -20239,7 +20244,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   }
   __pyx_L12:;
 
-  /* "drone_env/drone_cython.pyx":50
+  /* "drone_env/drone_cython.pyx":46
  *
  * # Scalar Fallback Helper function for single agent step
  * cdef void _step_agent_scalar(             # <<<<<<<<<<<<<<
@@ -20256,7 +20261,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   __pyx_L0:;
 }
 
-/* "drone_env/drone_cython.pyx":263
+/* "drone_env/drone_cython.pyx":259
  *
  * # Helper function for single agent reset
  * cdef void _reset_agent_scalar(             # <<<<<<<<<<<<<<
@@ -20279,50 +20284,50 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   int __pyx_clineno = 0;
   PyGILState_STATE __pyx_gilstate_save;
 
-  /* "drone_env/drone_cython.pyx":277
+  /* "drone_env/drone_cython.pyx":273
  *
  *     # Randomize Dynamics
  *     masses[i] = 0.5 + rand_float() * 1.0             # <<<<<<<<<<<<<<
  *     drag_coeffs[i] = 0.05 + rand_float() * 0.1
  *     thrust_coeffs[i] = 0.8 + rand_float() * 0.4
 */
-  __pyx_t_1 = __pyx_f_9drone_env_12drone_cython_rand_float(); if (unlikely(__pyx_t_1 == ((float)-1) && __Pyx_ErrOccurredWithGIL())) __PYX_ERR(0, 277, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_9drone_env_12drone_cython_rand_float(); if (unlikely(__pyx_t_1 == ((float)-1) && __Pyx_ErrOccurredWithGIL())) __PYX_ERR(0, 273, __pyx_L1_error)
   __pyx_t_2 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_masses.data + __pyx_t_2 * __pyx_v_masses.strides[0]) )) = (0.5 + (__pyx_t_1 * 1.0));
 
-  /* "drone_env/drone_cython.pyx":278
+  /* "drone_env/drone_cython.pyx":274
  *     # Randomize Dynamics
  *     masses[i] = 0.5 + rand_float() * 1.0
  *     drag_coeffs[i] = 0.05 + rand_float() * 0.1             # <<<<<<<<<<<<<<
  *     thrust_coeffs[i] = 0.8 + rand_float() * 0.4
  *
 */
-  __pyx_t_1 = __pyx_f_9drone_env_12drone_cython_rand_float(); if (unlikely(__pyx_t_1 == ((float)-1) && __Pyx_ErrOccurredWithGIL())) __PYX_ERR(0, 278, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_9drone_env_12drone_cython_rand_float(); if (unlikely(__pyx_t_1 == ((float)-1) && __Pyx_ErrOccurredWithGIL())) __PYX_ERR(0, 274, __pyx_L1_error)
   __pyx_t_2 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_drag_coeffs.data + __pyx_t_2 * __pyx_v_drag_coeffs.strides[0]) )) = (0.05 + (__pyx_t_1 * 0.1));
 
-  /* "drone_env/drone_cython.pyx":279
+  /* "drone_env/drone_cython.pyx":275
  *     masses[i] = 0.5 + rand_float() * 1.0
  *     drag_coeffs[i] = 0.05 + rand_float() * 0.1
  *     thrust_coeffs[i] = 0.8 + rand_float() * 0.4             # <<<<<<<<<<<<<<
  *
  *     rnd_cmd = rand_float()
 */
-  __pyx_t_1 = __pyx_f_9drone_env_12drone_cython_rand_float(); if (unlikely(__pyx_t_1 == ((float)-1) && __Pyx_ErrOccurredWithGIL())) __PYX_ERR(0, 279, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_9drone_env_12drone_cython_rand_float(); if (unlikely(__pyx_t_1 == ((float)-1) && __Pyx_ErrOccurredWithGIL())) __PYX_ERR(0, 275, __pyx_L1_error)
   __pyx_t_2 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_thrust_coeffs.data + __pyx_t_2 * __pyx_v_thrust_coeffs.strides[0]) )) = (0.8 + (__pyx_t_1 * 0.4));
 
-  /* "drone_env/drone_cython.pyx":281
+  /* "drone_env/drone_cython.pyx":277
  *     thrust_coeffs[i] = 0.8 + rand_float() * 0.4
  *
  *     rnd_cmd = rand_float()             # <<<<<<<<<<<<<<
  *     tvx=0.0; tvy=0.0; tvz=0.0; tyr=0.0
  *
 */
-  __pyx_t_1 = __pyx_f_9drone_env_12drone_cython_rand_float(); if (unlikely(__pyx_t_1 == ((float)-1) && __Pyx_ErrOccurredWithGIL())) __PYX_ERR(0, 281, __pyx_L1_error)
+  __pyx_t_1 = __pyx_f_9drone_env_12drone_cython_rand_float(); if (unlikely(__pyx_t_1 == ((float)-1) && __Pyx_ErrOccurredWithGIL())) __PYX_ERR(0, 277, __pyx_L1_error)
   __pyx_v_rnd_cmd = __pyx_t_1;
 
-  /* "drone_env/drone_cython.pyx":282
+  /* "drone_env/drone_cython.pyx":278
  *
  *     rnd_cmd = rand_float()
  *     tvx=0.0; tvy=0.0; tvz=0.0; tyr=0.0             # <<<<<<<<<<<<<<
@@ -20334,7 +20339,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_v_tvz = 0.0;
   __pyx_v_tyr = 0.0;
 
-  /* "drone_env/drone_cython.pyx":284
+  /* "drone_env/drone_cython.pyx":280
  *     tvx=0.0; tvy=0.0; tvz=0.0; tyr=0.0
  *
  *     if rnd_cmd < 0.2:             # <<<<<<<<<<<<<<
@@ -20346,7 +20351,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
     goto __pyx_L3;
   }
 
-  /* "drone_env/drone_cython.pyx":286
+  /* "drone_env/drone_cython.pyx":282
  *     if rnd_cmd < 0.2:
  *         pass # Hover
  *     elif rnd_cmd < 0.3:             # <<<<<<<<<<<<<<
@@ -20356,7 +20361,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_3 = (__pyx_v_rnd_cmd < 0.3);
   if (__pyx_t_3) {
 
-    /* "drone_env/drone_cython.pyx":287
+    /* "drone_env/drone_cython.pyx":283
  *         pass # Hover
  *     elif rnd_cmd < 0.3:
  *         tvx = 1.0             # <<<<<<<<<<<<<<
@@ -20365,7 +20370,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
 */
     __pyx_v_tvx = 1.0;
 
-    /* "drone_env/drone_cython.pyx":286
+    /* "drone_env/drone_cython.pyx":282
  *     if rnd_cmd < 0.2:
  *         pass # Hover
  *     elif rnd_cmd < 0.3:             # <<<<<<<<<<<<<<
@@ -20375,7 +20380,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
     goto __pyx_L3;
   }
 
-  /* "drone_env/drone_cython.pyx":288
+  /* "drone_env/drone_cython.pyx":284
  *     elif rnd_cmd < 0.3:
  *         tvx = 1.0
  *     elif rnd_cmd < 0.4:             # <<<<<<<<<<<<<<
@@ -20385,7 +20390,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_3 = (__pyx_v_rnd_cmd < 0.4);
   if (__pyx_t_3) {
 
-    /* "drone_env/drone_cython.pyx":289
+    /* "drone_env/drone_cython.pyx":285
  *         tvx = 1.0
  *     elif rnd_cmd < 0.4:
  *         tvx = -1.0             # <<<<<<<<<<<<<<
@@ -20394,7 +20399,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
 */
     __pyx_v_tvx = -1.0;
 
-    /* "drone_env/drone_cython.pyx":288
+    /* "drone_env/drone_cython.pyx":284
  *     elif rnd_cmd < 0.3:
  *         tvx = 1.0
  *     elif rnd_cmd < 0.4:             # <<<<<<<<<<<<<<
@@ -20404,7 +20409,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
     goto __pyx_L3;
   }
 
-  /* "drone_env/drone_cython.pyx":290
+  /* "drone_env/drone_cython.pyx":286
  *     elif rnd_cmd < 0.4:
  *         tvx = -1.0
  *     elif rnd_cmd < 0.5:             # <<<<<<<<<<<<<<
@@ -20414,7 +20419,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_3 = (__pyx_v_rnd_cmd < 0.5);
   if (__pyx_t_3) {
 
-    /* "drone_env/drone_cython.pyx":291
+    /* "drone_env/drone_cython.pyx":287
  *         tvx = -1.0
  *     elif rnd_cmd < 0.5:
  *         tvy = 1.0             # <<<<<<<<<<<<<<
@@ -20423,7 +20428,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
 */
     __pyx_v_tvy = 1.0;
 
-    /* "drone_env/drone_cython.pyx":290
+    /* "drone_env/drone_cython.pyx":286
  *     elif rnd_cmd < 0.4:
  *         tvx = -1.0
  *     elif rnd_cmd < 0.5:             # <<<<<<<<<<<<<<
@@ -20433,7 +20438,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
     goto __pyx_L3;
   }
 
-  /* "drone_env/drone_cython.pyx":292
+  /* "drone_env/drone_cython.pyx":288
  *     elif rnd_cmd < 0.5:
  *         tvy = 1.0
  *     elif rnd_cmd < 0.6:             # <<<<<<<<<<<<<<
@@ -20443,7 +20448,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_3 = (__pyx_v_rnd_cmd < 0.6);
   if (__pyx_t_3) {
 
-    /* "drone_env/drone_cython.pyx":293
+    /* "drone_env/drone_cython.pyx":289
  *         tvy = 1.0
  *     elif rnd_cmd < 0.6:
  *         tvy = -1.0             # <<<<<<<<<<<<<<
@@ -20452,7 +20457,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
 */
     __pyx_v_tvy = -1.0;
 
-    /* "drone_env/drone_cython.pyx":292
+    /* "drone_env/drone_cython.pyx":288
  *     elif rnd_cmd < 0.5:
  *         tvy = 1.0
  *     elif rnd_cmd < 0.6:             # <<<<<<<<<<<<<<
@@ -20462,7 +20467,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
     goto __pyx_L3;
   }
 
-  /* "drone_env/drone_cython.pyx":294
+  /* "drone_env/drone_cython.pyx":290
  *     elif rnd_cmd < 0.6:
  *         tvy = -1.0
  *     elif rnd_cmd < 0.7:             # <<<<<<<<<<<<<<
@@ -20472,7 +20477,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_3 = (__pyx_v_rnd_cmd < 0.7);
   if (__pyx_t_3) {
 
-    /* "drone_env/drone_cython.pyx":295
+    /* "drone_env/drone_cython.pyx":291
  *         tvy = -1.0
  *     elif rnd_cmd < 0.7:
  *         tvz = 1.0             # <<<<<<<<<<<<<<
@@ -20481,7 +20486,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
 */
     __pyx_v_tvz = 1.0;
 
-    /* "drone_env/drone_cython.pyx":294
+    /* "drone_env/drone_cython.pyx":290
  *     elif rnd_cmd < 0.6:
  *         tvy = -1.0
  *     elif rnd_cmd < 0.7:             # <<<<<<<<<<<<<<
@@ -20491,7 +20496,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
     goto __pyx_L3;
   }
 
-  /* "drone_env/drone_cython.pyx":296
+  /* "drone_env/drone_cython.pyx":292
  *     elif rnd_cmd < 0.7:
  *         tvz = 1.0
  *     elif rnd_cmd < 0.8:             # <<<<<<<<<<<<<<
@@ -20501,7 +20506,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_3 = (__pyx_v_rnd_cmd < 0.8);
   if (__pyx_t_3) {
 
-    /* "drone_env/drone_cython.pyx":297
+    /* "drone_env/drone_cython.pyx":293
  *         tvz = 1.0
  *     elif rnd_cmd < 0.8:
  *         tvz = -1.0             # <<<<<<<<<<<<<<
@@ -20510,7 +20515,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
 */
     __pyx_v_tvz = -1.0;
 
-    /* "drone_env/drone_cython.pyx":296
+    /* "drone_env/drone_cython.pyx":292
  *     elif rnd_cmd < 0.7:
  *         tvz = 1.0
  *     elif rnd_cmd < 0.8:             # <<<<<<<<<<<<<<
@@ -20520,7 +20525,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
     goto __pyx_L3;
   }
 
-  /* "drone_env/drone_cython.pyx":298
+  /* "drone_env/drone_cython.pyx":294
  *     elif rnd_cmd < 0.8:
  *         tvz = -1.0
  *     elif rnd_cmd < 0.9:             # <<<<<<<<<<<<<<
@@ -20530,7 +20535,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_3 = (__pyx_v_rnd_cmd < 0.9);
   if (__pyx_t_3) {
 
-    /* "drone_env/drone_cython.pyx":299
+    /* "drone_env/drone_cython.pyx":295
  *         tvz = -1.0
  *     elif rnd_cmd < 0.9:
  *         tyr = 1.0             # <<<<<<<<<<<<<<
@@ -20539,7 +20544,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
 */
     __pyx_v_tyr = 1.0;
 
-    /* "drone_env/drone_cython.pyx":298
+    /* "drone_env/drone_cython.pyx":294
  *     elif rnd_cmd < 0.8:
  *         tvz = -1.0
  *     elif rnd_cmd < 0.9:             # <<<<<<<<<<<<<<
@@ -20549,7 +20554,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
     goto __pyx_L3;
   }
 
-  /* "drone_env/drone_cython.pyx":301
+  /* "drone_env/drone_cython.pyx":297
  *         tyr = 1.0
  *     else:
  *         tyr = -1.0             # <<<<<<<<<<<<<<
@@ -20561,7 +20566,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   }
   __pyx_L3:;
 
-  /* "drone_env/drone_cython.pyx":303
+  /* "drone_env/drone_cython.pyx":299
  *         tyr = -1.0
  *
  *     target_vx[i] = tvx             # <<<<<<<<<<<<<<
@@ -20571,7 +20576,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_2 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_target_vx.data + __pyx_t_2 * __pyx_v_target_vx.strides[0]) )) = __pyx_v_tvx;
 
-  /* "drone_env/drone_cython.pyx":304
+  /* "drone_env/drone_cython.pyx":300
  *
  *     target_vx[i] = tvx
  *     target_vy[i] = tvy             # <<<<<<<<<<<<<<
@@ -20581,7 +20586,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_2 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_target_vy.data + __pyx_t_2 * __pyx_v_target_vy.strides[0]) )) = __pyx_v_tvy;
 
-  /* "drone_env/drone_cython.pyx":305
+  /* "drone_env/drone_cython.pyx":301
  *     target_vx[i] = tvx
  *     target_vy[i] = tvy
  *     target_vz[i] = tvz             # <<<<<<<<<<<<<<
@@ -20591,7 +20596,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_2 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_target_vz.data + __pyx_t_2 * __pyx_v_target_vz.strides[0]) )) = __pyx_v_tvz;
 
-  /* "drone_env/drone_cython.pyx":306
+  /* "drone_env/drone_cython.pyx":302
  *     target_vy[i] = tvy
  *     target_vz[i] = tvz
  *     target_yaw_rate[i] = tyr             # <<<<<<<<<<<<<<
@@ -20601,7 +20606,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_2 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_target_yaw_rate.data + __pyx_t_2 * __pyx_v_target_yaw_rate.strides[0]) )) = __pyx_v_tyr;
 
-  /* "drone_env/drone_cython.pyx":309
+  /* "drone_env/drone_cython.pyx":305
  *
  *     # Reset Observations
  *     memset(&observations[i, 0], 0, 1800 * 4)             # <<<<<<<<<<<<<<
@@ -20612,7 +20617,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_4 = 0;
   (void)(memset((&(*((float *) ( /* dim=1 */ (( /* dim=0 */ (__pyx_v_observations.data + __pyx_t_2 * __pyx_v_observations.strides[0]) ) + __pyx_t_4 * __pyx_v_observations.strides[1]) )))), 0, 0x1c20));
 
-  /* "drone_env/drone_cython.pyx":311
+  /* "drone_env/drone_cython.pyx":307
  *     memset(&observations[i, 0], 0, 1800 * 4)
  *
  *     observations[i, 1800] = tvx             # <<<<<<<<<<<<<<
@@ -20623,7 +20628,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_2 = 0x708;
   *((float *) ( /* dim=1 */ (( /* dim=0 */ (__pyx_v_observations.data + __pyx_t_4 * __pyx_v_observations.strides[0]) ) + __pyx_t_2 * __pyx_v_observations.strides[1]) )) = __pyx_v_tvx;
 
-  /* "drone_env/drone_cython.pyx":312
+  /* "drone_env/drone_cython.pyx":308
  *
  *     observations[i, 1800] = tvx
  *     observations[i, 1801] = tvy             # <<<<<<<<<<<<<<
@@ -20634,7 +20639,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_4 = 0x709;
   *((float *) ( /* dim=1 */ (( /* dim=0 */ (__pyx_v_observations.data + __pyx_t_2 * __pyx_v_observations.strides[0]) ) + __pyx_t_4 * __pyx_v_observations.strides[1]) )) = __pyx_v_tvy;
 
-  /* "drone_env/drone_cython.pyx":313
+  /* "drone_env/drone_cython.pyx":309
  *     observations[i, 1800] = tvx
  *     observations[i, 1801] = tvy
  *     observations[i, 1802] = tvz             # <<<<<<<<<<<<<<
@@ -20645,7 +20650,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_2 = 0x70A;
   *((float *) ( /* dim=1 */ (( /* dim=0 */ (__pyx_v_observations.data + __pyx_t_4 * __pyx_v_observations.strides[0]) ) + __pyx_t_2 * __pyx_v_observations.strides[1]) )) = __pyx_v_tvz;
 
-  /* "drone_env/drone_cython.pyx":314
+  /* "drone_env/drone_cython.pyx":310
  *     observations[i, 1801] = tvy
  *     observations[i, 1802] = tvz
  *     observations[i, 1803] = tyr             # <<<<<<<<<<<<<<
@@ -20656,7 +20661,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_4 = 0x70B;
   *((float *) ( /* dim=1 */ (( /* dim=0 */ (__pyx_v_observations.data + __pyx_t_2 * __pyx_v_observations.strides[0]) ) + __pyx_t_4 * __pyx_v_observations.strides[1]) )) = __pyx_v_tyr;
 
-  /* "drone_env/drone_cython.pyx":316
+  /* "drone_env/drone_cython.pyx":312
  *     observations[i, 1803] = tyr
  *
  *     pos_x[i] = 0.0             # <<<<<<<<<<<<<<
@@ -20666,7 +20671,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_4 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_pos_x.data + __pyx_t_4 * __pyx_v_pos_x.strides[0]) )) = 0.0;
 
-  /* "drone_env/drone_cython.pyx":317
+  /* "drone_env/drone_cython.pyx":313
  *
  *     pos_x[i] = 0.0
  *     pos_y[i] = 0.0             # <<<<<<<<<<<<<<
@@ -20676,7 +20681,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_4 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_pos_y.data + __pyx_t_4 * __pyx_v_pos_y.strides[0]) )) = 0.0;
 
-  /* "drone_env/drone_cython.pyx":318
+  /* "drone_env/drone_cython.pyx":314
  *     pos_x[i] = 0.0
  *     pos_y[i] = 0.0
  *     pos_z[i] = 10.0             # <<<<<<<<<<<<<<
@@ -20686,7 +20691,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_4 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_pos_z.data + __pyx_t_4 * __pyx_v_pos_z.strides[0]) )) = 10.0;
 
-  /* "drone_env/drone_cython.pyx":320
+  /* "drone_env/drone_cython.pyx":316
  *     pos_z[i] = 10.0
  *
  *     vel_x[i] = 0.0             # <<<<<<<<<<<<<<
@@ -20696,7 +20701,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_4 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_vel_x.data + __pyx_t_4 * __pyx_v_vel_x.strides[0]) )) = 0.0;
 
-  /* "drone_env/drone_cython.pyx":321
+  /* "drone_env/drone_cython.pyx":317
  *
  *     vel_x[i] = 0.0
  *     vel_y[i] = 0.0             # <<<<<<<<<<<<<<
@@ -20706,7 +20711,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_4 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_vel_y.data + __pyx_t_4 * __pyx_v_vel_y.strides[0]) )) = 0.0;
 
-  /* "drone_env/drone_cython.pyx":322
+  /* "drone_env/drone_cython.pyx":318
  *     vel_x[i] = 0.0
  *     vel_y[i] = 0.0
  *     vel_z[i] = 0.0             # <<<<<<<<<<<<<<
@@ -20716,7 +20721,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_4 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_vel_z.data + __pyx_t_4 * __pyx_v_vel_z.strides[0]) )) = 0.0;
 
-  /* "drone_env/drone_cython.pyx":323
+  /* "drone_env/drone_cython.pyx":319
  *     vel_y[i] = 0.0
  *     vel_z[i] = 0.0
  *     roll[i] = 0.0             # <<<<<<<<<<<<<<
@@ -20726,7 +20731,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_4 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_roll.data + __pyx_t_4 * __pyx_v_roll.strides[0]) )) = 0.0;
 
-  /* "drone_env/drone_cython.pyx":324
+  /* "drone_env/drone_cython.pyx":320
  *     vel_z[i] = 0.0
  *     roll[i] = 0.0
  *     pitch[i] = 0.0             # <<<<<<<<<<<<<<
@@ -20736,7 +20741,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_4 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_pitch.data + __pyx_t_4 * __pyx_v_pitch.strides[0]) )) = 0.0;
 
-  /* "drone_env/drone_cython.pyx":325
+  /* "drone_env/drone_cython.pyx":321
  *     roll[i] = 0.0
  *     pitch[i] = 0.0
  *     yaw[i] = 0.0             # <<<<<<<<<<<<<<
@@ -20746,7 +20751,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_t_4 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_yaw.data + __pyx_t_4 * __pyx_v_yaw.strides[0]) )) = 0.0;
 
-  /* "drone_env/drone_cython.pyx":263
+  /* "drone_env/drone_cython.pyx":259
  *
  * # Helper function for single agent reset
  * cdef void _reset_agent_scalar(             # <<<<<<<<<<<<<<
@@ -20763,7 +20768,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar(int __pyx_v_i,
   __pyx_L0:;
 }
 
-/* "drone_env/drone_cython.pyx":327
+/* "drone_env/drone_cython.pyx":323
  *     yaw[i] = 0.0
  *
  * def step_cython(             # <<<<<<<<<<<<<<
@@ -20834,200 +20839,200 @@ PyObject *__pyx_args, PyObject *__pyx_kwds
   {
     PyObject ** const __pyx_pyargnames[] = {&__pyx_mstate_global->__pyx_n_u_pos_x,&__pyx_mstate_global->__pyx_n_u_pos_y,&__pyx_mstate_global->__pyx_n_u_pos_z,&__pyx_mstate_global->__pyx_n_u_vel_x,&__pyx_mstate_global->__pyx_n_u_vel_y,&__pyx_mstate_global->__pyx_n_u_vel_z,&__pyx_mstate_global->__pyx_n_u_roll,&__pyx_mstate_global->__pyx_n_u_pitch,&__pyx_mstate_global->__pyx_n_u_yaw,&__pyx_mstate_global->__pyx_n_u_masses,&__pyx_mstate_global->__pyx_n_u_drag_coeffs,&__pyx_mstate_global->__pyx_n_u_thrust_coeffs,&__pyx_mstate_global->__pyx_n_u_target_vx,&__pyx_mstate_global->__pyx_n_u_target_vy,&__pyx_mstate_global->__pyx_n_u_target_vz,&__pyx_mstate_global->__pyx_n_u_target_yaw_rate,&__pyx_mstate_global->__pyx_n_u_pos_history,&__pyx_mstate_global->__pyx_n_u_observations,&__pyx_mstate_global->__pyx_n_u_rewards,&__pyx_mstate_global->__pyx_n_u_done_flags,&__pyx_mstate_global->__pyx_n_u_step_counts,&__pyx_mstate_global->__pyx_n_u_actions,&__pyx_mstate_global->__pyx_n_u_num_agents,&__pyx_mstate_global->__pyx_n_u_episode_length,&__pyx_mstate_global->__pyx_n_u_env_ids,0};
     const Py_ssize_t __pyx_kwds_len = (__pyx_kwds) ? __Pyx_NumKwargs_FASTCALL(__pyx_kwds) : 0;
-    if (unlikely(__pyx_kwds_len) < 0) __PYX_ERR(0, 327, __pyx_L3_error)
+    if (unlikely(__pyx_kwds_len) < 0) __PYX_ERR(0, 323, __pyx_L3_error)
     if (__pyx_kwds_len > 0) {
       switch (__pyx_nargs) {
         case 25:
         values[24] = __Pyx_ArgRef_FASTCALL(__pyx_args, 24);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[24])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[24])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 24:
         values[23] = __Pyx_ArgRef_FASTCALL(__pyx_args, 23);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[23])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[23])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 23:
         values[22] = __Pyx_ArgRef_FASTCALL(__pyx_args, 22);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[22])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[22])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 22:
         values[21] = __Pyx_ArgRef_FASTCALL(__pyx_args, 21);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[21])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[21])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 21:
         values[20] = __Pyx_ArgRef_FASTCALL(__pyx_args, 20);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[20])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[20])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 20:
         values[19] = __Pyx_ArgRef_FASTCALL(__pyx_args, 19);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[19])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[19])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 19:
         values[18] = __Pyx_ArgRef_FASTCALL(__pyx_args, 18);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[18])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[18])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 18:
         values[17] = __Pyx_ArgRef_FASTCALL(__pyx_args, 17);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[17])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[17])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 17:
         values[16] = __Pyx_ArgRef_FASTCALL(__pyx_args, 16);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[16])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[16])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 16:
         values[15] = __Pyx_ArgRef_FASTCALL(__pyx_args, 15);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[15])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[15])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 15:
         values[14] = __Pyx_ArgRef_FASTCALL(__pyx_args, 14);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[14])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[14])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 14:
         values[13] = __Pyx_ArgRef_FASTCALL(__pyx_args, 13);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[13])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[13])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 13:
         values[12] = __Pyx_ArgRef_FASTCALL(__pyx_args, 12);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[12])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[12])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 12:
         values[11] = __Pyx_ArgRef_FASTCALL(__pyx_args, 11);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[11])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[11])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 11:
         values[10] = __Pyx_ArgRef_FASTCALL(__pyx_args, 10);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[10])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[10])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 10:
         values[9] = __Pyx_ArgRef_FASTCALL(__pyx_args, 9);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[9])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[9])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  9:
         values[8] = __Pyx_ArgRef_FASTCALL(__pyx_args, 8);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[8])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[8])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  8:
         values[7] = __Pyx_ArgRef_FASTCALL(__pyx_args, 7);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[7])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[7])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  7:
         values[6] = __Pyx_ArgRef_FASTCALL(__pyx_args, 6);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[6])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[6])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  6:
         values[5] = __Pyx_ArgRef_FASTCALL(__pyx_args, 5);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[5])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[5])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  5:
         values[4] = __Pyx_ArgRef_FASTCALL(__pyx_args, 4);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[4])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[4])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  4:
         values[3] = __Pyx_ArgRef_FASTCALL(__pyx_args, 3);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[3])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[3])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  3:
         values[2] = __Pyx_ArgRef_FASTCALL(__pyx_args, 2);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[2])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[2])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  2:
         values[1] = __Pyx_ArgRef_FASTCALL(__pyx_args, 1);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[1])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[1])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  1:
         values[0] = __Pyx_ArgRef_FASTCALL(__pyx_args, 0);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[0])) __PYX_ERR(0, 327, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[0])) __PYX_ERR(0, 323, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  0: break;
         default: goto __pyx_L5_argtuple_error;
       }
       const Py_ssize_t kwd_pos_args = __pyx_nargs;
-      if (__Pyx_ParseKeywords(__pyx_kwds, __pyx_kwvalues, __pyx_pyargnames, 0, values, kwd_pos_args, __pyx_kwds_len, "step_cython", 0) < (0)) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (__Pyx_ParseKeywords(__pyx_kwds, __pyx_kwvalues, __pyx_pyargnames, 0, values, kwd_pos_args, __pyx_kwds_len, "step_cython", 0) < (0)) __PYX_ERR(0, 323, __pyx_L3_error)
       for (Py_ssize_t i = __pyx_nargs; i < 25; i++) {
-        if (unlikely(!values[i])) { __Pyx_RaiseArgtupleInvalid("step_cython", 1, 25, 25, i); __PYX_ERR(0, 327, __pyx_L3_error) }
+        if (unlikely(!values[i])) { __Pyx_RaiseArgtupleInvalid("step_cython", 1, 25, 25, i); __PYX_ERR(0, 323, __pyx_L3_error) }
       }
     } else if (unlikely(__pyx_nargs != 25)) {
       goto __pyx_L5_argtuple_error;
     } else {
       values[0] = __Pyx_ArgRef_FASTCALL(__pyx_args, 0);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[0])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[0])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[1] = __Pyx_ArgRef_FASTCALL(__pyx_args, 1);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[1])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[1])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[2] = __Pyx_ArgRef_FASTCALL(__pyx_args, 2);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[2])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[2])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[3] = __Pyx_ArgRef_FASTCALL(__pyx_args, 3);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[3])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[3])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[4] = __Pyx_ArgRef_FASTCALL(__pyx_args, 4);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[4])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[4])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[5] = __Pyx_ArgRef_FASTCALL(__pyx_args, 5);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[5])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[5])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[6] = __Pyx_ArgRef_FASTCALL(__pyx_args, 6);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[6])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[6])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[7] = __Pyx_ArgRef_FASTCALL(__pyx_args, 7);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[7])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[7])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[8] = __Pyx_ArgRef_FASTCALL(__pyx_args, 8);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[8])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[8])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[9] = __Pyx_ArgRef_FASTCALL(__pyx_args, 9);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[9])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[9])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[10] = __Pyx_ArgRef_FASTCALL(__pyx_args, 10);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[10])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[10])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[11] = __Pyx_ArgRef_FASTCALL(__pyx_args, 11);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[11])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[11])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[12] = __Pyx_ArgRef_FASTCALL(__pyx_args, 12);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[12])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[12])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[13] = __Pyx_ArgRef_FASTCALL(__pyx_args, 13);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[13])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[13])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[14] = __Pyx_ArgRef_FASTCALL(__pyx_args, 14);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[14])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[14])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[15] = __Pyx_ArgRef_FASTCALL(__pyx_args, 15);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[15])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[15])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[16] = __Pyx_ArgRef_FASTCALL(__pyx_args, 16);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[16])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[16])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[17] = __Pyx_ArgRef_FASTCALL(__pyx_args, 17);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[17])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[17])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[18] = __Pyx_ArgRef_FASTCALL(__pyx_args, 18);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[18])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[18])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[19] = __Pyx_ArgRef_FASTCALL(__pyx_args, 19);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[19])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[19])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[20] = __Pyx_ArgRef_FASTCALL(__pyx_args, 20);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[20])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[20])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[21] = __Pyx_ArgRef_FASTCALL(__pyx_args, 21);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[21])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[21])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[22] = __Pyx_ArgRef_FASTCALL(__pyx_args, 22);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[22])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[22])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[23] = __Pyx_ArgRef_FASTCALL(__pyx_args, 23);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[23])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[23])) __PYX_ERR(0, 323, __pyx_L3_error)
       values[24] = __Pyx_ArgRef_FASTCALL(__pyx_args, 24);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[24])) __PYX_ERR(0, 327, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[24])) __PYX_ERR(0, 323, __pyx_L3_error)
     }
-    __pyx_v_pos_x = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[0], PyBUF_WRITABLE); if (unlikely(!__pyx_v_pos_x.memview)) __PYX_ERR(0, 328, __pyx_L3_error)
-    __pyx_v_pos_y = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[1], PyBUF_WRITABLE); if (unlikely(!__pyx_v_pos_y.memview)) __PYX_ERR(0, 328, __pyx_L3_error)
-    __pyx_v_pos_z = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[2], PyBUF_WRITABLE); if (unlikely(!__pyx_v_pos_z.memview)) __PYX_ERR(0, 328, __pyx_L3_error)
-    __pyx_v_vel_x = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[3], PyBUF_WRITABLE); if (unlikely(!__pyx_v_vel_x.memview)) __PYX_ERR(0, 329, __pyx_L3_error)
-    __pyx_v_vel_y = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[4], PyBUF_WRITABLE); if (unlikely(!__pyx_v_vel_y.memview)) __PYX_ERR(0, 329, __pyx_L3_error)
-    __pyx_v_vel_z = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[5], PyBUF_WRITABLE); if (unlikely(!__pyx_v_vel_z.memview)) __PYX_ERR(0, 329, __pyx_L3_error)
-    __pyx_v_roll = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[6], PyBUF_WRITABLE); if (unlikely(!__pyx_v_roll.memview)) __PYX_ERR(0, 330, __pyx_L3_error)
-    __pyx_v_pitch = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[7], PyBUF_WRITABLE); if (unlikely(!__pyx_v_pitch.memview)) __PYX_ERR(0, 330, __pyx_L3_error)
-    __pyx_v_yaw = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[8], PyBUF_WRITABLE); if (unlikely(!__pyx_v_yaw.memview)) __PYX_ERR(0, 330, __pyx_L3_error)
-    __pyx_v_masses = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[9], PyBUF_WRITABLE); if (unlikely(!__pyx_v_masses.memview)) __PYX_ERR(0, 331, __pyx_L3_error)
-    __pyx_v_drag_coeffs = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[10], PyBUF_WRITABLE); if (unlikely(!__pyx_v_drag_coeffs.memview)) __PYX_ERR(0, 331, __pyx_L3_error)
-    __pyx_v_thrust_coeffs = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[11], PyBUF_WRITABLE); if (unlikely(!__pyx_v_thrust_coeffs.memview)) __PYX_ERR(0, 331, __pyx_L3_error)
-    __pyx_v_target_vx = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[12], PyBUF_WRITABLE); if (unlikely(!__pyx_v_target_vx.memview)) __PYX_ERR(0, 332, __pyx_L3_error)
-    __pyx_v_target_vy = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[13], PyBUF_WRITABLE); if (unlikely(!__pyx_v_target_vy.memview)) __PYX_ERR(0, 332, __pyx_L3_error)
-    __pyx_v_target_vz = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[14], PyBUF_WRITABLE); if (unlikely(!__pyx_v_target_vz.memview)) __PYX_ERR(0, 332, __pyx_L3_error)
-    __pyx_v_target_yaw_rate = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[15], PyBUF_WRITABLE); if (unlikely(!__pyx_v_target_yaw_rate.memview)) __PYX_ERR(0, 332, __pyx_L3_error)
-    __pyx_v_pos_history = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[16], PyBUF_WRITABLE); if (unlikely(!__pyx_v_pos_history.memview)) __PYX_ERR(0, 333, __pyx_L3_error)
-    __pyx_v_observations = __Pyx_PyObject_to_MemoryviewSlice_dsds_float(values[17], PyBUF_WRITABLE); if (unlikely(!__pyx_v_observations.memview)) __PYX_ERR(0, 334, __pyx_L3_error)
-    __pyx_v_rewards = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[18], PyBUF_WRITABLE); if (unlikely(!__pyx_v_rewards.memview)) __PYX_ERR(0, 335, __pyx_L3_error)
-    __pyx_v_done_flags = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[19], PyBUF_WRITABLE); if (unlikely(!__pyx_v_done_flags.memview)) __PYX_ERR(0, 336, __pyx_L3_error)
-    __pyx_v_step_counts = __Pyx_PyObject_to_MemoryviewSlice_ds_int(values[20], PyBUF_WRITABLE); if (unlikely(!__pyx_v_step_counts.memview)) __PYX_ERR(0, 337, __pyx_L3_error)
-    __pyx_v_actions = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[21], PyBUF_WRITABLE); if (unlikely(!__pyx_v_actions.memview)) __PYX_ERR(0, 338, __pyx_L3_error)
-    __pyx_v_num_agents = __Pyx_PyLong_As_int(values[22]); if (unlikely((__pyx_v_num_agents == (int)-1) && PyErr_Occurred())) __PYX_ERR(0, 339, __pyx_L3_error)
-    __pyx_v_episode_length = __Pyx_PyLong_As_int(values[23]); if (unlikely((__pyx_v_episode_length == (int)-1) && PyErr_Occurred())) __PYX_ERR(0, 340, __pyx_L3_error)
-    __pyx_v_env_ids = __Pyx_PyObject_to_MemoryviewSlice_ds_int(values[24], PyBUF_WRITABLE); if (unlikely(!__pyx_v_env_ids.memview)) __PYX_ERR(0, 341, __pyx_L3_error)
+    __pyx_v_pos_x = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[0], PyBUF_WRITABLE); if (unlikely(!__pyx_v_pos_x.memview)) __PYX_ERR(0, 324, __pyx_L3_error)
+    __pyx_v_pos_y = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[1], PyBUF_WRITABLE); if (unlikely(!__pyx_v_pos_y.memview)) __PYX_ERR(0, 324, __pyx_L3_error)
+    __pyx_v_pos_z = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[2], PyBUF_WRITABLE); if (unlikely(!__pyx_v_pos_z.memview)) __PYX_ERR(0, 324, __pyx_L3_error)
+    __pyx_v_vel_x = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[3], PyBUF_WRITABLE); if (unlikely(!__pyx_v_vel_x.memview)) __PYX_ERR(0, 325, __pyx_L3_error)
+    __pyx_v_vel_y = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[4], PyBUF_WRITABLE); if (unlikely(!__pyx_v_vel_y.memview)) __PYX_ERR(0, 325, __pyx_L3_error)
+    __pyx_v_vel_z = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[5], PyBUF_WRITABLE); if (unlikely(!__pyx_v_vel_z.memview)) __PYX_ERR(0, 325, __pyx_L3_error)
+    __pyx_v_roll = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[6], PyBUF_WRITABLE); if (unlikely(!__pyx_v_roll.memview)) __PYX_ERR(0, 326, __pyx_L3_error)
+    __pyx_v_pitch = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[7], PyBUF_WRITABLE); if (unlikely(!__pyx_v_pitch.memview)) __PYX_ERR(0, 326, __pyx_L3_error)
+    __pyx_v_yaw = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[8], PyBUF_WRITABLE); if (unlikely(!__pyx_v_yaw.memview)) __PYX_ERR(0, 326, __pyx_L3_error)
+    __pyx_v_masses = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[9], PyBUF_WRITABLE); if (unlikely(!__pyx_v_masses.memview)) __PYX_ERR(0, 327, __pyx_L3_error)
+    __pyx_v_drag_coeffs = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[10], PyBUF_WRITABLE); if (unlikely(!__pyx_v_drag_coeffs.memview)) __PYX_ERR(0, 327, __pyx_L3_error)
+    __pyx_v_thrust_coeffs = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[11], PyBUF_WRITABLE); if (unlikely(!__pyx_v_thrust_coeffs.memview)) __PYX_ERR(0, 327, __pyx_L3_error)
+    __pyx_v_target_vx = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[12], PyBUF_WRITABLE); if (unlikely(!__pyx_v_target_vx.memview)) __PYX_ERR(0, 328, __pyx_L3_error)
+    __pyx_v_target_vy = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[13], PyBUF_WRITABLE); if (unlikely(!__pyx_v_target_vy.memview)) __PYX_ERR(0, 328, __pyx_L3_error)
+    __pyx_v_target_vz = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[14], PyBUF_WRITABLE); if (unlikely(!__pyx_v_target_vz.memview)) __PYX_ERR(0, 328, __pyx_L3_error)
+    __pyx_v_target_yaw_rate = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[15], PyBUF_WRITABLE); if (unlikely(!__pyx_v_target_yaw_rate.memview)) __PYX_ERR(0, 328, __pyx_L3_error)
+    __pyx_v_pos_history = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[16], PyBUF_WRITABLE); if (unlikely(!__pyx_v_pos_history.memview)) __PYX_ERR(0, 329, __pyx_L3_error)
+    __pyx_v_observations = __Pyx_PyObject_to_MemoryviewSlice_dsds_float(values[17], PyBUF_WRITABLE); if (unlikely(!__pyx_v_observations.memview)) __PYX_ERR(0, 330, __pyx_L3_error)
+    __pyx_v_rewards = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[18], PyBUF_WRITABLE); if (unlikely(!__pyx_v_rewards.memview)) __PYX_ERR(0, 331, __pyx_L3_error)
+    __pyx_v_done_flags = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[19], PyBUF_WRITABLE); if (unlikely(!__pyx_v_done_flags.memview)) __PYX_ERR(0, 332, __pyx_L3_error)
+    __pyx_v_step_counts = __Pyx_PyObject_to_MemoryviewSlice_ds_int(values[20], PyBUF_WRITABLE); if (unlikely(!__pyx_v_step_counts.memview)) __PYX_ERR(0, 333, __pyx_L3_error)
+    __pyx_v_actions = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[21], PyBUF_WRITABLE); if (unlikely(!__pyx_v_actions.memview)) __PYX_ERR(0, 334, __pyx_L3_error)
+    __pyx_v_num_agents = __Pyx_PyLong_As_int(values[22]); if (unlikely((__pyx_v_num_agents == (int)-1) && PyErr_Occurred())) __PYX_ERR(0, 335, __pyx_L3_error)
+    __pyx_v_episode_length = __Pyx_PyLong_As_int(values[23]); if (unlikely((__pyx_v_episode_length == (int)-1) && PyErr_Occurred())) __PYX_ERR(0, 336, __pyx_L3_error)
+    __pyx_v_env_ids = __Pyx_PyObject_to_MemoryviewSlice_ds_int(values[24], PyBUF_WRITABLE); if (unlikely(!__pyx_v_env_ids.memview)) __PYX_ERR(0, 337, __pyx_L3_error)
   }
   goto __pyx_L6_skip;
   __pyx_L5_argtuple_error:;
-  __Pyx_RaiseArgtupleInvalid("step_cython", 1, 25, 25, __pyx_nargs); __PYX_ERR(0, 327, __pyx_L3_error)
+  __Pyx_RaiseArgtupleInvalid("step_cython", 1, 25, 25, __pyx_nargs); __PYX_ERR(0, 323, __pyx_L3_error)
   __pyx_L6_skip:;
   goto __pyx_L4_argument_unpacking_done;
   __pyx_L3_error:;
@@ -21129,7 +21134,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
   int __pyx_t_27;
   __Pyx_RefNannySetupContext("step_cython", 0);
 
-  /* "drone_env/drone_cython.pyx":344
+  /* "drone_env/drone_cython.pyx":340
  * ):
  *     cdef int i
  *     step_counts[0] += 1             # <<<<<<<<<<<<<<
@@ -21139,7 +21144,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
   __pyx_t_1 = 0;
   *((int *) ( /* dim=0 */ (__pyx_v_step_counts.data + __pyx_t_1 * __pyx_v_step_counts.strides[0]) )) += 1;
 
-  /* "drone_env/drone_cython.pyx":345
+  /* "drone_env/drone_cython.pyx":341
  *     cdef int i
  *     step_counts[0] += 1
  *     cdef int t = step_counts[0]             # <<<<<<<<<<<<<<
@@ -21149,7 +21154,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
   __pyx_t_1 = 0;
   __pyx_v_t = (*((int *) ( /* dim=0 */ (__pyx_v_step_counts.data + __pyx_t_1 * __pyx_v_step_counts.strides[0]) )));
 
-  /* "drone_env/drone_cython.pyx":348
+  /* "drone_env/drone_cython.pyx":344
  *
  *     # Determine split for AVX (multiples of 8)
  *     cdef int limit_avx = (num_agents // 8) * 8             # <<<<<<<<<<<<<<
@@ -21158,7 +21163,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
 */
   __pyx_v_limit_avx = ((__pyx_v_num_agents / 8) * 8);
 
-  /* "drone_env/drone_cython.pyx":350
+  /* "drone_env/drone_cython.pyx":346
  *     cdef int limit_avx = (num_agents // 8) * 8
  *
  *     with nogil:             # <<<<<<<<<<<<<<
@@ -21171,7 +21176,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
       __Pyx_FastGIL_Remember();
       /*try:*/ {
 
-        /* "drone_env/drone_cython.pyx":352
+        /* "drone_env/drone_cython.pyx":348
  *     with nogil:
  *         # AVX Loop (stride 8)
  *         for i in prange(0, limit_avx, 8):             # <<<<<<<<<<<<<<
@@ -21200,7 +21205,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
                         {
                             __pyx_v_i = (int)(0 + 8 * __pyx_t_3);
 
-                            /* "drone_env/drone_cython.pyx":355
+                            /* "drone_env/drone_cython.pyx":351
  *             step_agents_avx2(
  *                 i,
  *                 &pos_x[0], &pos_y[0], &pos_z[0],             # <<<<<<<<<<<<<<
@@ -21211,7 +21216,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
                             __pyx_t_5 = 0;
                             __pyx_t_6 = 0;
 
-                            /* "drone_env/drone_cython.pyx":356
+                            /* "drone_env/drone_cython.pyx":352
  *                 i,
  *                 &pos_x[0], &pos_y[0], &pos_z[0],
  *                 &vel_x[0], &vel_y[0], &vel_z[0],             # <<<<<<<<<<<<<<
@@ -21222,7 +21227,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
                             __pyx_t_8 = 0;
                             __pyx_t_9 = 0;
 
-                            /* "drone_env/drone_cython.pyx":357
+                            /* "drone_env/drone_cython.pyx":353
  *                 &pos_x[0], &pos_y[0], &pos_z[0],
  *                 &vel_x[0], &vel_y[0], &vel_z[0],
  *                 &roll[0], &pitch[0], &yaw[0],             # <<<<<<<<<<<<<<
@@ -21233,7 +21238,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
                             __pyx_t_11 = 0;
                             __pyx_t_12 = 0;
 
-                            /* "drone_env/drone_cython.pyx":358
+                            /* "drone_env/drone_cython.pyx":354
  *                 &vel_x[0], &vel_y[0], &vel_z[0],
  *                 &roll[0], &pitch[0], &yaw[0],
  *                 &masses[0], &drag_coeffs[0], &thrust_coeffs[0],             # <<<<<<<<<<<<<<
@@ -21244,7 +21249,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
                             __pyx_t_14 = 0;
                             __pyx_t_15 = 0;
 
-                            /* "drone_env/drone_cython.pyx":359
+                            /* "drone_env/drone_cython.pyx":355
  *                 &roll[0], &pitch[0], &yaw[0],
  *                 &masses[0], &drag_coeffs[0], &thrust_coeffs[0],
  *                 &target_vx[0], &target_vy[0], &target_vz[0], &target_yaw_rate[0],             # <<<<<<<<<<<<<<
@@ -21256,7 +21261,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
                             __pyx_t_18 = 0;
                             __pyx_t_19 = 0;
 
-                            /* "drone_env/drone_cython.pyx":360
+                            /* "drone_env/drone_cython.pyx":356
  *                 &masses[0], &drag_coeffs[0], &thrust_coeffs[0],
  *                 &target_vx[0], &target_vy[0], &target_vz[0], &target_yaw_rate[0],
  *                 &pos_history[0],             # <<<<<<<<<<<<<<
@@ -21265,7 +21270,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
 */
                             __pyx_t_20 = 0;
 
-                            /* "drone_env/drone_cython.pyx":361
+                            /* "drone_env/drone_cython.pyx":357
  *                 &target_vx[0], &target_vy[0], &target_vz[0], &target_yaw_rate[0],
  *                 &pos_history[0],
  *                 &observations[0,0],             # <<<<<<<<<<<<<<
@@ -21275,7 +21280,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
                             __pyx_t_21 = 0;
                             __pyx_t_22 = 0;
 
-                            /* "drone_env/drone_cython.pyx":362
+                            /* "drone_env/drone_cython.pyx":358
  *                 &pos_history[0],
  *                 &observations[0,0],
  *                 &rewards[0],             # <<<<<<<<<<<<<<
@@ -21284,7 +21289,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
 */
                             __pyx_t_23 = 0;
 
-                            /* "drone_env/drone_cython.pyx":363
+                            /* "drone_env/drone_cython.pyx":359
  *                 &observations[0,0],
  *                 &rewards[0],
  *                 &done_flags[0],             # <<<<<<<<<<<<<<
@@ -21293,7 +21298,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
 */
                             __pyx_t_24 = 0;
 
-                            /* "drone_env/drone_cython.pyx":364
+                            /* "drone_env/drone_cython.pyx":360
  *                 &rewards[0],
  *                 &done_flags[0],
  *                 &actions[0],             # <<<<<<<<<<<<<<
@@ -21302,7 +21307,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
 */
                             __pyx_t_25 = 0;
 
-                            /* "drone_env/drone_cython.pyx":353
+                            /* "drone_env/drone_cython.pyx":349
  *         # AVX Loop (stride 8)
  *         for i in prange(0, limit_avx, 8):
  *             step_agents_avx2(             # <<<<<<<<<<<<<<
@@ -21322,7 +21327,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
             #define unlikely(x) __builtin_expect(!!(x), 0)
         #endif
 
-        /* "drone_env/drone_cython.pyx":371
+        /* "drone_env/drone_cython.pyx":367
  *
  *         # Scalar Loop for remainder
  *         for i in range(limit_avx, num_agents):             # <<<<<<<<<<<<<<
@@ -21334,7 +21339,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
         for (__pyx_t_27 = __pyx_v_limit_avx; __pyx_t_27 < __pyx_t_26; __pyx_t_27+=1) {
           __pyx_v_i = __pyx_t_27;
 
-          /* "drone_env/drone_cython.pyx":372
+          /* "drone_env/drone_cython.pyx":368
  *         # Scalar Loop for remainder
  *         for i in range(limit_avx, num_agents):
  *             _step_agent_scalar(             # <<<<<<<<<<<<<<
@@ -21345,7 +21350,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
         }
       }
 
-      /* "drone_env/drone_cython.pyx":350
+      /* "drone_env/drone_cython.pyx":346
  *     cdef int limit_avx = (num_agents // 8) * 8
  *
  *     with nogil:             # <<<<<<<<<<<<<<
@@ -21362,7 +21367,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
       }
   }
 
-  /* "drone_env/drone_cython.pyx":327
+  /* "drone_env/drone_cython.pyx":323
  *     yaw[i] = 0.0
  *
  * def step_cython(             # <<<<<<<<<<<<<<
@@ -21377,7 +21382,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_step_cython(CYTHON_UNUSED Py
   return __pyx_r;
 }
 
-/* "drone_env/drone_cython.pyx":388
+/* "drone_env/drone_cython.pyx":384
  *             )
  *
  * def reset_cython(             # <<<<<<<<<<<<<<
@@ -21445,179 +21450,179 @@ PyObject *__pyx_args, PyObject *__pyx_kwds
   {
     PyObject ** const __pyx_pyargnames[] = {&__pyx_mstate_global->__pyx_n_u_pos_x,&__pyx_mstate_global->__pyx_n_u_pos_y,&__pyx_mstate_global->__pyx_n_u_pos_z,&__pyx_mstate_global->__pyx_n_u_vel_x,&__pyx_mstate_global->__pyx_n_u_vel_y,&__pyx_mstate_global->__pyx_n_u_vel_z,&__pyx_mstate_global->__pyx_n_u_roll,&__pyx_mstate_global->__pyx_n_u_pitch,&__pyx_mstate_global->__pyx_n_u_yaw,&__pyx_mstate_global->__pyx_n_u_masses,&__pyx_mstate_global->__pyx_n_u_drag_coeffs,&__pyx_mstate_global->__pyx_n_u_thrust_coeffs,&__pyx_mstate_global->__pyx_n_u_target_vx,&__pyx_mstate_global->__pyx_n_u_target_vy,&__pyx_mstate_global->__pyx_n_u_target_vz,&__pyx_mstate_global->__pyx_n_u_target_yaw_rate,&__pyx_mstate_global->__pyx_n_u_pos_history,&__pyx_mstate_global->__pyx_n_u_observations,&__pyx_mstate_global->__pyx_n_u_rng_states,&__pyx_mstate_global->__pyx_n_u_step_counts,&__pyx_mstate_global->__pyx_n_u_num_agents,&__pyx_mstate_global->__pyx_n_u_reset_indices,0};
     const Py_ssize_t __pyx_kwds_len = (__pyx_kwds) ? __Pyx_NumKwargs_FASTCALL(__pyx_kwds) : 0;
-    if (unlikely(__pyx_kwds_len) < 0) __PYX_ERR(0, 388, __pyx_L3_error)
+    if (unlikely(__pyx_kwds_len) < 0) __PYX_ERR(0, 384, __pyx_L3_error)
     if (__pyx_kwds_len > 0) {
       switch (__pyx_nargs) {
         case 22:
         values[21] = __Pyx_ArgRef_FASTCALL(__pyx_args, 21);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[21])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[21])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 21:
         values[20] = __Pyx_ArgRef_FASTCALL(__pyx_args, 20);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[20])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[20])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 20:
         values[19] = __Pyx_ArgRef_FASTCALL(__pyx_args, 19);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[19])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[19])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 19:
         values[18] = __Pyx_ArgRef_FASTCALL(__pyx_args, 18);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[18])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[18])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 18:
         values[17] = __Pyx_ArgRef_FASTCALL(__pyx_args, 17);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[17])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[17])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 17:
         values[16] = __Pyx_ArgRef_FASTCALL(__pyx_args, 16);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[16])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[16])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 16:
         values[15] = __Pyx_ArgRef_FASTCALL(__pyx_args, 15);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[15])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[15])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 15:
         values[14] = __Pyx_ArgRef_FASTCALL(__pyx_args, 14);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[14])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[14])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 14:
         values[13] = __Pyx_ArgRef_FASTCALL(__pyx_args, 13);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[13])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[13])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 13:
         values[12] = __Pyx_ArgRef_FASTCALL(__pyx_args, 12);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[12])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[12])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 12:
         values[11] = __Pyx_ArgRef_FASTCALL(__pyx_args, 11);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[11])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[11])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 11:
         values[10] = __Pyx_ArgRef_FASTCALL(__pyx_args, 10);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[10])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[10])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case 10:
         values[9] = __Pyx_ArgRef_FASTCALL(__pyx_args, 9);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[9])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[9])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  9:
         values[8] = __Pyx_ArgRef_FASTCALL(__pyx_args, 8);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[8])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[8])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  8:
         values[7] = __Pyx_ArgRef_FASTCALL(__pyx_args, 7);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[7])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[7])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  7:
         values[6] = __Pyx_ArgRef_FASTCALL(__pyx_args, 6);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[6])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[6])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  6:
         values[5] = __Pyx_ArgRef_FASTCALL(__pyx_args, 5);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[5])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[5])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  5:
         values[4] = __Pyx_ArgRef_FASTCALL(__pyx_args, 4);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[4])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[4])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  4:
         values[3] = __Pyx_ArgRef_FASTCALL(__pyx_args, 3);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[3])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[3])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  3:
         values[2] = __Pyx_ArgRef_FASTCALL(__pyx_args, 2);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[2])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[2])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  2:
         values[1] = __Pyx_ArgRef_FASTCALL(__pyx_args, 1);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[1])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[1])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  1:
         values[0] = __Pyx_ArgRef_FASTCALL(__pyx_args, 0);
-        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[0])) __PYX_ERR(0, 388, __pyx_L3_error)
+        if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[0])) __PYX_ERR(0, 384, __pyx_L3_error)
         CYTHON_FALLTHROUGH;
         case  0: break;
         default: goto __pyx_L5_argtuple_error;
       }
       const Py_ssize_t kwd_pos_args = __pyx_nargs;
-      if (__Pyx_ParseKeywords(__pyx_kwds, __pyx_kwvalues, __pyx_pyargnames, 0, values, kwd_pos_args, __pyx_kwds_len, "reset_cython", 0) < (0)) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (__Pyx_ParseKeywords(__pyx_kwds, __pyx_kwvalues, __pyx_pyargnames, 0, values, kwd_pos_args, __pyx_kwds_len, "reset_cython", 0) < (0)) __PYX_ERR(0, 384, __pyx_L3_error)
       for (Py_ssize_t i = __pyx_nargs; i < 22; i++) {
-        if (unlikely(!values[i])) { __Pyx_RaiseArgtupleInvalid("reset_cython", 1, 22, 22, i); __PYX_ERR(0, 388, __pyx_L3_error) }
+        if (unlikely(!values[i])) { __Pyx_RaiseArgtupleInvalid("reset_cython", 1, 22, 22, i); __PYX_ERR(0, 384, __pyx_L3_error) }
       }
     } else if (unlikely(__pyx_nargs != 22)) {
       goto __pyx_L5_argtuple_error;
     } else {
       values[0] = __Pyx_ArgRef_FASTCALL(__pyx_args, 0);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[0])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[0])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[1] = __Pyx_ArgRef_FASTCALL(__pyx_args, 1);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[1])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[1])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[2] = __Pyx_ArgRef_FASTCALL(__pyx_args, 2);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[2])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[2])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[3] = __Pyx_ArgRef_FASTCALL(__pyx_args, 3);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[3])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[3])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[4] = __Pyx_ArgRef_FASTCALL(__pyx_args, 4);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[4])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[4])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[5] = __Pyx_ArgRef_FASTCALL(__pyx_args, 5);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[5])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[5])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[6] = __Pyx_ArgRef_FASTCALL(__pyx_args, 6);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[6])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[6])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[7] = __Pyx_ArgRef_FASTCALL(__pyx_args, 7);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[7])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[7])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[8] = __Pyx_ArgRef_FASTCALL(__pyx_args, 8);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[8])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[8])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[9] = __Pyx_ArgRef_FASTCALL(__pyx_args, 9);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[9])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[9])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[10] = __Pyx_ArgRef_FASTCALL(__pyx_args, 10);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[10])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[10])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[11] = __Pyx_ArgRef_FASTCALL(__pyx_args, 11);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[11])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[11])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[12] = __Pyx_ArgRef_FASTCALL(__pyx_args, 12);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[12])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[12])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[13] = __Pyx_ArgRef_FASTCALL(__pyx_args, 13);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[13])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[13])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[14] = __Pyx_ArgRef_FASTCALL(__pyx_args, 14);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[14])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[14])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[15] = __Pyx_ArgRef_FASTCALL(__pyx_args, 15);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[15])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[15])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[16] = __Pyx_ArgRef_FASTCALL(__pyx_args, 16);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[16])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[16])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[17] = __Pyx_ArgRef_FASTCALL(__pyx_args, 17);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[17])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[17])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[18] = __Pyx_ArgRef_FASTCALL(__pyx_args, 18);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[18])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[18])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[19] = __Pyx_ArgRef_FASTCALL(__pyx_args, 19);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[19])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[19])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[20] = __Pyx_ArgRef_FASTCALL(__pyx_args, 20);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[20])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[20])) __PYX_ERR(0, 384, __pyx_L3_error)
       values[21] = __Pyx_ArgRef_FASTCALL(__pyx_args, 21);
-      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[21])) __PYX_ERR(0, 388, __pyx_L3_error)
+      if (!CYTHON_ASSUME_SAFE_MACROS && unlikely(!values[21])) __PYX_ERR(0, 384, __pyx_L3_error)
     }
-    __pyx_v_pos_x = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[0], PyBUF_WRITABLE); if (unlikely(!__pyx_v_pos_x.memview)) __PYX_ERR(0, 389, __pyx_L3_error)
-    __pyx_v_pos_y = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[1], PyBUF_WRITABLE); if (unlikely(!__pyx_v_pos_y.memview)) __PYX_ERR(0, 389, __pyx_L3_error)
-    __pyx_v_pos_z = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[2], PyBUF_WRITABLE); if (unlikely(!__pyx_v_pos_z.memview)) __PYX_ERR(0, 389, __pyx_L3_error)
-    __pyx_v_vel_x = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[3], PyBUF_WRITABLE); if (unlikely(!__pyx_v_vel_x.memview)) __PYX_ERR(0, 390, __pyx_L3_error)
-    __pyx_v_vel_y = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[4], PyBUF_WRITABLE); if (unlikely(!__pyx_v_vel_y.memview)) __PYX_ERR(0, 390, __pyx_L3_error)
-    __pyx_v_vel_z = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[5], PyBUF_WRITABLE); if (unlikely(!__pyx_v_vel_z.memview)) __PYX_ERR(0, 390, __pyx_L3_error)
-    __pyx_v_roll = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[6], PyBUF_WRITABLE); if (unlikely(!__pyx_v_roll.memview)) __PYX_ERR(0, 391, __pyx_L3_error)
-    __pyx_v_pitch = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[7], PyBUF_WRITABLE); if (unlikely(!__pyx_v_pitch.memview)) __PYX_ERR(0, 391, __pyx_L3_error)
-    __pyx_v_yaw = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[8], PyBUF_WRITABLE); if (unlikely(!__pyx_v_yaw.memview)) __PYX_ERR(0, 391, __pyx_L3_error)
-    __pyx_v_masses = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[9], PyBUF_WRITABLE); if (unlikely(!__pyx_v_masses.memview)) __PYX_ERR(0, 392, __pyx_L3_error)
-    __pyx_v_drag_coeffs = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[10], PyBUF_WRITABLE); if (unlikely(!__pyx_v_drag_coeffs.memview)) __PYX_ERR(0, 392, __pyx_L3_error)
-    __pyx_v_thrust_coeffs = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[11], PyBUF_WRITABLE); if (unlikely(!__pyx_v_thrust_coeffs.memview)) __PYX_ERR(0, 392, __pyx_L3_error)
-    __pyx_v_target_vx = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[12], PyBUF_WRITABLE); if (unlikely(!__pyx_v_target_vx.memview)) __PYX_ERR(0, 393, __pyx_L3_error)
-    __pyx_v_target_vy = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[13], PyBUF_WRITABLE); if (unlikely(!__pyx_v_target_vy.memview)) __PYX_ERR(0, 393, __pyx_L3_error)
-    __pyx_v_target_vz = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[14], PyBUF_WRITABLE); if (unlikely(!__pyx_v_target_vz.memview)) __PYX_ERR(0, 393, __pyx_L3_error)
-    __pyx_v_target_yaw_rate = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[15], PyBUF_WRITABLE); if (unlikely(!__pyx_v_target_yaw_rate.memview)) __PYX_ERR(0, 393, __pyx_L3_error)
-    __pyx_v_pos_history = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[16], PyBUF_WRITABLE); if (unlikely(!__pyx_v_pos_history.memview)) __PYX_ERR(0, 394, __pyx_L3_error)
-    __pyx_v_observations = __Pyx_PyObject_to_MemoryviewSlice_dsds_float(values[17], PyBUF_WRITABLE); if (unlikely(!__pyx_v_observations.memview)) __PYX_ERR(0, 395, __pyx_L3_error)
-    __pyx_v_rng_states = __Pyx_PyObject_to_MemoryviewSlice_ds_int(values[18], PyBUF_WRITABLE); if (unlikely(!__pyx_v_rng_states.memview)) __PYX_ERR(0, 396, __pyx_L3_error)
-    __pyx_v_step_counts = __Pyx_PyObject_to_MemoryviewSlice_ds_int(values[19], PyBUF_WRITABLE); if (unlikely(!__pyx_v_step_counts.memview)) __PYX_ERR(0, 397, __pyx_L3_error)
-    __pyx_v_num_agents = __Pyx_PyLong_As_int(values[20]); if (unlikely((__pyx_v_num_agents == (int)-1) && PyErr_Occurred())) __PYX_ERR(0, 398, __pyx_L3_error)
-    __pyx_v_reset_indices = __Pyx_PyObject_to_MemoryviewSlice_ds_int(values[21], PyBUF_WRITABLE); if (unlikely(!__pyx_v_reset_indices.memview)) __PYX_ERR(0, 399, __pyx_L3_error)
+    __pyx_v_pos_x = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[0], PyBUF_WRITABLE); if (unlikely(!__pyx_v_pos_x.memview)) __PYX_ERR(0, 385, __pyx_L3_error)
+    __pyx_v_pos_y = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[1], PyBUF_WRITABLE); if (unlikely(!__pyx_v_pos_y.memview)) __PYX_ERR(0, 385, __pyx_L3_error)
+    __pyx_v_pos_z = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[2], PyBUF_WRITABLE); if (unlikely(!__pyx_v_pos_z.memview)) __PYX_ERR(0, 385, __pyx_L3_error)
+    __pyx_v_vel_x = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[3], PyBUF_WRITABLE); if (unlikely(!__pyx_v_vel_x.memview)) __PYX_ERR(0, 386, __pyx_L3_error)
+    __pyx_v_vel_y = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[4], PyBUF_WRITABLE); if (unlikely(!__pyx_v_vel_y.memview)) __PYX_ERR(0, 386, __pyx_L3_error)
+    __pyx_v_vel_z = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[5], PyBUF_WRITABLE); if (unlikely(!__pyx_v_vel_z.memview)) __PYX_ERR(0, 386, __pyx_L3_error)
+    __pyx_v_roll = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[6], PyBUF_WRITABLE); if (unlikely(!__pyx_v_roll.memview)) __PYX_ERR(0, 387, __pyx_L3_error)
+    __pyx_v_pitch = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[7], PyBUF_WRITABLE); if (unlikely(!__pyx_v_pitch.memview)) __PYX_ERR(0, 387, __pyx_L3_error)
+    __pyx_v_yaw = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[8], PyBUF_WRITABLE); if (unlikely(!__pyx_v_yaw.memview)) __PYX_ERR(0, 387, __pyx_L3_error)
+    __pyx_v_masses = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[9], PyBUF_WRITABLE); if (unlikely(!__pyx_v_masses.memview)) __PYX_ERR(0, 388, __pyx_L3_error)
+    __pyx_v_drag_coeffs = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[10], PyBUF_WRITABLE); if (unlikely(!__pyx_v_drag_coeffs.memview)) __PYX_ERR(0, 388, __pyx_L3_error)
+    __pyx_v_thrust_coeffs = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[11], PyBUF_WRITABLE); if (unlikely(!__pyx_v_thrust_coeffs.memview)) __PYX_ERR(0, 388, __pyx_L3_error)
+    __pyx_v_target_vx = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[12], PyBUF_WRITABLE); if (unlikely(!__pyx_v_target_vx.memview)) __PYX_ERR(0, 389, __pyx_L3_error)
+    __pyx_v_target_vy = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[13], PyBUF_WRITABLE); if (unlikely(!__pyx_v_target_vy.memview)) __PYX_ERR(0, 389, __pyx_L3_error)
+    __pyx_v_target_vz = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[14], PyBUF_WRITABLE); if (unlikely(!__pyx_v_target_vz.memview)) __PYX_ERR(0, 389, __pyx_L3_error)
+    __pyx_v_target_yaw_rate = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[15], PyBUF_WRITABLE); if (unlikely(!__pyx_v_target_yaw_rate.memview)) __PYX_ERR(0, 389, __pyx_L3_error)
+    __pyx_v_pos_history = __Pyx_PyObject_to_MemoryviewSlice_ds_float(values[16], PyBUF_WRITABLE); if (unlikely(!__pyx_v_pos_history.memview)) __PYX_ERR(0, 390, __pyx_L3_error)
+    __pyx_v_observations = __Pyx_PyObject_to_MemoryviewSlice_dsds_float(values[17], PyBUF_WRITABLE); if (unlikely(!__pyx_v_observations.memview)) __PYX_ERR(0, 391, __pyx_L3_error)
+    __pyx_v_rng_states = __Pyx_PyObject_to_MemoryviewSlice_ds_int(values[18], PyBUF_WRITABLE); if (unlikely(!__pyx_v_rng_states.memview)) __PYX_ERR(0, 392, __pyx_L3_error)
+    __pyx_v_step_counts = __Pyx_PyObject_to_MemoryviewSlice_ds_int(values[19], PyBUF_WRITABLE); if (unlikely(!__pyx_v_step_counts.memview)) __PYX_ERR(0, 393, __pyx_L3_error)
+    __pyx_v_num_agents = __Pyx_PyLong_As_int(values[20]); if (unlikely((__pyx_v_num_agents == (int)-1) && PyErr_Occurred())) __PYX_ERR(0, 394, __pyx_L3_error)
+    __pyx_v_reset_indices = __Pyx_PyObject_to_MemoryviewSlice_ds_int(values[21], PyBUF_WRITABLE); if (unlikely(!__pyx_v_reset_indices.memview)) __PYX_ERR(0, 395, __pyx_L3_error)
   }
   goto __pyx_L6_skip;
   __pyx_L5_argtuple_error:;
-  __Pyx_RaiseArgtupleInvalid("reset_cython", 1, 22, 22, __pyx_nargs); __PYX_ERR(0, 388, __pyx_L3_error)
+  __Pyx_RaiseArgtupleInvalid("reset_cython", 1, 22, 22, __pyx_nargs); __PYX_ERR(0, 384, __pyx_L3_error)
   __pyx_L6_skip:;
   goto __pyx_L4_argument_unpacking_done;
   __pyx_L3_error:;
@@ -21691,7 +21696,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_2reset_cython(CYTHON_UNUSED 
   Py_ssize_t __pyx_t_5;
   __Pyx_RefNannySetupContext("reset_cython", 0);
 
-  /* "drone_env/drone_cython.pyx":405
+  /* "drone_env/drone_cython.pyx":401
  *     # We use scalar loop for reset since it's just randoms, and AVX rand is complex.
  *     # But we parallelize.
  *     with nogil:             # <<<<<<<<<<<<<<
@@ -21704,7 +21709,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_2reset_cython(CYTHON_UNUSED 
       __Pyx_FastGIL_Remember();
       /*try:*/ {
 
-        /* "drone_env/drone_cython.pyx":406
+        /* "drone_env/drone_cython.pyx":402
  *     # But we parallelize.
  *     with nogil:
  *         for i in prange(num_agents):             # <<<<<<<<<<<<<<
@@ -21733,7 +21738,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_2reset_cython(CYTHON_UNUSED 
                         {
                             __pyx_v_i = (int)(0 + 1 * __pyx_t_2);
 
-                            /* "drone_env/drone_cython.pyx":407
+                            /* "drone_env/drone_cython.pyx":403
  *     with nogil:
  *         for i in prange(num_agents):
  *             _reset_agent_scalar(             # <<<<<<<<<<<<<<
@@ -21754,7 +21759,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_2reset_cython(CYTHON_UNUSED 
         #endif
       }
 
-      /* "drone_env/drone_cython.pyx":405
+      /* "drone_env/drone_cython.pyx":401
  *     # We use scalar loop for reset since it's just randoms, and AVX rand is complex.
  *     # But we parallelize.
  *     with nogil:             # <<<<<<<<<<<<<<
@@ -21771,7 +21776,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_2reset_cython(CYTHON_UNUSED 
       }
   }
 
-  /* "drone_env/drone_cython.pyx":418
+  /* "drone_env/drone_cython.pyx":414
  *
  *     # Reset step counts
  *     if reset_indices.shape[0] > 0:             # <<<<<<<<<<<<<<
@@ -21780,7 +21785,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_2reset_cython(CYTHON_UNUSED 
   __pyx_t_4 = ((__pyx_v_reset_indices.shape[0]) > 0);
   if (__pyx_t_4) {
 
-    /* "drone_env/drone_cython.pyx":419
+    /* "drone_env/drone_cython.pyx":415
  *     # Reset step counts
  *     if reset_indices.shape[0] > 0:
  *          step_counts[0] = 0             # <<<<<<<<<<<<<<
@@ -21788,7 +21793,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_2reset_cython(CYTHON_UNUSED 
     __pyx_t_5 = 0;
     *((int *) ( /* dim=0 */ (__pyx_v_step_counts.data + __pyx_t_5 * __pyx_v_step_counts.strides[0]) )) = 0;
 
-    /* "drone_env/drone_cython.pyx":418
+    /* "drone_env/drone_cython.pyx":414
  *
  *     # Reset step counts
  *     if reset_indices.shape[0] > 0:             # <<<<<<<<<<<<<<
@@ -21796,7 +21801,7 @@ static PyObject *__pyx_pf_9drone_env_12drone_cython_2reset_cython(CYTHON_UNUSED 
 */
   }
 
-  /* "drone_env/drone_cython.pyx":388
+  /* "drone_env/drone_cython.pyx":384
  *             )
  *
  * def reset_cython(             # <<<<<<<<<<<<<<
@@ -23816,49 +23821,49 @@ __Pyx_RefNannySetupContext("PyInit_drone_cython", 0);
   if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_np, __pyx_t_4) < (0)) __PYX_ERR(0, 9, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
 
-  /* "drone_env/drone_cython.pyx":21
+  /* "drone_env/drone_cython.pyx":17
  *
  * # Define float32 type for numpy
  * DTYPE = np.float32             # <<<<<<<<<<<<<<
  * ctypedef np.float32_t DTYPE_t
  * ctypedef np.int32_t DTYPE_INT_t
 */
-  __Pyx_GetModuleGlobalName(__pyx_t_4, __pyx_mstate_global->__pyx_n_u_np); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 21, __pyx_L1_error)
+  __Pyx_GetModuleGlobalName(__pyx_t_4, __pyx_mstate_global->__pyx_n_u_np); if (unlikely(!__pyx_t_4)) __PYX_ERR(0, 17, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_4);
-  __pyx_t_5 = __Pyx_PyObject_GetAttrStr(__pyx_t_4, __pyx_mstate_global->__pyx_n_u_float32); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 21, __pyx_L1_error)
+  __pyx_t_5 = __Pyx_PyObject_GetAttrStr(__pyx_t_4, __pyx_mstate_global->__pyx_n_u_float32); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 17, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_5);
   __Pyx_DECREF(__pyx_t_4); __pyx_t_4 = 0;
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_DTYPE, __pyx_t_5) < (0)) __PYX_ERR(0, 21, __pyx_L1_error)
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_DTYPE, __pyx_t_5) < (0)) __PYX_ERR(0, 17, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
 
-  /* "drone_env/drone_cython.pyx":327
+  /* "drone_env/drone_cython.pyx":323
  *     yaw[i] = 0.0
  *
  * def step_cython(             # <<<<<<<<<<<<<<
  *     float[:] pos_x, float[:] pos_y, float[:] pos_z,
  *     float[:] vel_x, float[:] vel_y, float[:] vel_z,
 */
-  __pyx_t_5 = __Pyx_CyFunction_New(&__pyx_mdef_9drone_env_12drone_cython_1step_cython, 0, __pyx_mstate_global->__pyx_n_u_step_cython, NULL, __pyx_mstate_global->__pyx_n_u_drone_env_drone_cython, __pyx_mstate_global->__pyx_d, ((PyObject *)__pyx_mstate_global->__pyx_codeobj_tab[0])); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 327, __pyx_L1_error)
+  __pyx_t_5 = __Pyx_CyFunction_New(&__pyx_mdef_9drone_env_12drone_cython_1step_cython, 0, __pyx_mstate_global->__pyx_n_u_step_cython, NULL, __pyx_mstate_global->__pyx_n_u_drone_env_drone_cython, __pyx_mstate_global->__pyx_d, ((PyObject *)__pyx_mstate_global->__pyx_codeobj_tab[0])); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 323, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_5);
   #if CYTHON_COMPILING_IN_CPYTHON && PY_VERSION_HEX >= 0x030E0000
   PyUnstable_Object_EnableDeferredRefcount(__pyx_t_5);
   #endif
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_step_cython, __pyx_t_5) < (0)) __PYX_ERR(0, 327, __pyx_L1_error)
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_step_cython, __pyx_t_5) < (0)) __PYX_ERR(0, 323, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
 
-  /* "drone_env/drone_cython.pyx":388
+  /* "drone_env/drone_cython.pyx":384
  *             )
  *
  * def reset_cython(             # <<<<<<<<<<<<<<
  *     float[:] pos_x, float[:] pos_y, float[:] pos_z,
  *     float[:] vel_x, float[:] vel_y, float[:] vel_z,
 */
-  __pyx_t_5 = __Pyx_CyFunction_New(&__pyx_mdef_9drone_env_12drone_cython_3reset_cython, 0, __pyx_mstate_global->__pyx_n_u_reset_cython, NULL, __pyx_mstate_global->__pyx_n_u_drone_env_drone_cython, __pyx_mstate_global->__pyx_d, ((PyObject *)__pyx_mstate_global->__pyx_codeobj_tab[1])); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 388, __pyx_L1_error)
+  __pyx_t_5 = __Pyx_CyFunction_New(&__pyx_mdef_9drone_env_12drone_cython_3reset_cython, 0, __pyx_mstate_global->__pyx_n_u_reset_cython, NULL, __pyx_mstate_global->__pyx_n_u_drone_env_drone_cython, __pyx_mstate_global->__pyx_d, ((PyObject *)__pyx_mstate_global->__pyx_codeobj_tab[1])); if (unlikely(!__pyx_t_5)) __PYX_ERR(0, 384, __pyx_L1_error)
   __Pyx_GOTREF(__pyx_t_5);
   #if CYTHON_COMPILING_IN_CPYTHON && PY_VERSION_HEX >= 0x030E0000
   PyUnstable_Object_EnableDeferredRefcount(__pyx_t_5);
   #endif
-  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_reset_cython, __pyx_t_5) < (0)) __PYX_ERR(0, 388, __pyx_L1_error)
+  if (PyDict_SetItem(__pyx_mstate_global->__pyx_d, __pyx_mstate_global->__pyx_n_u_reset_cython, __pyx_t_5) < (0)) __PYX_ERR(0, 384, __pyx_L1_error)
   __Pyx_DECREF(__pyx_t_5); __pyx_t_5 = 0;
 
   /* "drone_env/drone_cython.pyx":1
@@ -24114,12 +24119,12 @@ static int __Pyx_CreateCodeObjects(__pyx_mstatetype *__pyx_mstate) {
   PyObject* tuple_dedup_map = PyDict_New();
   if (unlikely(!tuple_dedup_map)) return -1;
   {
-    const __Pyx_PyCode_New_function_description descr = {25, 0, 0, 28, (unsigned int)(CO_OPTIMIZED|CO_NEWLOCALS), 327};
+    const __Pyx_PyCode_New_function_description descr = {25, 0, 0, 28, (unsigned int)(CO_OPTIMIZED|CO_NEWLOCALS), 323};
     PyObject* const varnames[] = {__pyx_mstate->__pyx_n_u_pos_x, __pyx_mstate->__pyx_n_u_pos_y, __pyx_mstate->__pyx_n_u_pos_z, __pyx_mstate->__pyx_n_u_vel_x, __pyx_mstate->__pyx_n_u_vel_y, __pyx_mstate->__pyx_n_u_vel_z, __pyx_mstate->__pyx_n_u_roll, __pyx_mstate->__pyx_n_u_pitch, __pyx_mstate->__pyx_n_u_yaw, __pyx_mstate->__pyx_n_u_masses, __pyx_mstate->__pyx_n_u_drag_coeffs, __pyx_mstate->__pyx_n_u_thrust_coeffs, __pyx_mstate->__pyx_n_u_target_vx, __pyx_mstate->__pyx_n_u_target_vy, __pyx_mstate->__pyx_n_u_target_vz, __pyx_mstate->__pyx_n_u_target_yaw_rate, __pyx_mstate->__pyx_n_u_pos_history, __pyx_mstate->__pyx_n_u_observations, __pyx_mstate->__pyx_n_u_rewards, __pyx_mstate->__pyx_n_u_done_flags, __pyx_mstate->__pyx_n_u_step_counts, __pyx_mstate->__pyx_n_u_actions, __pyx_mstate->__pyx_n_u_num_agents, __pyx_mstate->__pyx_n_u_episode_length, __pyx_mstate->__pyx_n_u_env_ids, __pyx_mstate->__pyx_n_u_i, __pyx_mstate->__pyx_n_u_t, __pyx_mstate->__pyx_n_u_limit_avx};
     __pyx_mstate_global->__pyx_codeobj_tab[0] = __Pyx_PyCode_New(descr, varnames, __pyx_mstate->__pyx_kp_u_drone_env_drone_cython_pyx, __pyx_mstate->__pyx_n_u_step_cython, __pyx_mstate->__pyx_kp_b_iso88591_q_a_AQ_S_2Q_q_a_A_at1E_auAQ_at1, tuple_dedup_map); if (unlikely(!__pyx_mstate_global->__pyx_codeobj_tab[0])) goto bad;
   }
   {
-    const __Pyx_PyCode_New_function_description descr = {22, 0, 0, 23, (unsigned int)(CO_OPTIMIZED|CO_NEWLOCALS), 388};
+    const __Pyx_PyCode_New_function_description descr = {22, 0, 0, 23, (unsigned int)(CO_OPTIMIZED|CO_NEWLOCALS), 384};
     PyObject* const varnames[] = {__pyx_mstate->__pyx_n_u_pos_x, __pyx_mstate->__pyx_n_u_pos_y, __pyx_mstate->__pyx_n_u_pos_z, __pyx_mstate->__pyx_n_u_vel_x, __pyx_mstate->__pyx_n_u_vel_y, __pyx_mstate->__pyx_n_u_vel_z, __pyx_mstate->__pyx_n_u_roll, __pyx_mstate->__pyx_n_u_pitch, __pyx_mstate->__pyx_n_u_yaw, __pyx_mstate->__pyx_n_u_masses, __pyx_mstate->__pyx_n_u_drag_coeffs, __pyx_mstate->__pyx_n_u_thrust_coeffs, __pyx_mstate->__pyx_n_u_target_vx, __pyx_mstate->__pyx_n_u_target_vy, __pyx_mstate->__pyx_n_u_target_vz, __pyx_mstate->__pyx_n_u_target_yaw_rate, __pyx_mstate->__pyx_n_u_pos_history, __pyx_mstate->__pyx_n_u_observations, __pyx_mstate->__pyx_n_u_rng_states, __pyx_mstate->__pyx_n_u_step_counts, __pyx_mstate->__pyx_n_u_num_agents, __pyx_mstate->__pyx_n_u_reset_indices, __pyx_mstate->__pyx_n_u_i};
     __pyx_mstate_global->__pyx_codeobj_tab[1] = __Pyx_PyCode_New(descr, varnames, __pyx_mstate->__pyx_kp_u_drone_env_drone_cython_pyx, __pyx_mstate->__pyx_n_u_reset_cython, __pyx_mstate->__pyx_kp_b_iso88591_q_q_wa_wa_gQ_Q_k_F_3b_AU, tuple_dedup_map); if (unlikely(!__pyx_mstate_global->__pyx_codeobj_tab[1])) goto bad;
   }
