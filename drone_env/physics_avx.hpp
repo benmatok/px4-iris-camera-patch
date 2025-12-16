@@ -92,9 +92,10 @@ inline void step_agents_avx2(
         __m256 thrust_force = _mm256_mul_ps(thrust_cmd, max_thrust);
 
         // Trig
-        __m256 sr = sin256_ps(r); __m256 cr = cos256_ps(r);
-        __m256 sp = sin256_ps(p); __m256 cp = cos256_ps(p);
-        __m256 sy = sin256_ps(y); __m256 cy = cos256_ps(y);
+        __m256 sr, cr, sp, cp, sy, cy;
+        sincos256_ps(r, &sr, &cr);
+        sincos256_ps(p, &sp, &cp);
+        sincos256_ps(y, &sy, &cy);
 
         // R Matrix Components
         // cx*cy, etc.
@@ -284,9 +285,10 @@ inline void step_agents_avx2(
     // Reward math
     // Recompute R matrix sines/cosines (already have them in r, p, y vars, need to re-sin/cos? Yes if modified.)
     // r, p, y were modified in loop.
-    __m256 sr = sin256_ps(r); __m256 cr = cos256_ps(r);
-    __m256 sp = sin256_ps(p); __m256 cp = cos256_ps(p);
-    __m256 sy = sin256_ps(y); __m256 cy = cos256_ps(y);
+    __m256 sr, cr, sp, cp, sy, cy;
+    sincos256_ps(r, &sr, &cr);
+    sincos256_ps(p, &sp, &cp);
+    sincos256_ps(y, &sy, &cy);
 
     // Body Velocity
     // vx_b = r11*vx + ...
