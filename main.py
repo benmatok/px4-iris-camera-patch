@@ -1,6 +1,3 @@
-import rclpy
-from rclpy.node import Node
-from sensor_msgs.msg import Image
 import cv2
 import numpy as np
 import threading
@@ -9,11 +6,45 @@ import time
 import copy
 import asyncio
 import os
+import argparse
 from datetime import datetime
-from cv_bridge import CvBridge, CvBridgeError
-from pydualsense import *
-from mavsdk import System
-from mavsdk.offboard import OffboardError, VelocityBodyYawspeed, Attitude, AttitudeRate
+
+# Optional Dependencies
+try:
+    import rclpy
+    from rclpy.node import Node
+    from sensor_msgs.msg import Image
+    from cv_bridge import CvBridge, CvBridgeError
+    HAS_ROS = True
+except ImportError:
+    HAS_ROS = False
+    print("ROS 2 (rclpy) not found. Will use MockImageViewer if needed.")
+    # Define dummy classes to prevent NameError in class definitions
+    class Node: pass
+    class Image: pass
+
+try:
+    from pydualsense import pydualsense
+    HAS_DUALSENSE = True
+except ImportError:
+    HAS_DUALSENSE = False
+    print("pydualsense not found. Will use MockDualSense.")
+
+try:
+    from mavsdk import System
+    from mavsdk.offboard import OffboardError, VelocityBodyYawspeed, Attitude, AttitudeRate
+    HAS_MAVSDK = True
+except ImportError:
+    HAS_MAVSDK = False
+    print("mavsdk not found. Will use MockDrone.")
+    # Dummy classes for MAVSDK types
+    class VelocityBodyYawspeed:
+        def __init__(self, *args): pass
+    class Attitude:
+        def __init__(self, *args): pass
+    class AttitudeRate:
+        def __init__(self, *args): pass
+    class OffboardError(Exception): pass
 
 # --- Helper Functions ---
 
@@ -133,7 +164,14 @@ def warp_bbox(H, last_bbox):
     return new_bbox, True
 
 def megatrack():
-    return cv2.TrackerCSRT_create()
+    if hasattr(cv2, 'TrackerCSRT_create'):
+        return cv2.TrackerCSRT_create()
+    else:
+        # Fallback or Mock tracker if contrib not available
+        class MockTracker:
+            def init(self, image, bbox): return True
+            def update(self, image): return True, (100, 100, 50, 50)
+        return MockTracker()
 
 def calc_pursuit_velocities(pursuit_state, drone_state, bbox_center, frame_width, frame_height):
     if bbox_center is None:
@@ -245,7 +283,7 @@ class DualSenseConfig:
 
 class DroneState:
     def __init__(self):
-        self.drone = System()
+        self.drone = System() if HAS_MAVSDK else MockDrone()
         self.is_armed = False
         self.is_offboard = False
         self.stable_thrust = 0.25
@@ -393,6 +431,150 @@ class AngleMode(ControlMode):
         )
         return 'attitude', (roll_target, pitch_target, yaw_target, thrust)
 
+# --- Mock Classes ---
+
+class MockImageViewer:
+    def __init__(self, data_queue):
+        self.data_queue = data_queue
+        self.running = True
+        self.thread = threading.Thread(target=self.generate_images, daemon=True)
+        self.thread.start()
+
+    def generate_images(self):
+        print("Starting Mock Image Generation")
+        while self.running:
+            # Create a noisy image
+            img = np.random.randint(0, 255, (800, 1280), dtype=np.uint8)
+            # Add a white square to simulate a target for tracking
+            cv2.rectangle(img, (600, 350), (680, 450), 255, -1)
+
+            # Create a mock ROS message structure if possible, or just pass the raw CV2 image
+            # The receiver expects a ROS Image msg.
+            # We will use a simple struct-like object.
+            class MockHeader:
+                def __init__(self):
+                    now = time.time()
+                    self.sec = int(now)
+                    self.nanosec = int((now - self.sec) * 1e9)
+                    self.stamp = self
+
+            class MockImageMsg:
+                def __init__(self, cv_img):
+                    self.header = MockHeader()
+                    self.height = cv_img.shape[0]
+                    self.width = cv_img.shape[1]
+                    self.encoding = 'mono8'
+                    self.data = cv_img # Simulating that bridge will handle this
+                    self.cv_img_payload = cv_img # Backdoor for mock bridge
+
+            msg = MockImageMsg(img)
+            ts = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e9
+            self.data_queue.put((ts, 'IMAGE', msg))
+
+            time.sleep(1/30.0) # 30 FPS
+
+    def destroy_node(self):
+        self.running = False
+
+    def get_logger(self):
+        class MockLogger:
+            def info(self, msg): print(f"[INFO] {msg}")
+            def error(self, msg): print(f"[ERROR] {msg}")
+        return MockLogger()
+
+class MockDualSense:
+    class MockState:
+        def __init__(self):
+            self.LX = 0; self.LY = 0; self.RX = 0; self.RY = 0
+            self.L1 = False; self.L2Btn = False; self.R1 = False; self.R2Btn = False
+            self.square = False; self.cross = False; self.circle = False; self.triangle = False
+            self.DpadUp = False; self.DpadDown = False; self.DpadLeft = False; self.DpadRight = False
+
+    def __init__(self):
+        self.state = self.MockState()
+
+    def init(self):
+        pass
+    def close(self):
+        pass
+
+class MockDrone:
+    class MockOffboard:
+        async def set_velocity_body(self, *args): pass
+        async def set_attitude(self, *args): pass
+        async def set_attitude_rate(self, *args): pass
+        async def start(self): pass
+        async def stop(self): pass
+
+    class MockAction:
+        async def arm(self): pass
+        async def land(self): pass
+        async def disarm(self): pass
+        async def hold(self): pass
+
+    class MockTelemetry:
+        async def attitude_euler(self):
+            class Euler:
+                roll_deg=0.0
+                pitch_deg=0.0
+                yaw_deg=0.0
+            while True:
+                yield Euler()
+                await asyncio.sleep(0.1)
+
+        async def velocity_ned(self):
+            class Velocity:
+                north_m_s=0.0
+                east_m_s=0.0
+                down_m_s=0.0
+            while True:
+                yield Velocity()
+                await asyncio.sleep(0.1)
+
+        async def attitude_angular_velocity_body(self):
+            class Angular:
+                yaw_rad_s=0.0
+            while True:
+                yield Angular()
+                await asyncio.sleep(0.1)
+
+        async def actuator_output_status(self, group):
+            class Status:
+                actuator=[0.0]*4
+            while True:
+                yield Status()
+                await asyncio.sleep(0.1)
+
+    class MockCore:
+        async def connection_state(self):
+            class State:
+                is_connected = True
+            yield State()
+
+    def __init__(self):
+        self.offboard = self.MockOffboard()
+        self.action = self.MockAction()
+        self.telemetry = self.MockTelemetry()
+        self.core = self.MockCore()
+
+    async def connect(self, system_address=None):
+        pass
+
+# --- Global Class for MockSelf to ensure scope visibility ---
+
+class MockSelf:
+    def __init__(self, frame_state, drone_state, display_frame):
+        self.frame_width = display_frame.shape[1]
+        self.frame_height = display_frame.shape[0]
+        self.frame_center_x = display_frame.shape[1] // 2
+        self.frame_center_y = display_frame.shape[0] // 2
+        self.current_bbox_center = frame_state.current_bbox_center
+        self.current_velocities = (0, 0, 0, 0)
+        self.center_proximity_threshold = 0.5
+        self.landing_proximity_threshold = 0.2
+        self.current_pitch_rad = drone_state.current_pitch_rad
+        self.current_roll_rad = drone_state.current_roll_rad
+
 # --- Processing Functions ---
 
 def process_visuals(config, frame_state, button_state, video_state, cache_state, input_state, drone_state, pursuit_state, control_mode, logger):
@@ -478,7 +660,11 @@ def process_tracking_mode(frame_state, display_frame):
     if frame_state.init_tracking:
         if frame_state.tracker_instance is None:
             frame_state.tracker_instance = megatrack()
-        success = frame_state.tracker_instance.init(color_frame, tuple(frame_state.bbox))
+        if frame_state.tracker_instance is not None:
+            success = frame_state.tracker_instance.init(color_frame, tuple(frame_state.bbox))
+        else:
+            success = False
+
         frame_state.init_tracking = False
         if success:
             frame_state.last_success_frame = color_frame.copy()
@@ -501,11 +687,12 @@ def process_tracking_mode(frame_state, display_frame):
                     new_bbox, warp_success = warp_bbox(H, frame_state.last_success_bbox)
                     if warp_success:
                         frame_state.tracker_instance = megatrack()
-                        whole_process_success = frame_state.tracker_instance.init(color_frame, tuple(new_bbox))
-                        if whole_process_success:
-                            frame_state.bbox = new_bbox
-                            frame_state.last_success_frame = color_frame.copy()
-                            frame_state.last_success_bbox = new_bbox[:]
+                        if frame_state.tracker_instance is not None:
+                            whole_process_success = frame_state.tracker_instance.init(color_frame, tuple(new_bbox))
+                            if whole_process_success:
+                                frame_state.bbox = new_bbox
+                                frame_state.last_success_frame = color_frame.copy()
+                                frame_state.last_success_bbox = new_bbox[:]
             if not whole_process_success:
                 frame_state.tracking_mode = False
                 frame_state.tracker_instance = None
@@ -527,7 +714,11 @@ def process_pursuit_mode(frame_state, drone_state, pursuit_state, display_frame)
     color_frame = cv2.cvtColor(frame_state.current_frame, cv2.COLOR_GRAY2BGR)
     if frame_state.tracker_instance is None:
         frame_state.tracker_instance = megatrack()
-        success = frame_state.tracker_instance.init(color_frame, tuple(frame_state.bbox))
+        if frame_state.tracker_instance is not None:
+            success = frame_state.tracker_instance.init(color_frame, tuple(frame_state.bbox))
+        else:
+            success = False
+
         if success:
             frame_state.last_success_frame = color_frame.copy()
             frame_state.last_success_bbox = frame_state.bbox[:]
@@ -548,11 +739,12 @@ def process_pursuit_mode(frame_state, drone_state, pursuit_state, display_frame)
                     new_bbox, warp_success = warp_bbox(H, frame_state.last_success_bbox)
                     if warp_success:
                         frame_state.tracker_instance = megatrack()
-                        whole_process_success = frame_state.tracker_instance.init(color_frame, tuple(new_bbox))
-                        if whole_process_success:
-                            frame_state.bbox = new_bbox
-                            frame_state.last_success_frame = color_frame.copy()
-                            frame_state.last_success_bbox = new_bbox[:]
+                        if frame_state.tracker_instance is not None:
+                            whole_process_success = frame_state.tracker_instance.init(color_frame, tuple(new_bbox))
+                            if whole_process_success:
+                                frame_state.bbox = new_bbox
+                                frame_state.last_success_frame = color_frame.copy()
+                                frame_state.last_success_bbox = new_bbox[:]
             if not whole_process_success:
                 pursuit_state.autonomous_pursuit_active = False
                 frame_state.tracker_instance = None
@@ -575,27 +767,24 @@ def process_pursuit_mode(frame_state, drone_state, pursuit_state, display_frame)
 def handle_pursuit_alignment(pursuit_state, drone_state, frame_state, display_frame):
     if not pursuit_state.autonomous_pursuit_active or None == frame_state.current_bbox_center:
         return
-    class MockSelf:
-        frame_width = display_frame.shape[1]
-        frame_height = display_frame.shape[0]
-        frame_center_x = display_frame.shape[1] // 2
-        frame_center_y = display_frame.shape[0] // 2
-        current_bbox_center = frame_state.current_bbox_center
-        current_velocities = (0, 0, 0, 0)
-        center_proximity_threshold = 0.5
-        landing_proximity_threshold = 0.2
-        current_pitch_rad = drone_state.current_pitch_rad
-        current_roll_rad = drone_state.current_roll_rad
-    display_frame = draw_alignment_info(display_frame, pursuit_state, MockSelf())
+
+    display_frame = draw_alignment_info(display_frame, pursuit_state, MockSelf(frame_state, drone_state, display_frame))
 
 def show_video(config, display_frame, logger):
     if not config.SHOW_VIDEO:
         return
-    cv2.imshow('Forward Camera Feed', display_frame)
-    key = cv2.waitKey(1)
-    if key == ord('q'):
-        logger.info('Shutting down')
-        rclpy.shutdown()
+    # In headless env, imshow might fail or do nothing useful.
+    # We'll try, but wrap it.
+    try:
+        cv2.imshow('Forward Camera Feed', display_frame)
+        key = cv2.waitKey(1)
+        if key == ord('q'):
+            logger.info('Shutting down')
+            # Signal shutdown
+            return False
+    except cv2.error:
+        pass # Ignore in headless
+    return True
 
 def handle_video_recording(config, video_state, display_frame, width, height, cache_state):
     if config.RECORD_VIDEO and video_state.video_writer is None:
@@ -688,6 +877,14 @@ def dualsense_worker(data_queue):
     finally:
         dualsense.close()
 
+def mock_dualsense_worker(data_queue):
+    mock_ds = MockDualSense()
+    while True:
+        ts = time.time()
+        input_state = InputState(mock_ds.state)
+        data_queue.put((ts, 'INPUT', input_state))
+        time.sleep(0.01)
+
 async def attitude_tracker(drone_state, data_queue):
     try:
         async for euler in drone_state.drone.telemetry.attitude_euler():
@@ -723,7 +920,7 @@ async def mavsdk_controller(frame_state, drone_state, pursuit_state, shared_inpu
     asyncio.create_task(actuator_tracker(drone_state, data_queue))
    
     # Control loop
-    while rclpy.ok():
+    while True: # Loop forever until interrupted
         # Use shared_input_state which is updated by processing thread
         setpoint_type, setpoint = control_mode.get_setpoint(shared_input_state, config, pursuit_state, frame_state, drone_state)
 
@@ -780,7 +977,10 @@ async def land_and_disarm(drone_state, logger):
     await drone_state.drone.action.hold()
 
 def processing_loop(data_queue, frame_state, drone_state, pursuit_state, button_state, video_state, cache_state, config, control_mode, logger, bridge, shared_input_state):
-    while rclpy.ok():
+    # Determine if we should shutdown based on rclpy state or general interrupt
+    check_ok = rclpy.ok if HAS_ROS else lambda: True
+
+    while check_ok():
         try:
             timestamp, data_type, data = data_queue.get(timeout=0.1)
         except queue.Empty:
@@ -788,9 +988,17 @@ def processing_loop(data_queue, frame_state, drone_state, pursuit_state, button_
 
         if data_type == 'IMAGE':
             try:
-                frame_state.current_frame = bridge.imgmsg_to_cv2(data, 'mono8')
+                if HAS_ROS and isinstance(data, Image):
+                    frame_state.current_frame = bridge.imgmsg_to_cv2(data, 'mono8')
+                else:
+                    # Mock data payload
+                    if hasattr(data, 'cv_img_payload'):
+                         frame_state.current_frame = data.cv_img_payload
+                    else:
+                         frame_state.current_frame = data
+
                 process_visuals(config, frame_state, button_state, video_state, cache_state, shared_input_state, drone_state, pursuit_state, control_mode, logger)
-            except CvBridgeError as e:
+            except Exception as e:
                 logger.error(str(e))
 
         elif data_type == 'INPUT':
@@ -838,7 +1046,8 @@ def run_mavsdk_thread(frame_state, drone_state, pursuit_state, shared_input_stat
     asyncio.run(mavsdk_controller(frame_state, drone_state, pursuit_state, shared_input_state, config, logger, control_mode, data_queue))
 
 def main(args=None):
-    rclpy.init(args=args)
+    if HAS_ROS:
+        rclpy.init(args=args)
 
     # Init shared objects
     data_queue = queue.PriorityQueue()
@@ -851,32 +1060,46 @@ def main(args=None):
     cache_state = CacheState()
     shared_input_state = InputState()
     control_mode = ManualMode()
-    bridge = CvBridge()
+    bridge = CvBridge() if HAS_ROS else None
 
-    # 1. ROS Node & Thread
-    viewer = ImageViewer(data_queue)
-    ros_thread = threading.Thread(target=rclpy.spin, args=(viewer,), daemon=True)
-    ros_thread.start()
+    # 1. ROS Node or Mock Viewer
+    if HAS_ROS:
+        viewer = ImageViewer(data_queue)
+        ros_thread = threading.Thread(target=rclpy.spin, args=(viewer,), daemon=True)
+        ros_thread.start()
+        logger = viewer.get_logger()
+    else:
+        viewer = MockImageViewer(data_queue)
+        # Mock viewer runs its own thread in init
+        logger = viewer.get_logger()
 
     # 2. DualSense Thread
-    ds_thread = threading.Thread(target=dualsense_worker, args=(data_queue,), daemon=True)
-    ds_thread.start()
+    if HAS_DUALSENSE:
+        ds_thread = threading.Thread(target=dualsense_worker, args=(data_queue,), daemon=True)
+        ds_thread.start()
+    else:
+        ds_thread = threading.Thread(target=mock_dualsense_worker, args=(data_queue,), daemon=True)
+        ds_thread.start()
+
 
     # 3. MAVSDK Thread
-    mav_thread = threading.Thread(target=run_mavsdk_thread, args=(frame_state, drone_state, pursuit_state, shared_input_state, config, viewer.get_logger(), control_mode, data_queue), daemon=True)
+    mav_thread = threading.Thread(target=run_mavsdk_thread, args=(frame_state, drone_state, pursuit_state, shared_input_state, config, logger, control_mode, data_queue), daemon=True)
     mav_thread.start()
 
     # 4. Processing Loop (Main Thread)
     try:
-        processing_loop(data_queue, frame_state, drone_state, pursuit_state, button_state, video_state, cache_state, config, control_mode, viewer.get_logger(), bridge, shared_input_state)
+        processing_loop(data_queue, frame_state, drone_state, pursuit_state, button_state, video_state, cache_state, config, control_mode, logger, bridge, shared_input_state)
     except KeyboardInterrupt:
         pass
     finally:
         if video_state.video_writer:
             video_state.video_writer.release()
         cv2.destroyAllWindows()
-        viewer.destroy_node()
-        rclpy.shutdown()
+        if HAS_ROS:
+            viewer.destroy_node()
+            rclpy.shutdown()
+        else:
+            viewer.destroy_node()
 
 if __name__ == '__main__':
     main()

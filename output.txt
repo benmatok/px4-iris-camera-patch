@@ -1,0 +1,4 @@
+ROS 2 (rclpy) not found. Will use MockImageViewer if needed.
+pydualsense not found. Will use MockDualSense.
+mavsdk not found. Will use MockDrone.
+Starting Mock Image Generation
