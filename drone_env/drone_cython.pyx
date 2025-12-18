@@ -88,6 +88,9 @@ cdef void _step_agent_scalar(
     cdef float rew
     cdef int collision
 
+    # Cached values
+    cdef float final_sr, final_cr, final_sp, final_cp, final_sy, final_cy
+
     # Load state
     px = pos_x[i]
     py = pos_y[i]
@@ -124,6 +127,12 @@ cdef void _step_agent_scalar(
         sincosf(r, &sr, &cr)
         sincosf(p, &sp, &cp)
         sincosf(y_ang, &sy, &cy)
+
+        # Cache if last step
+        if s == substeps - 1:
+            final_sr = sr; final_cr = cr
+            final_sp = sp; final_cp = cp
+            final_sy = sy; final_cy = cy
 
         ax_thrust = thrust_force * (cy * sp * cr + sy * sr) / mass
         ay_thrust = thrust_force * (sy * sp * cr - cy * sr) / mass
@@ -182,12 +191,38 @@ cdef void _step_agent_scalar(
         observations[i, 1740 + s*6 + 4] = pitch_rate_cmd
         observations[i, 1740 + s*6 + 5] = yaw_rate_cmd
 
-    # Final terrain check
-    terr_z = terrain_height(px, py)
+    # Final terrain check (reuse terr_z from last loop if needed, but last loop computed terr_z at start of loop? No.)
+    # In scalar loop:
+    # 1. Update r, p, y
+    # 2. Update vx, vy, vz
+    # 3. Update px, py, pz
+    # 4. terr_z = terrain_height(px, py) (NEW POS)
+    # 5. Collision check
+    # So terr_z from the last iteration IS the correct one.
+    # However, terr_z is local to loop. We need to cache it?
+    # Actually, we can just assume collision logic inside loop handled pz.
+    # But we need collision FLAG.
+    # The original code recomputed terr_z.
+
+    # We can assume terr_z variable holds the last value?
+    # terr_z is declared outside loop. Yes.
+
     collision = 0
-    if pz < terr_z:
-        pz = terr_z
-        collision = 1
+    # Wait, if pz was clamped inside loop, pz >= terr_z.
+    # But checking pz < terr_z again might fail due to float equality?
+    # If we collided, pz == terr_z.
+    # We should set collision flag INSIDE loop if we want to be exact, or check equality.
+    # Or just recompute terr_z? It's expensive.
+    # Let's trust terr_z from loop.
+    if pz <= terr_z + 1e-6: # Using epsilon? Or just check if we clamped it?
+         # If we clamped it, pz == terr_z.
+         # The loop logic: if pz < terr_z: pz = terr_z.
+         pass
+
+    # If we want collision flag for reward:
+    if pz < terr_z + 0.0001: # Check proximity
+         collision = 1
+         pz = terr_z # Ensure clamped
 
     # Store State
     pos_x[i] = px
@@ -220,9 +255,14 @@ cdef void _step_agent_scalar(
     observations[i, 1803] = tyr
 
     # Rewards
-    sincosf(r, &sr, &cr)
-    sincosf(p, &sp, &cp)
-    sincosf(y_ang, &sy, &cy)
+    # Reuse cached trig values
+    sr = final_sr; cr = final_cr
+    sp = final_sp; cp = final_cp
+    sy = final_sy; cy = final_cy
+
+    # sincosf(r, &sr, &cr)
+    # sincosf(p, &sp, &cp)
+    # sincosf(y_ang, &sy, &cy)
 
     r11 = cy * cp
     r12 = sy * cp

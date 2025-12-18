@@ -47,12 +47,6 @@ inline void step_agents_avx2(
     __m256 t_coeff = _mm256_loadu_ps(&thrust_coeffs[i]);
 
     // Actions are interleaved: [thrust, roll_rate, pitch_rate, yaw_rate] per agent
-    // We need to gather them into vectors.
-    // This is the tricky part with SoA vs AoS.
-    // actions is (num_agents, 4). But here passed as flat float*.
-    // indices: i*4, (i+1)*4 ...
-
-    // We use gather or manual loading. AVX2 has gather.
     __m256i idx_base = _mm256_set_epi32(7*4, 6*4, 5*4, 4*4, 3*4, 2*4, 1*4, 0);
     __m256i idx_0 = _mm256_add_epi32(idx_base, _mm256_set1_epi32(i*4));
     __m256i idx_1 = _mm256_add_epi32(idx_0, _mm256_set1_epi32(1));
@@ -69,20 +63,23 @@ inline void step_agents_avx2(
     __m256 g_v = _mm256_set1_ps(9.81f);
     __m256 c20 = _mm256_set1_ps(20.0f);
     __m256 c0 = _mm256_setzero_ps();
+    __m256 one = _mm256_set1_ps(1.0f);
     __m256 c5 = _mm256_set1_ps(5.0f);
     __m256 c01 = _mm256_set1_ps(0.1f);
 
-    // Shift Observations manually for the block?
-    // Since observations is also large stride (1804), we loop over agents.
+    // Shift Observations
     for (int k = 0; k < 8; k++) {
         int agent_idx = i + k;
         memmove(&observations[agent_idx * 1804], &observations[agent_idx * 1804 + 60], 1740 * sizeof(float));
     }
 
+    // Cached values from last substep
+    __m256 final_sr = c0, final_cr = one, final_sp = c0, final_cp = one, final_sy = c0, final_cy = one;
+    __m256 mask_coll_final = c0;
+
     // Substeps
     for (int s = 0; s < SUBSTEPS; s++) {
         // Dynamics
-        // r += roll_rate * dt
         r = _mm256_add_ps(r, _mm256_mul_ps(roll_rate_cmd, dt_v));
         p = _mm256_add_ps(p, _mm256_mul_ps(pitch_rate_cmd, dt_v));
         y = _mm256_add_ps(y, _mm256_mul_ps(yaw_rate_cmd, dt_v));
@@ -97,19 +94,22 @@ inline void step_agents_avx2(
         sincos256_ps(p, &sp, &cp);
         sincos256_ps(y, &sy, &cy);
 
+        // Cache if last step
+        if (s == SUBSTEPS - 1) {
+            final_sr = sr; final_cr = cr;
+            final_sp = sp; final_cp = cp;
+            final_sy = sy; final_cy = cy;
+        }
+
         // R Matrix Components
-        // cx*cy, etc.
-        // ax_thrust = F * (cy*sp*cr + sy*sr) / m
         __m256 term1_x = _mm256_mul_ps(_mm256_mul_ps(cy, sp), cr);
         __m256 term2_x = _mm256_mul_ps(sy, sr);
         __m256 ax_thrust = _mm256_div_ps(_mm256_mul_ps(thrust_force, _mm256_add_ps(term1_x, term2_x)), mass);
 
-        // ay_thrust = F * (sy*sp*cr - cy*sr) / m
         __m256 term1_y = _mm256_mul_ps(_mm256_mul_ps(sy, sp), cr);
         __m256 term2_y = _mm256_mul_ps(cy, sr);
         __m256 ay_thrust = _mm256_div_ps(_mm256_mul_ps(thrust_force, _mm256_sub_ps(term1_y, term2_y)), mass);
 
-        // az_thrust = F * (cp*cr) / m
         __m256 az_thrust = _mm256_div_ps(_mm256_mul_ps(thrust_force, _mm256_mul_ps(cp, cr)), mass);
 
         // Gravity
@@ -135,27 +135,26 @@ inline void step_agents_avx2(
         pz = _mm256_add_ps(pz, _mm256_mul_ps(vz, dt_v));
 
         // Terrain
-        // terr_z = 5 * sin(0.1*px) * cos(0.1*py)
         __m256 terr_z = _mm256_mul_ps(c5, _mm256_mul_ps(
             sin256_ps(_mm256_mul_ps(c01, px)),
             cos256_ps(_mm256_mul_ps(c01, py))
         ));
 
-        // Collision Check: pz < terr_z
+        // Collision Check
         __m256 mask_under = _mm256_cmp_ps(pz, terr_z, _CMP_LT_OQ);
 
-        // Handle Collision: pz = terr_z, v = 0
+        // Handle Collision
         pz = _mm256_blendv_ps(pz, terr_z, mask_under);
         vx = _mm256_blendv_ps(vx, c0, mask_under);
         vy = _mm256_blendv_ps(vy, c0, mask_under);
         vz = _mm256_blendv_ps(vz, c0, mask_under);
 
+        // Cache if last step
+        if (s == SUBSTEPS - 1) {
+            mask_coll_final = mask_under;
+        }
+
         // IMU Capture
-        // R^T transform of Acc (World -> Body)
-        // r11 = cy*cp, r12=sy*cp, r13=-sp
-        // r21 = ...
-        // Simplification: We have rotation vars computed.
-        // Needs accurate Rotation Matrix.
         __m256 r11 = _mm256_mul_ps(cy, cp);
         __m256 r12 = _mm256_mul_ps(sy, cp);
         __m256 r13 = _mm256_sub_ps(c0, sp);
@@ -168,31 +167,20 @@ inline void step_agents_avx2(
         __m256 r32 = _mm256_sub_ps(_mm256_mul_ps(_mm256_mul_ps(sy, sp), cr), _mm256_mul_ps(cy, sr));
         __m256 r33 = _mm256_mul_ps(cp, cr);
 
-        // Acc World (includes drag/thrust)
         __m256 awx = _mm256_add_ps(ax_thrust, ax_drag);
         __m256 awy = _mm256_add_ps(ay_thrust, ay_drag);
-        __m256 awz = _mm256_add_ps(az_thrust, az_drag); // Does IMU sense gravity? Yes if it's an accelerometer measuring specific force.
-        // Wait, accelerometer measures (a - g).
-        // Here specific force = Thrust + Drag. (Gravity is gravitational force).
-        // If we want body acceleration (kinematic), we use (ax, ay, az).
-        // If we want IMU (specific force), we use (F_thrust + F_drag)/m.
-        // My previous code calculated `acc_w = thrust + drag`. This effectively excludes gravity (which is correct for specific force).
+        __m256 awz = _mm256_add_ps(az_thrust, az_drag);
 
-        // Body Acc = R^T * Acc_W
         __m256 abx = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r11, awx), _mm256_mul_ps(r12, awy)), _mm256_mul_ps(r13, awz));
         __m256 aby = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r21, awx), _mm256_mul_ps(r22, awy)), _mm256_mul_ps(r23, awz));
         __m256 abz = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r31, awx), _mm256_mul_ps(r32, awy)), _mm256_mul_ps(r33, awz));
 
         // Store to observations buffer
-        // We need to scatter or just loop store. Loop is easier since obs stride is large.
-        // obs index: 1740 + s*6.
-        // For each agent k in 0..7
         float tmp_abx[8], tmp_aby[8], tmp_abz[8];
         _mm256_storeu_ps(tmp_abx, abx);
         _mm256_storeu_ps(tmp_aby, aby);
         _mm256_storeu_ps(tmp_abz, abz);
 
-        // Also need action commands which are uniform across block? No, gathered.
         float tmp_rr[8], tmp_pr[8], tmp_yr[8];
         _mm256_storeu_ps(tmp_rr, roll_rate_cmd);
         _mm256_storeu_ps(tmp_pr, pitch_rate_cmd);
@@ -221,19 +209,6 @@ inline void step_agents_avx2(
     _mm256_storeu_ps(&pitch[i], p);
     _mm256_storeu_ps(&yaw[i], y);
 
-    // Final Collision for Reward
-    __m256 terr_z_final = _mm256_mul_ps(c5, _mm256_mul_ps(
-            sin256_ps(_mm256_mul_ps(c01, px)),
-            cos256_ps(_mm256_mul_ps(c01, py))
-    ));
-    __m256 mask_coll = _mm256_cmp_ps(pz, terr_z_final, _CMP_LT_OQ);
-    // Note: pz was already clamped, but if it's exactly equal or slightly less due to precision?
-    // We used blendv, so pz should be terr_z if collided.
-    // Let's assume collided if pz <= terr_z + epsilon? Or just reuse mask_under from loop?
-    // But loop runs multiple times. Collision implies any collision? Or final state?
-    // Original code checks final state.
-    // Let's use mask_coll.
-
     // Store Pos History
     if (t <= episode_length) {
         float tmp_px[8], tmp_py[8], tmp_pz[8];
@@ -249,18 +224,6 @@ inline void step_agents_avx2(
         }
     }
 
-    // Rewards Calculation
-    // ... (Implement reward logic with AVX)
-    // For brevity/simplicity, we can do scalar reward calculation since it's only once per step, not 10x substeps.
-    // But since we are here:
-    // ...
-    // Let's skip AVX reward for now to save complexity and file size,
-    // physics is the bottleneck (10x substeps).
-    // We will compute rewards in scalar loop for these 8 agents?
-    // No, `_step_agent` (the scalar helper) does everything.
-    // If we use `step_agents_avx2`, we replace `_step_agent` call.
-    // So we MUST compute rewards here.
-
     // Load Targets
     __m256 tvx = _mm256_loadu_ps(&target_vx[i]);
     __m256 tvy = _mm256_loadu_ps(&target_vy[i]);
@@ -268,7 +231,6 @@ inline void step_agents_avx2(
     __m256 tyr = _mm256_loadu_ps(&target_yaw_rate[i]);
 
     // Update Observations with targets
-    // Loop store again
     float tmp_tvx[8], tmp_tvy[8], tmp_tvz[8], tmp_tyr[8];
     _mm256_storeu_ps(tmp_tvx, tvx);
     _mm256_storeu_ps(tmp_tvy, tvy);
@@ -283,15 +245,12 @@ inline void step_agents_avx2(
     }
 
     // Reward math
-    // Recompute R matrix sines/cosines (already have them in r, p, y vars, need to re-sin/cos? Yes if modified.)
-    // r, p, y were modified in loop.
-    __m256 sr, cr, sp, cp, sy, cy;
-    sincos256_ps(r, &sr, &cr);
-    sincos256_ps(p, &sp, &cp);
-    sincos256_ps(y, &sy, &cy);
+    // Reuse cached trig values
+    __m256 sr = final_sr; __m256 cr = final_cr;
+    __m256 sp = final_sp; __m256 cp = final_cp;
+    __m256 sy = final_sy; __m256 cy = final_cy;
 
     // Body Velocity
-    // vx_b = r11*vx + ...
     __m256 r11 = _mm256_mul_ps(cy, cp);
     __m256 r12 = _mm256_mul_ps(sy, cp);
     __m256 r13 = _mm256_sub_ps(c0, sp);
@@ -322,24 +281,9 @@ inline void step_agents_avx2(
 
     // Penalty: -0.01 * (r^2 + p^2)
     rew = _mm256_sub_ps(rew, _mm256_mul_ps(c01, _mm256_mul_ps(c01, _mm256_add_ps(_mm256_mul_ps(r, r), _mm256_mul_ps(p, p)))));
-    // Wait, 0.01 is c01*c01? No 0.01 is c01*0.1? I defined c01 as 0.1.
-    // Penalty is 0.01. So 0.1 * 0.1.
 
-    // Unstable penalty: abs(r) > 1.0 or abs(p) > 1.0
-    // mask = (|r|>1) | (|p|>1)
-
-    // We have `sign_mask` in mathfun.
-    // Or just `_mm256_max_ps(r, -r)`? No.
-    // _mm256_and_ps(x, cast(0x7fffffff))
-    // Let's simpler:
-    __m256 one = _mm256_set1_ps(1.0f);
-    // Assuming positive/negative handles logic.
-    // fabsf(r) > 1.0.
-    // Just use mathfun `fabs` logic if exposed?
-    // Or just `_mm256_cmp_ps` with range?
-    // _mm256_cmp_ps(r, 1.0, GT) | _mm256_cmp_ps(r, -1.0, LT)
-    // Or `abs_ps`.
-    // Let's implement primitive `abs_ps`.
+    // Unstable penalty
+    // __m256 one = _mm256_set1_ps(1.0f); // Already defined
     __m256 m_abs = _mm256_castsi256_ps(_mm256_set1_epi32(0x7fffffff));
     __m256 ar = _mm256_and_ps(r, m_abs);
     __m256 ap = _mm256_and_ps(p, m_abs);
@@ -348,12 +292,11 @@ inline void step_agents_avx2(
         _mm256_cmp_ps(ap, one, _CMP_GT_OQ)
     );
 
-    // Apply penalty 0.1
     rew = _mm256_sub_ps(rew, _mm256_and_ps(mask_unst, c01));
 
-    // Collision penalty 10.0
+    // Collision penalty 10.0 using cached mask
     __m256 c10 = _mm256_set1_ps(10.0f);
-    rew = _mm256_sub_ps(rew, _mm256_and_ps(mask_coll, c10));
+    rew = _mm256_sub_ps(rew, _mm256_and_ps(mask_coll_final, c10));
 
     // Survival +0.1
     rew = _mm256_add_ps(rew, c01);
