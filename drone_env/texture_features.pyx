@@ -5,10 +5,13 @@
 
 import numpy as np
 cimport numpy as np
-from cython.parallel import prange
+from cython.parallel import prange, parallel
 from libc.math cimport sqrt, atan2, exp, fabs, pow, M_PI
+from libc.stdlib cimport malloc, free
 
 cdef float[5] GAUSS_KERNEL = [0.06136, 0.24477, 0.38774, 0.24477, 0.06136]
+
+# --- Convolution Helpers ---
 
 cdef inline float process_conv_h(int r, int c, int w, float[:, ::1] src) nogil:
     cdef float val = 0.0
@@ -50,124 +53,168 @@ cdef void downsample(float[:, ::1] src, float[:, ::1] dst, int h_src, int w_src)
         for c in range(w_dst):
             dst[r, c] = src[r * 2, c * 2]
 
-cdef void compute_gradients(float[:, ::1] img, float[:, ::1] Ix, float[:, ::1] Iy, int h, int w) noexcept nogil:
-    cdef int r, c
-    for r in prange(h, schedule='static'):
+# --- Block Processing Logic ---
+
+cdef void compute_strip_features(
+    int r_start, int r_end, int h, int w,
+    float[:, ::1] img,
+    float[:, ::1] orient_out,
+    float[:, ::1] coher_out,
+    float[:, ::1] hess_out,
+    float[:, ::1] ged_out,
+    float hess_scale_norm
+) noexcept nogil:
+
+    # Define strip boundaries with halo
+    # We need neighbors for ST/Hess.
+    # ST/Hess needs Ix, Iy at (r, c).
+    # ST at (r,c) needs 3x3 window of Ix, Iy. So Ix, Iy needed at r-1 to r+1.
+    # Ix at r' needs Img at r'-1 to r'+1.
+    # So to compute ST at r, we need Ix at r-1..r+1.
+    # To compute Ix at r-1, we need Img at r-2..r.
+    # To compute Ix at r+1, we need Img at r..r+2.
+    # Total Img dependency: r-2 to r+2.
+
+    cdef int h_strip = r_end - r_start
+    # Halo: we need gradients for r_start-1 to r_end+1 (size h_strip + 2)
+    # So we allocate local buffers for Ix, Iy of size (h_strip + 2) x w
+    # We map row r_local in buffer to global row (r_start - 1 + r_local)
+
+    cdef int buf_h = h_strip + 2
+    cdef int buf_size = buf_h * w
+
+    # Allocate scratchpads
+    cdef float *Ix_buf = <float *> malloc(buf_size * sizeof(float))
+    cdef float *Iy_buf = <float *> malloc(buf_size * sizeof(float))
+
+    if Ix_buf == NULL or Iy_buf == NULL:
+        # Allocation failed, abort strip (should handle error better but nogil)
+        if Ix_buf != NULL: free(Ix_buf)
+        if Iy_buf != NULL: free(Iy_buf)
+        return
+
+    cdef int br, c
+    cdef int global_r
+    cdef float val_x, val_y
+
+    # 1. Compute Gradients into Buffer
+    # Buffer row 0 corresponds to global row r_start - 1
+    # Buffer row k corresponds to global row r_start - 1 + k
+    # We need to compute gradients for global rows r_start-1 to r_end (inclusive? wait)
+    # We need gradients for r_start-1 ... r_end (inclusive).
+    # Range of rows where we compute features: r_start to r_end-1.
+    # Neighbors needed: (r_start-1) to (r_end-1+1) = r_end.
+    # So we need gradients for global rows: [r_start-1, r_end].
+    # Total rows = (r_end) - (r_start-1) + 1 = r_end - r_start + 2 = h_strip + 2. Correct.
+
+    for br in range(buf_h):
+        global_r = r_start - 1 + br
         for c in range(w):
+            # Gradient X
+            if global_r >= 0 and global_r < h:
+                if c > 0 and c < w - 1:
+                    val_x = (img[global_r, c + 1] - img[global_r, c - 1]) * 0.5
+                else:
+                    val_x = 0.0
+
+                # Gradient Y
+                if global_r > 0 and global_r < h - 1:
+                    val_y = (img[global_r + 1, c] - img[global_r - 1, c]) * 0.5
+                else:
+                    val_y = 0.0
+            else:
+                val_x = 0.0
+                val_y = 0.0
+
+            Ix_buf[br * w + c] = val_x
+            Iy_buf[br * w + c] = val_y
+
+    # 2. Compute Features (ST, Hess) using Buffer
+    # We iterate global rows r from r_start to r_end-1
+    # Local buffer index for global r is: r - (r_start - 1) = r - r_start + 1.
+    # Let local_r = r - r_start + 1.
+    # Neighbors: local_r - 1 to local_r + 1.
+
+    cdef int i, j
+    cdef float s_xx, s_yy, s_xy, val_ix, val_iy
+    cdef float diff, sum_eigen, lambda1, lambda2
+    cdef float i_xx, i_yy, i_xy, det
+    cdef int r
+
+    # 3. Compute GED (Needs Img) - independent of Gradients
+    cdef float sum_in, sum_out, cnt_in, cnt_out, val_img
+
+    for r in range(r_start, r_end):
+        if r >= h: break # Safety
+
+        br = r - r_start + 1 # Center in buffer
+
+        for c in range(w):
+            # --- Structure Tensor ---
+            s_xx = 0.0; s_yy = 0.0; s_xy = 0.0
+
+            for i in range(-1, 2):
+                for j in range(-1, 2):
+                    # Check boundary for columns, rows are safe in buffer (br-1 to br+1 are valid)
+                    if c+j >= 0 and c+j < w:
+                        val_ix = Ix_buf[(br+i) * w + (c+j)]
+                        val_iy = Iy_buf[(br+i) * w + (c+j)]
+                        s_xx += val_ix * val_ix
+                        s_yy += val_iy * val_iy
+                        s_xy += val_ix * val_iy
+
+            diff = sqrt((s_xx - s_yy)**2 + 4 * s_xy * s_xy)
+            sum_eigen = s_xx + s_yy
+            lambda1 = (sum_eigen + diff) * 0.5
+            lambda2 = (sum_eigen - diff) * 0.5
+
+            if sum_eigen > 1e-6:
+                coher_out[r, c] = (lambda1 - lambda2) / sum_eigen
+            else:
+                coher_out[r, c] = 0.0
+            orient_out[r, c] = 0.5 * atan2(2 * s_xy, s_xx - s_yy)
+
+            # --- Hessian ---
+            # Ix_xx at (r,c) approx (Ix(r,c+1) - Ix(r,c-1))/2
+            # Needs Ix at same row.
+            # Ix_yy at (r,c) approx (Iy(r+1,c) - Iy(r-1,c))/2
+            # Needs Iy at +/- 1 row.
+            # Ix_xy at (r,c) approx (Ix(r+1,c) - Ix(r-1,c))/2
+
             if c > 0 and c < w - 1:
-                Ix[r, c] = (img[r, c + 1] - img[r, c - 1]) * 0.5
+                i_xx = (Ix_buf[br * w + (c+1)] - Ix_buf[br * w + (c-1)]) * 0.5
             else:
-                Ix[r, c] = 0.0
+                i_xx = 0.0
 
-            if r > 0 and r < h - 1:
-                Iy[r, c] = (img[r + 1, c] - img[r - 1, c]) * 0.5
+            i_yy = (Iy_buf[(br+1) * w + c] - Iy_buf[(br-1) * w + c]) * 0.5
+            i_xy = (Ix_buf[(br+1) * w + c] - Ix_buf[(br-1) * w + c]) * 0.5
+
+            det = i_xx * i_yy - i_xy * i_xy
+            hess_out[r, c] = fabs(det) * hess_scale_norm
+
+            # --- GED ---
+            # Uses original img, large window 7x7
+            sum_in = 0.0; cnt_in = 0.0
+            sum_out = 0.0; cnt_out = 0.0
+
+            for i in range(-3, 4):
+                for j in range(-3, 4):
+                    if r+i >= 0 and r+i < h and c+j >= 0 and c+j < w:
+                        val_img = img[r+i, c+j]
+                        if i >= -1 and i <= 1 and j >= -1 and j <= 1:
+                            sum_in += val_img
+                            cnt_in += 1.0
+                        else:
+                            sum_out += val_img
+                            cnt_out += 1.0
+
+            if cnt_in > 0 and cnt_out > 0:
+                ged_out[r, c] = fabs(sum_in/cnt_in - sum_out/cnt_out)
             else:
-                Iy[r, c] = 0.0
+                ged_out[r, c] = 0.0
 
-cdef inline void process_st_pixel(int r, int c, int h, int w,
-                                  float[:, ::1] Ix, float[:, ::1] Iy,
-                                  float[:, ::1] orientation, float[:, ::1] coherence) noexcept nogil:
-    cdef float s_xx = 0.0
-    cdef float s_yy = 0.0
-    cdef float s_xy = 0.0
-    cdef float val_ix, val_iy
-    cdef int i, j
-
-    for i in range(-1, 2):
-        for j in range(-1, 2):
-            if r+i >= 0 and r+i < h and c+j >= 0 and c+j < w:
-                val_ix = Ix[r+i, c+j]
-                val_iy = Iy[r+i, c+j]
-                s_xx += val_ix * val_ix
-                s_yy += val_iy * val_iy
-                s_xy += val_ix * val_iy
-
-    cdef float diff = sqrt((s_xx - s_yy)**2 + 4 * s_xy * s_xy)
-    cdef float sum_eigen = s_xx + s_yy
-    cdef float lambda1 = (sum_eigen + diff) * 0.5
-    cdef float lambda2 = (sum_eigen - diff) * 0.5
-
-    if sum_eigen > 1e-6:
-        coherence[r, c] = (lambda1 - lambda2) / (sum_eigen)
-    else:
-        coherence[r, c] = 0.0
-
-    orientation[r, c] = 0.5 * atan2(2 * s_xy, s_xx - s_yy)
-
-cdef void compute_structure_tensor_features(float[:, ::1] Ix, float[:, ::1] Iy,
-                                            float[:, ::1] orientation, float[:, ::1] coherence,
-                                            int h, int w) noexcept nogil:
-    cdef int r, c
-    for r in prange(h, schedule='static'):
-        for c in range(w):
-            process_st_pixel(r, c, h, w, Ix, Iy, orientation, coherence)
-
-cdef inline void process_hessian_pixel(int r, int c, int h, int w,
-                                       float[:, ::1] Ix, float[:, ::1] Iy,
-                                       float[:, ::1] response, float scale_norm) noexcept nogil:
-    cdef float i_xx, i_yy, i_xy
-
-    if c > 0 and c < w - 1:
-        i_xx = (Ix[r, c + 1] - Ix[r, c - 1]) * 0.5
-    else:
-        i_xx = 0.0
-
-    if r > 0 and r < h - 1:
-        i_yy = (Iy[r + 1, c] - Iy[r - 1, c]) * 0.5
-    else:
-        i_yy = 0.0
-
-    if r > 0 and r < h - 1:
-        i_xy = (Ix[r + 1, c] - Ix[r - 1, c]) * 0.5
-    else:
-        i_xy = 0.0
-
-    cdef float det = i_xx * i_yy - i_xy * i_xy
-    response[r, c] = fabs(det) * scale_norm
-
-cdef void compute_hessian_features(float[:, ::1] Ix, float[:, ::1] Iy,
-                                   float[:, ::1] response, float scale_norm,
-                                   int h, int w) noexcept nogil:
-    cdef int r, c
-    for r in prange(h, schedule='static'):
-        for c in range(w):
-            process_hessian_pixel(r, c, h, w, Ix, Iy, response, scale_norm)
-
-cdef inline void process_ged_pixel(int r, int c, int h, int w,
-                                   float[:, ::1] img, float[:, ::1] output) noexcept nogil:
-    cdef float sum_in = 0.0
-    cdef float sum_out = 0.0
-    cdef float cnt_in = 0.0
-    cdef float cnt_out = 0.0
-    cdef float val
-    cdef int i, j
-
-    for i in range(-1, 2):
-        for j in range(-1, 2):
-            if r+i >= 0 and r+i < h and c+j >= 0 and c+j < w:
-                val = img[r+i, c+j]
-                sum_in += val
-                cnt_in += 1.0
-
-    for i in range(-3, 4):
-        for j in range(-3, 4):
-            if r+i >= 0 and r+i < h and c+j >= 0 and c+j < w:
-                if i >= -1 and i <= 1 and j >= -1 and j <= 1:
-                    continue
-                val = img[r+i, c+j]
-                sum_out += val
-                cnt_out += 1.0
-
-    if cnt_in > 0 and cnt_out > 0:
-        output[r, c] = fabs(sum_in/cnt_in - sum_out/cnt_out)
-    else:
-        output[r, c] = 0.0
-
-cdef void compute_ged_features(float[:, ::1] img, float[:, ::1] output, int h, int w) noexcept nogil:
-    cdef int r, c
-    for r in prange(h, schedule='static'):
-        for c in range(w):
-            process_ged_pixel(r, c, h, w, img, output)
+    free(Ix_buf)
+    free(Iy_buf)
 
 cdef inline void collapse_features(int r, int w,
                                    float[:, ::1] o_l0, float[:, ::1] o_l1,
@@ -202,7 +249,6 @@ cdef inline void collapse_features(int r, int w,
         output[r, c, 0] = o0
         output[r, c, 1] = c0
 
-        # Scale Drift with cyclic wrap-around (period pi)
         drift = o1 - o0
         if drift > M_PI * 0.5:
             drift -= M_PI
@@ -212,7 +258,6 @@ cdef inline void collapse_features(int r, int w,
 
         output[r, c, 3] = c0 - c1
 
-        # Scale selection (Max Response)
         if h0 >= h1 and h0 >= h2:
             output[r, c, 4] = 0.0
         elif h1 >= h0 and h1 >= h2:
@@ -220,9 +265,6 @@ cdef inline void collapse_features(int r, int w,
         else:
             output[r, c, 4] = 2.0
 
-        # Boundary: Geometric Mean (pow(g0*g1*g2, 1/3))
-        # Add small epsilon to avoid zero issues if desired?
-        # But geometric mean should be 0 if any is 0 (suppression).
         output[r, c, 5] = pow(g0 * g1 * g2, 0.3333333)
 
 def compute_texture_hypercube(float[:, ::1] image, int levels=3):
@@ -241,41 +283,46 @@ def compute_texture_hypercube(float[:, ::1] image, int levels=3):
     cdef float[:, ::1] temp_blur_v
     cdef float[:, ::1] temp_blur_h
     cdef float[:, ::1] next_img
-    cdef float[:, ::1] Ix
-    cdef float[:, ::1] Iy
+
+    # Allocations for features (Output)
     cdef float[:, ::1] orient
     cdef float[:, ::1] coher
     cdef float[:, ::1] hess
     cdef float[:, ::1] ged
 
-    cdef int l, ch, cw
+    cdef int l, ch, cw, strip_idx, num_strips, r_start, r_end
+    cdef int STRIP_HEIGHT = 64
     cdef float scale_factor
 
     for l in range(levels):
         ch = current_img.shape[0]
         cw = current_img.shape[1]
 
-        Ix = np.zeros((ch, cw), dtype=np.float32)
-        Iy = np.zeros((ch, cw), dtype=np.float32)
         orient = np.zeros((ch, cw), dtype=np.float32)
         coher = np.zeros((ch, cw), dtype=np.float32)
         hess = np.zeros((ch, cw), dtype=np.float32)
         ged = np.zeros((ch, cw), dtype=np.float32)
 
-        compute_gradients(current_img, Ix, Iy, ch, cw)
+        scale_factor = pow(2.0, l)
 
-        compute_structure_tensor_features(Ix, Iy, orient, coher, ch, cw)
+        # Parallel Strip Processing
+        num_strips = (ch + STRIP_HEIGHT - 1) // STRIP_HEIGHT
+
+        for strip_idx in prange(num_strips, nogil=True, schedule='dynamic'):
+            r_start = strip_idx * STRIP_HEIGHT
+            r_end = r_start + STRIP_HEIGHT
+            if r_end > ch: r_end = ch
+
+            compute_strip_features(
+                r_start, r_end, ch, cw,
+                current_img,
+                orient, coher, hess, ged,
+                pow(scale_factor, 4)
+            )
+
         st_orientations.append(orient)
         st_coherences.append(coher)
-
-        scale_factor = pow(2.0, l)
-        # Normalization: pow(scale_factor, 4) matches Lindeberg's t^2 normalization (t = sigma^2)
-        # t^2 det(H) = sigma^4 det(H).
-        # We use scale_factor = 2^l approx sigma.
-        compute_hessian_features(Ix, Iy, hess, pow(scale_factor, 4), ch, cw)
         hessian_responses.append(hess)
-
-        compute_ged_features(current_img, ged, ch, cw)
         ged_responses.append(ged)
 
         if l < levels - 1:
