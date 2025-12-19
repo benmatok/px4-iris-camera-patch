@@ -6,7 +6,7 @@
 import numpy as np
 cimport numpy as np
 from cython.parallel import prange, parallel
-from libc.math cimport sqrt, atan2, exp, fabs, pow, M_PI
+from libc.math cimport sqrt, atan2, exp, fabs, pow, M_PI, cbrt
 from libc.stdlib cimport malloc, free
 
 cdef float[5] GAUSS_KERNEL = [0.06136, 0.24477, 0.38774, 0.24477, 0.06136]
@@ -65,21 +65,7 @@ cdef void compute_strip_features(
     float hess_scale_norm
 ) noexcept nogil:
 
-    # Define strip boundaries with halo
-    # We need neighbors for ST/Hess.
-    # ST/Hess needs Ix, Iy at (r, c).
-    # ST at (r,c) needs 3x3 window of Ix, Iy. So Ix, Iy needed at r-1 to r+1.
-    # Ix at r' needs Img at r'-1 to r'+1.
-    # So to compute ST at r, we need Ix at r-1..r+1.
-    # To compute Ix at r-1, we need Img at r-2..r.
-    # To compute Ix at r+1, we need Img at r..r+2.
-    # Total Img dependency: r-2 to r+2.
-
     cdef int h_strip = r_end - r_start
-    # Halo: we need gradients for r_start-1 to r_end+1 (size h_strip + 2)
-    # So we allocate local buffers for Ix, Iy of size (h_strip + 2) x w
-    # We map row r_local in buffer to global row (r_start - 1 + r_local)
-
     cdef int buf_h = h_strip + 2
     cdef int buf_size = buf_h * w
 
@@ -88,7 +74,6 @@ cdef void compute_strip_features(
     cdef float *Iy_buf = <float *> malloc(buf_size * sizeof(float))
 
     if Ix_buf == NULL or Iy_buf == NULL:
-        # Allocation failed, abort strip (should handle error better but nogil)
         if Ix_buf != NULL: free(Ix_buf)
         if Iy_buf != NULL: free(Iy_buf)
         return
@@ -96,16 +81,6 @@ cdef void compute_strip_features(
     cdef int br, c
     cdef int global_r
     cdef float val_x, val_y
-
-    # 1. Compute Gradients into Buffer
-    # Buffer row 0 corresponds to global row r_start - 1
-    # Buffer row k corresponds to global row r_start - 1 + k
-    # We need to compute gradients for global rows r_start-1 to r_end (inclusive? wait)
-    # We need gradients for r_start-1 ... r_end (inclusive).
-    # Range of rows where we compute features: r_start to r_end-1.
-    # Neighbors needed: (r_start-1) to (r_end-1+1) = r_end.
-    # So we need gradients for global rows: [r_start-1, r_end].
-    # Total rows = (r_end) - (r_start-1) + 1 = r_end - r_start + 2 = h_strip + 2. Correct.
 
     for br in range(buf_h):
         global_r = r_start - 1 + br
@@ -129,19 +104,12 @@ cdef void compute_strip_features(
             Ix_buf[br * w + c] = val_x
             Iy_buf[br * w + c] = val_y
 
-    # 2. Compute Features (ST, Hess) using Buffer
-    # We iterate global rows r from r_start to r_end-1
-    # Local buffer index for global r is: r - (r_start - 1) = r - r_start + 1.
-    # Let local_r = r - r_start + 1.
-    # Neighbors: local_r - 1 to local_r + 1.
-
     cdef int i, j
     cdef float s_xx, s_yy, s_xy, val_ix, val_iy
     cdef float diff, sum_eigen, lambda1, lambda2
     cdef float i_xx, i_yy, i_xy, det
     cdef int r
 
-    # 3. Compute GED (Needs Img) - independent of Gradients
     cdef float sum_in, sum_out, cnt_in, cnt_out, val_img
 
     for r in range(r_start, r_end):
@@ -155,7 +123,6 @@ cdef void compute_strip_features(
 
             for i in range(-1, 2):
                 for j in range(-1, 2):
-                    # Check boundary for columns, rows are safe in buffer (br-1 to br+1 are valid)
                     if c+j >= 0 and c+j < w:
                         val_ix = Ix_buf[(br+i) * w + (c+j)]
                         val_iy = Iy_buf[(br+i) * w + (c+j)]
@@ -175,12 +142,6 @@ cdef void compute_strip_features(
             orient_out[r, c] = 0.5 * atan2(2 * s_xy, s_xx - s_yy)
 
             # --- Hessian ---
-            # Ix_xx at (r,c) approx (Ix(r,c+1) - Ix(r,c-1))/2
-            # Needs Ix at same row.
-            # Ix_yy at (r,c) approx (Iy(r+1,c) - Iy(r-1,c))/2
-            # Needs Iy at +/- 1 row.
-            # Ix_xy at (r,c) approx (Ix(r+1,c) - Ix(r-1,c))/2
-
             if c > 0 and c < w - 1:
                 i_xx = (Ix_buf[br * w + (c+1)] - Ix_buf[br * w + (c-1)]) * 0.5
             else:
@@ -193,7 +154,6 @@ cdef void compute_strip_features(
             hess_out[r, c] = fabs(det) * hess_scale_norm
 
             # --- GED ---
-            # Uses original img, large window 7x7
             sum_in = 0.0; cnt_in = 0.0
             sum_out = 0.0; cnt_out = 0.0
 
@@ -265,7 +225,8 @@ cdef inline void collapse_features(int r, int w,
         else:
             output[r, c, 4] = 2.0
 
-        output[r, c, 5] = pow(g0 * g1 * g2, 0.3333333)
+        # Use cbrt instead of pow(x, 0.333...)
+        output[r, c, 5] = cbrt(g0 * g1 * g2)
 
 def compute_texture_hypercube(float[:, ::1] image, int levels=3):
     if levels != 3:
@@ -298,14 +259,14 @@ def compute_texture_hypercube(float[:, ::1] image, int levels=3):
         ch = current_img.shape[0]
         cw = current_img.shape[1]
 
-        orient = np.zeros((ch, cw), dtype=np.float32)
-        coher = np.zeros((ch, cw), dtype=np.float32)
-        hess = np.zeros((ch, cw), dtype=np.float32)
-        ged = np.zeros((ch, cw), dtype=np.float32)
+        # Use np.empty to avoid memset overhead
+        orient = np.empty((ch, cw), dtype=np.float32)
+        coher = np.empty((ch, cw), dtype=np.float32)
+        hess = np.empty((ch, cw), dtype=np.float32)
+        ged = np.empty((ch, cw), dtype=np.float32)
 
         scale_factor = pow(2.0, l)
 
-        # Parallel Strip Processing
         num_strips = (ch + STRIP_HEIGHT - 1) // STRIP_HEIGHT
 
         for strip_idx in prange(num_strips, nogil=True, schedule='dynamic'):
@@ -326,16 +287,32 @@ def compute_texture_hypercube(float[:, ::1] image, int levels=3):
         ged_responses.append(ged)
 
         if l < levels - 1:
-            temp_blur_h = np.zeros((ch, cw), dtype=np.float32)
-            temp_blur_v = np.zeros((ch, cw), dtype=np.float32)
+            # Intermediate blur buffers still need to be initialized?
+            # gaussian_blur overwrites dst. But temp_blur_h/v?
+            # gaussian_blur uses separate horiz and vert passes.
+            # horiz overwrites temp. vert overwrites dst.
+            # So np.empty is safe.
+            temp_blur_h = np.empty((ch, cw), dtype=np.float32)
+            temp_blur_v = np.empty((ch, cw), dtype=np.float32)
+
+            # But wait, gaussian_blur logic:
+            # convolve_horizontal(src, temp)
+            # convolve_vertical(temp, dst)
+            # If temp contains garbage, convolve_vertical reads garbage?
+            # convolve_horizontal writes ALL pixels. Safe.
+
             gaussian_blur(current_img, temp_blur_v, temp_blur_h, ch, cw)
 
-            next_img = np.zeros((ch // 2, cw // 2), dtype=np.float32)
+            # next_img also fully overwritten by downsample
+            next_img = np.empty((ch // 2, cw // 2), dtype=np.float32)
             downsample(temp_blur_v, next_img, ch, cw)
             current_img = next_img
 
     cdef int out_channels = 6
-    cdef float[:, :, ::1] output = np.zeros((h, w, out_channels), dtype=np.float32)
+    # Output must be zeros or empty? We iterate over all r, c in collapse_features?
+    # collapse_features: for r in prange(h): for c in range(w): ...
+    # It writes all pixels. So np.empty is safe.
+    cdef float[:, :, ::1] output = np.empty((h, w, out_channels), dtype=np.float32)
 
     cdef float[:, ::1] o_l0 = st_orientations[0]
     cdef float[:, ::1] o_l1 = st_orientations[1]
