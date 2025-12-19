@@ -28,27 +28,27 @@ The core optimization targeted the redundant trigonometric function calls in the
 *   **Reduction in Trig Calls:** For each agent, in each substep, we compute `sin/cos` for 3 angles. Previously this required 6 calls. Now it requires 3 `sincos` calls.
 *   **Instruction Count:** This should lead to a measurable reduction in total instruction count for the physics step, as trigonometric evaluation is computationally expensive (polynomial approximation).
 
-## Optimization: Texture Engine Block Processing
+## Optimization: Texture Engine Block Processing (2D Tiling)
 
-To enable real-time analysis of high-resolution texture features, we implemented a **Block Processing (Strip Mining)** strategy for the Texture Engine (`drone_env/texture_features.pyx`).
+To enable real-time analysis of high-resolution texture features, we implemented a **2D Tiling** strategy for the Texture Engine (`drone_env/texture_features.pyx`).
 
 ### Problem
-The initial naive implementation computed gradients ($I_x, I_y$) and features (Structure Tensor, Hessian) for the entire image at once. For large images (e.g., 2048x2048), this involved allocating and iterating over multiple 16MB buffers ($2048 \times 2048 \times 4$ bytes). This approach caused **L2 Cache Misses** and high peak memory usage.
+The initial naive implementation computed gradients ($I_x, I_y$) and features (Structure Tensor, Hessian) for the entire image at once. For large images (e.g., 2048x2048), this involved allocating and iterating over multiple 16MB buffers ($2048 \times 2048 \times 4$ bytes). This approach caused **L2 Cache Misses** and high peak memory usage. Even row-based strip mining (processing 64 rows at a time) could exceed L1/L2 cache limits for very wide images (e.g., 2048+ pixels).
 
 ### Solution
-Refactored the pipeline to process the image in horizontal **Strips** (e.g., 64 rows).
-1.  **Tiled Execution**: Inside a parallel loop (`prange`), each thread grabs a strip of the image.
-2.  **Local Buffers**: The thread allocates small "scratchpad" buffers just large enough for the strip. These buffers fit entirely within the L2 cache.
-3.  **Fused Operations**: The thread computes Gradients, Structure Tensor, Hessian, and GED for the strip in one go, reusing the hot data in the cache.
+Refactored the pipeline to process the image in **$32 \times 32$ Tiles**.
+1.  **Thread-Local Buffers**: Each thread allocates a tiny scratchpad (~4KB) to hold the gradient data for a single $32 \times 32$ tile (plus halo). This guarantees the working set fits entirely within the **L1 Cache**.
+2.  **Parallel Execution**: We parallelize over row-strips, but inside each strip, the thread iterates over column-tiles, reusing the same L1-sized buffer.
+3.  **Fused Operations**: The thread computes Gradients, Structure Tensor, Hessian, and GED for the tile locally before moving to the next.
 
 ### Results (2048x2048 Image)
 *   **Baseline (Full-Frame):** ~282ms per image.
-*   **Optimized (Block Processing):** ~252ms per image.
-*   **Speedup:** **~1.12x**.
-*   **Memory Efficiency:** Reduced peak memory allocation by avoiding intermediate full-frame gradient buffers (saving ~32MB per level for 2048x2048 input).
+*   **Optimized (2D Tiling):** ~261ms per image.
+*   **Speedup:** **~1.08x**.
+*   **Memory Efficiency:** Drastic reduction in thread-local memory allocation. Instead of allocating megabytes per thread (for row strips), we allocate kilobytes. This improves scalability on many-core systems with limited per-core cache.
 
 ### Further Tuning
-Profiling revealed that `memset` operations (zero-initialization of output buffers) consumed ~3.4% of instructions. We replaced `np.zeros` with `np.empty` for the intermediate feature maps since the strip processing logic guarantees full coverage. Additionally, we replaced the generic `pow(x, 0.333...)` call for the GED geometric mean with the optimized `cbrt(x)` function from `libc.math`.
+Profiling revealed that `memset` operations (zero-initialization of output buffers) consumed ~3.4% of instructions. We replaced `np.zeros` with `np.empty` for the intermediate feature maps since the tiling logic guarantees full coverage. Additionally, we replaced the generic `pow(x, 0.333...)` call for the GED geometric mean with the optimized `cbrt(x)` function from `libc.math`.
 
 ## Validation
 
