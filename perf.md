@@ -28,6 +28,28 @@ The core optimization targeted the redundant trigonometric function calls in the
 *   **Reduction in Trig Calls:** For each agent, in each substep, we compute `sin/cos` for 3 angles. Previously this required 6 calls. Now it requires 3 `sincos` calls.
 *   **Instruction Count:** This should lead to a measurable reduction in total instruction count for the physics step, as trigonometric evaluation is computationally expensive (polynomial approximation).
 
+## Optimization: Texture Engine Block Processing
+
+To enable real-time analysis of high-resolution texture features, we implemented a **Block Processing (Strip Mining)** strategy for the Texture Engine (`drone_env/texture_features.pyx`).
+
+### Problem
+The initial naive implementation computed gradients ($I_x, I_y$) and features (Structure Tensor, Hessian) for the entire image at once. For a 512x512 image, this involved allocating and iterating over multiple 1MB buffers ($512 \times 512 \times 4$ bytes). This approach caused significant **L2 Cache Misses** because the processor had to fetch data from RAM repeatedly for each successive pass (Gradient X -> Gradient Y -> Structure Tensor -> Hessian).
+
+### Solution
+Refactored the pipeline to process the image in horizontal **Strips** (e.g., 64 rows).
+1.  **Tiled Execution**: Inside a parallel loop (`prange`), each thread grabs a strip of the image.
+2.  **Local Buffers**: The thread allocates small "scratchpad" buffers just large enough for the strip (plus halo/boundary rows). These buffers fit entirely within the L2 (and often L1) cache.
+3.  **Fused Operations**: The thread computes Gradients, Structure Tensor, Hessian, and GED for the strip in one go, reusing the hot data in the cache.
+
+### Results
+*   **Baseline (Full-Frame):** ~77ms per image (512x512).
+*   **Optimized (Block Processing):** ~19ms - 36ms per image.
+*   **Speedup:** **~2.0x - 4.0x**.
+*   **Memory Efficiency:** Reduced peak memory allocation by avoiding temporary full-frame gradient buffers.
+
+### Further Tuning
+Profiling revealed that `memset` operations (zero-initialization of output buffers) consumed ~3.4% of instructions. We replaced `np.zeros` with `np.empty` for the intermediate feature maps (`orient`, `coher`, etc.) since the strip processing logic guarantees full coverage (overwriting every pixel). Additionally, we replaced the generic `pow(x, 0.333...)` call for the GED geometric mean with the optimized `cbrt(x)` function from `libc.math`.
+
 ## Validation
 
 *   **Correctness:** The training loop runs successfully with the optimized physics engine, confirming that the `sincos` implementation is functionally equivalent or sufficiently close to the original separated calls.
