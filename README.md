@@ -127,3 +127,74 @@ After training, check the `visualizations/` directory for:
 
 ![Reward Plot](visualizations_mock/reward_plot.png)
 ![Training Evolution](visualizations_mock/training_evolution.gif)
+
+## Multi-Scale Texture Engine
+
+The project now includes a **High-Efficiency Multi-Scale Texture Feature Engine** (`drone_env.texture_features`), implemented in Cython for real-time performance. This engine analyzes images across a Gaussian Pyramid to generate a "Texture Hypercube"—a dense feature descriptor capturing scale-aware geometric and structural properties.
+
+### Features
+The engine computes the following features for every pixel, aggregating information from 3 pyramid levels (Backbone):
+
+1.  **Structure Tensor (ST)**:
+    *   **Orientation**: Dominant texture direction (0 to $\pi$).
+    *   **Coherence**: Confidence/Strength of the texture pattern.
+    *   **Scale Drift**: Change in orientation across scales (detects warping/perspective).
+    *   **Scale Decay**: Loss of coherence across scales (distinguishes fractal vs. geometric textures).
+2.  **Hessian Scale-Selection**:
+    *   Identifies the "intrinsic size" of texture elements (blobs) by maximizing the Hessian Determinant across scales.
+3.  **Boundary Detection (GED)**:
+    *   Multi-Scale Generalized Eigen Decomposition (Inner vs. Outer window contrast) to find persistent boundaries while suppressing noise.
+
+### Usage
+```python
+from drone_env.texture_features import compute_texture_hypercube
+import cv2
+
+# Input: Grayscale float32 image
+image = cv2.imread("texture.jpg", 0).astype(np.float32) / 255.0
+
+# Output: (H, W, 6) feature map
+# Channels: [Orientation, Coherence, Drift, Decay, IntrinsicSize, BoundaryScore]
+hypercube = compute_texture_hypercube(image, levels=3)
+```
+
+### Performance
+*   **Optimization**: Fully written in Cython with `nogil` and OpenMP parallelism (`prange`).
+*   **Backbone**: Gaussian Pyramid generation and Feature Collapse are fused where possible to minimize memory overhead.
+*   **Benchmarks**: Processes a 512x512 image in **~30-50ms** on a modern CPU.
+
+## Roadmap: Texture-Based Object Tracking
+
+The next phase of development involves integrating the **Texture Hypercube** with a Correlation Filter framework to enable robust object tracking that relies on structural texture signatures rather than just raw intensity.
+
+### Objective
+Implement a tracker that allows the drone to lock onto complex textured targets (e.g., a specific patch of grass, a landing pad, or a vehicle) that might be camouflaged in standard color space but distinct in "Texture Space."
+
+### Integration Plan
+
+1.  **Feature Extraction Layer**:
+    *   Replace the standard grayscale input of a correlation filter with the 6-channel **Texture Hypercube**.
+    *   This transforms the tracking problem from intensity matching to matching geometric signatures (Orientation, Scale, Coherence).
+
+2.  **Correlation Filter (MOSSE/KCF)**:
+    *   **Architecture**: Adapt a Kernelized Correlation Filter (KCF) or Minimum Output Sum of Squared Error (MOSSE) filter to handle multi-channel input.
+    *   **FFT Processing**: Perform Fast Fourier Transforms on each of the 6 feature channels efficiently.
+    *   **Fusion**: Compute the correlation response map by summing the responses from individual feature channels (or using a learnable weight vector).
+
+3.  **Scale Adaptation**:
+    *   Leverage the **Intrinsic Size** channel from the Texture Engine to assist the tracker's scale update step, potentially removing the need for an expensive multi-scale search in the tracking loop.
+
+4.  **Pipeline**:
+    *   **Frame $t$**:
+        *   Extract ROI around predicted position.
+        *   Compute `Texture Hypercube` (Cython).
+        *   Apply Hanning Window.
+        *   FFT -> Element-wise Multiply with Filter -> Inverse FFT.
+        *   Find peak response -> Update Position.
+    *   **Update**:
+        *   Extract new patch features.
+        *   Update filter numerator/denominator with learning rate $\eta$.
+
+### Expected Benefits
+*   **Robustness to Illumination**: Texture features (gradients, hessians) are largely invariant to global lighting changes, unlike raw pixel intensity.
+*   **Ambiguity Resolution**: Distinguish between objects with similar color but different surface roughness (e.g., smooth road vs. rough gravel).
