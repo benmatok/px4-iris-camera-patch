@@ -52,11 +52,6 @@ def test_spinning_plate():
     f1 = compute_texture_hypercube(img1)
     f2 = compute_texture_hypercube(img2)
 
-    # Orientation is in range [-pi/2, pi/2].
-    # For 90 deg, we expect values near pi/2 or -pi/2.
-    # Simple Mean might be near 0 if they cancel out.
-    # We use Mean of Absolute values to check magnitude.
-
     o1 = np.mean(np.abs(f1[:, :, 0]))
     o2 = np.mean(np.abs(f2[:, :, 0]))
 
@@ -115,32 +110,62 @@ def benchmark():
     else:
         print("WARN: Slow on CPU.")
 
-def visualize():
-    print("Generating Visualizations...")
+def visualize_all_features():
+    print("Generating Detailed Visualizations...")
     # Composite
     img = generate_sine_wave(size=512, angle=30, freq=5) + np.random.normal(0, 0.1, (512, 512)).astype(np.float32)
+    # Add a blob
+    blob = generate_blob(size=512, sigma=20.0)
+    img = img + blob
+
     features = compute_texture_hypercube(img)
 
-    rgb = np.zeros((512, 512, 3), dtype=np.float32)
-    rgb[:, :, 0] = features[:, :, 1] # Coherence
-    rgb[:, :, 1] = features[:, :, 4] / 2.0 # Scale (0-2) normalized
-    rgb[:, :, 2] = (features[:, :, 0] + np.pi/2) / np.pi # Orientation normalized
+    # 0: Orientation (Base)
+    # 1: Coherence (Base)
+    # 2: Drift
+    # 3: Decay
+    # 4: Intrinsic Size
+    # 5: Boundary
 
-    plt.imsave("debug_texture_composite.png", rgb)
+    plt.figure(figsize=(15, 10))
 
-    plt.figure()
-    plt.imshow(img, cmap='gray')
-    stride = 16
-    Y, X = np.mgrid[0:512:stride, 0:512:stride]
-    U = np.cos(features[::stride, ::stride, 0]) * features[::stride, ::stride, 1]
-    V = np.sin(features[::stride, ::stride, 0]) * features[::stride, ::stride, 1]
-    plt.quiver(X, Y, U, V, color='r')
-    plt.savefig("debug_flow_quivers.png")
-    print("Saved debug_texture_composite.png and debug_flow_quivers.png")
+    plt.subplot(2, 3, 1)
+    plt.imshow(features[:, :, 0], cmap='hsv')
+    plt.title("Orientation")
+    plt.axis('off')
+
+    plt.subplot(2, 3, 2)
+    plt.imshow(features[:, :, 1], cmap='inferno')
+    plt.title("Coherence")
+    plt.axis('off')
+
+    plt.subplot(2, 3, 3)
+    plt.imshow(features[:, :, 2], cmap='RdBu')
+    plt.title("Scale Drift")
+    plt.axis('off')
+
+    plt.subplot(2, 3, 4)
+    plt.imshow(features[:, :, 3], cmap='magma')
+    plt.title("Scale Decay")
+    plt.axis('off')
+
+    plt.subplot(2, 3, 5)
+    plt.imshow(features[:, :, 4], cmap='viridis', vmin=0, vmax=2)
+    plt.title("Intrinsic Size (Scale Index)")
+    plt.axis('off')
+
+    plt.subplot(2, 3, 6)
+    plt.imshow(features[:, :, 5], cmap='gray')
+    plt.title("Boundary (GED)")
+    plt.axis('off')
+
+    plt.tight_layout()
+    plt.savefig("debug_texture_grid.png")
+    print("Saved debug_texture_grid.png")
 
 if __name__ == "__main__":
     test_sine_wave()
     test_spinning_plate()
     test_zooming_dot()
     benchmark()
-    visualize()
+    visualize_all_features()
