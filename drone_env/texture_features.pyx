@@ -269,7 +269,7 @@ def compute_texture_hypercube(float[:, ::1] image, int levels=3):
 
         num_strips = (ch + STRIP_HEIGHT - 1) // STRIP_HEIGHT
 
-        for strip_idx in prange(num_strips, nogil=True, schedule='dynamic'):
+        for strip_idx in prange(num_strips, nogil=True, schedule='static'):
             r_start = strip_idx * STRIP_HEIGHT
             r_end = r_start + STRIP_HEIGHT
             if r_end > ch: r_end = ch
@@ -287,31 +287,16 @@ def compute_texture_hypercube(float[:, ::1] image, int levels=3):
         ged_responses.append(ged)
 
         if l < levels - 1:
-            # Intermediate blur buffers still need to be initialized?
-            # gaussian_blur overwrites dst. But temp_blur_h/v?
-            # gaussian_blur uses separate horiz and vert passes.
-            # horiz overwrites temp. vert overwrites dst.
-            # So np.empty is safe.
             temp_blur_h = np.empty((ch, cw), dtype=np.float32)
             temp_blur_v = np.empty((ch, cw), dtype=np.float32)
 
-            # But wait, gaussian_blur logic:
-            # convolve_horizontal(src, temp)
-            # convolve_vertical(temp, dst)
-            # If temp contains garbage, convolve_vertical reads garbage?
-            # convolve_horizontal writes ALL pixels. Safe.
-
             gaussian_blur(current_img, temp_blur_v, temp_blur_h, ch, cw)
 
-            # next_img also fully overwritten by downsample
             next_img = np.empty((ch // 2, cw // 2), dtype=np.float32)
             downsample(temp_blur_v, next_img, ch, cw)
             current_img = next_img
 
     cdef int out_channels = 6
-    # Output must be zeros or empty? We iterate over all r, c in collapse_features?
-    # collapse_features: for r in prange(h): for c in range(w): ...
-    # It writes all pixels. So np.empty is safe.
     cdef float[:, :, ::1] output = np.empty((h, w, out_channels), dtype=np.float32)
 
     cdef float[:, ::1] o_l0 = st_orientations[0]

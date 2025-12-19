@@ -33,22 +33,22 @@ The core optimization targeted the redundant trigonometric function calls in the
 To enable real-time analysis of high-resolution texture features, we implemented a **Block Processing (Strip Mining)** strategy for the Texture Engine (`drone_env/texture_features.pyx`).
 
 ### Problem
-The initial naive implementation computed gradients ($I_x, I_y$) and features (Structure Tensor, Hessian) for the entire image at once. For a 512x512 image, this involved allocating and iterating over multiple 1MB buffers ($512 \times 512 \times 4$ bytes). This approach caused significant **L2 Cache Misses** because the processor had to fetch data from RAM repeatedly for each successive pass (Gradient X -> Gradient Y -> Structure Tensor -> Hessian).
+The initial naive implementation computed gradients ($I_x, I_y$) and features (Structure Tensor, Hessian) for the entire image at once. For large images (e.g., 2048x2048), this involved allocating and iterating over multiple 16MB buffers ($2048 \times 2048 \times 4$ bytes). This approach caused **L2 Cache Misses** and high peak memory usage.
 
 ### Solution
 Refactored the pipeline to process the image in horizontal **Strips** (e.g., 64 rows).
 1.  **Tiled Execution**: Inside a parallel loop (`prange`), each thread grabs a strip of the image.
-2.  **Local Buffers**: The thread allocates small "scratchpad" buffers just large enough for the strip (plus halo/boundary rows). These buffers fit entirely within the L2 (and often L1) cache.
+2.  **Local Buffers**: The thread allocates small "scratchpad" buffers just large enough for the strip. These buffers fit entirely within the L2 cache.
 3.  **Fused Operations**: The thread computes Gradients, Structure Tensor, Hessian, and GED for the strip in one go, reusing the hot data in the cache.
 
-### Results
-*   **Baseline (Full-Frame):** ~77ms per image (512x512).
-*   **Optimized (Block Processing):** ~19ms - 36ms per image.
-*   **Speedup:** **~2.0x - 4.0x**.
-*   **Memory Efficiency:** Reduced peak memory allocation by avoiding temporary full-frame gradient buffers.
+### Results (2048x2048 Image)
+*   **Baseline (Full-Frame):** ~282ms per image.
+*   **Optimized (Block Processing):** ~252ms per image.
+*   **Speedup:** **~1.12x**.
+*   **Memory Efficiency:** Reduced peak memory allocation by avoiding intermediate full-frame gradient buffers (saving ~32MB per level for 2048x2048 input).
 
 ### Further Tuning
-Profiling revealed that `memset` operations (zero-initialization of output buffers) consumed ~3.4% of instructions. We replaced `np.zeros` with `np.empty` for the intermediate feature maps (`orient`, `coher`, etc.) since the strip processing logic guarantees full coverage (overwriting every pixel). Additionally, we replaced the generic `pow(x, 0.333...)` call for the GED geometric mean with the optimized `cbrt(x)` function from `libc.math`.
+Profiling revealed that `memset` operations (zero-initialization of output buffers) consumed ~3.4% of instructions. We replaced `np.zeros` with `np.empty` for the intermediate feature maps since the strip processing logic guarantees full coverage. Additionally, we replaced the generic `pow(x, 0.333...)` call for the GED geometric mean with the optimized `cbrt(x)` function from `libc.math`.
 
 ## Validation
 
