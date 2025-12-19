@@ -9,6 +9,24 @@ from cython.parallel import prange, parallel
 from libc.math cimport sqrt, atan2, exp, fabs, pow, M_PI, cbrt
 from libc.stdlib cimport malloc, free
 
+# AVX Intrinsics definitions
+cdef extern from "<immintrin.h>" nogil:
+    ctypedef float __m256
+    __m256 _mm256_loadu_ps(float *p)
+    void _mm256_storeu_ps(float *p, __m256 a)
+    __m256 _mm256_set1_ps(float a)
+    __m256 _mm256_setzero_ps()
+    __m256 _mm256_add_ps(__m256 a, __m256 b)
+    __m256 _mm256_sub_ps(__m256 a, __m256 b)
+    __m256 _mm256_mul_ps(__m256 a, __m256 b)
+    __m256 _mm256_div_ps(__m256 a, __m256 b)
+    __m256 _mm256_sqrt_ps(__m256 a)
+    __m256 _mm256_max_ps(__m256 a, __m256 b)
+    __m256 _mm256_and_ps(__m256 a, __m256 b)
+    __m256 _mm256_cmp_ps(__m256 a, __m256 b, int imm8)
+    # Constants for cmp
+    int _CMP_GT_OQ
+
 cdef float[5] GAUSS_KERNEL = [0.06136, 0.24477, 0.38774, 0.24477, 0.06136]
 
 # --- Convolution Helpers ---
@@ -53,9 +71,13 @@ cdef void downsample(float[:, ::1] src, float[:, ::1] dst, int h_src, int w_src)
         for c in range(w_dst):
             dst[r, c] = src[r * 2, c * 2]
 
-# --- 2D Tile Processing Logic ---
+# --- AVX Helper: Absolute Value ---
+cdef inline __m256 _mm256_abs_ps(__m256 a) noexcept nogil:
+    return _mm256_max_ps(a, _mm256_sub_ps(_mm256_setzero_ps(), a))
 
-cdef inline void process_tile_features(
+# --- Tile Processing with SIMD ---
+
+cdef inline void process_tile_features_simd(
     int r_start, int r_end, int c_start, int c_end,
     int h, int w,
     float[:, ::1] img,
@@ -65,23 +87,16 @@ cdef inline void process_tile_features(
     float[:, ::1] ged_out,
     float hess_scale_norm,
     float *Ix_buf, float *Iy_buf,
-    int buf_stride # Width of buffer (TILE_W + 2)
+    int buf_stride
 ) noexcept nogil:
 
-    # Ix_buf and Iy_buf are scratchpads of size (TILE_H + 2) * (TILE_W + 2)
-    # They hold gradients for the tile PLUS 1-pixel halo.
-    # Buffer coordinate (0, 0) corresponds to global (r_start-1, c_start-1)
-
-    cdef int global_r, global_c
-    cdef int br, bc # Buffer row/col indices
-    cdef float val_x, val_y
-
     # 1. Compute Gradients into Local Buffers
-    # We need to cover range [r_start-1, r_end] x [c_start-1, c_end]
-    # This matches buffer size (h_tile+2) x (w_tile+2)
-
     cdef int h_tile_plus_halo = r_end - r_start + 2
     cdef int w_tile_plus_halo = c_end - c_start + 2
+
+    cdef int br, bc
+    cdef int global_r, global_c
+    cdef float val_x, val_y
 
     for br in range(h_tile_plus_halo):
         global_r = r_start - 1 + br
@@ -89,14 +104,10 @@ cdef inline void process_tile_features(
             global_c = c_start - 1 + bc
 
             if global_r >= 0 and global_r < h and global_c >= 0 and global_c < w:
-                # Calc Gradients at global_r, global_c
-                # Gradient X
                 if global_c > 0 and global_c < w - 1:
                     val_x = (img[global_r, global_c + 1] - img[global_r, global_c - 1]) * 0.5
                 else:
                     val_x = 0.0
-
-                # Gradient Y
                 if global_r > 0 and global_r < h - 1:
                     val_y = (img[global_r + 1, global_c] - img[global_r - 1, global_c]) * 0.5
                 else:
@@ -108,28 +119,131 @@ cdef inline void process_tile_features(
             Ix_buf[br * buf_stride + bc] = val_x
             Iy_buf[br * buf_stride + bc] = val_y
 
-    # 2. Compute Features using Local Buffers
-    # Iterate over valid output pixels [r_start, r_end) x [c_start, c_end)
+    # 2. Compute Features (SIMD)
+    cdef int r, c, i, j, k
 
-    cdef int r, c
-    cdef int i, j
-    cdef float s_xx, s_yy, s_xy, val_ix, val_iy
-    cdef float diff, sum_eigen, lambda1, lambda2
+    # SIMD constants
+    cdef __m256 v_half = _mm256_set1_ps(0.5)
+    cdef __m256 v_two = _mm256_set1_ps(2.0)
+    cdef __m256 v_hess_scale = _mm256_set1_ps(hess_scale_norm)
+    cdef __m256 v_epsilon = _mm256_set1_ps(1e-6)
+    cdef __m256 v_zero = _mm256_setzero_ps()
+    cdef __m256 v_four = _mm256_set1_ps(4.0)
+
+    # Temp vars for scalar atan2 fallback
+    cdef float[8] tmp_s_xy
+    cdef float[8] tmp_denom
+
+    # Vars declaration
+    cdef __m256 v_s_xx, v_s_yy, v_s_xy
+    cdef __m256 v_ix, v_iy
+    cdef __m256 v_diff, v_sum_eigen, v_lambda1, v_lambda2, v_coher
+    cdef __m256 v_ixx, v_iyy, v_ixy, v_det, v_hess
+    cdef __m256 v_diff_term, v_xy_sq, v_sum_safe, v_denom
+
+    # Vars for scalar gradient fallback (hessian)
+    cdef __m256 v_ix_p1, v_ix_m1, v_iy_p1, v_iy_m1, v_ix_y_p1, v_ix_y_m1
+
+    # Scalar fallbacks
+    cdef float s_xx, s_yy, s_xy, val_ix, val_iy, diff, sum_eigen
     cdef float i_xx, i_yy, i_xy, det
     cdef float sum_in, sum_out, cnt_in, cnt_out, val_img
+    cdef int curr_c
+
+    cdef int valid_w = c_end - c_start
+    cdef int vec_limit = c_start + (valid_w // 8) * 8
 
     for r in range(r_start, r_end):
         if r >= h: break
-        br = r - r_start + 1 # Buffer row center
+        br = r - r_start + 1
 
-        for c in range(c_start, c_end):
-            if c >= w: break
-            bc = c - c_start + 1 # Buffer col center
+        # Vectorized Loop
+        for c in range(c_start, vec_limit, 8):
+            bc = c - c_start + 1
 
             # --- Structure Tensor ---
-            s_xx = 0.0; s_yy = 0.0; s_xy = 0.0
+            v_s_xx = _mm256_setzero_ps()
+            v_s_yy = _mm256_setzero_ps()
+            v_s_xy = _mm256_setzero_ps()
 
-            # 3x3 loop around (br, bc) in buffer
+            # 3x3 Window Accumulation
+            for i in range(-1, 2):
+                for j in range(-1, 2):
+                    v_ix = _mm256_loadu_ps(&Ix_buf[(br+i) * buf_stride + (bc+j)])
+                    v_iy = _mm256_loadu_ps(&Iy_buf[(br+i) * buf_stride + (bc+j)])
+
+                    v_s_xx = _mm256_add_ps(v_s_xx, _mm256_mul_ps(v_ix, v_ix))
+                    v_s_yy = _mm256_add_ps(v_s_yy, _mm256_mul_ps(v_iy, v_iy))
+                    v_s_xy = _mm256_add_ps(v_s_xy, _mm256_mul_ps(v_ix, v_iy))
+
+            v_diff_term = _mm256_sub_ps(v_s_xx, v_s_yy)
+            v_diff_term = _mm256_mul_ps(v_diff_term, v_diff_term)
+
+            v_xy_sq = _mm256_mul_ps(v_s_xy, v_s_xy)
+            v_xy_sq = _mm256_mul_ps(v_xy_sq, v_four)
+
+            v_diff = _mm256_sqrt_ps(_mm256_add_ps(v_diff_term, v_xy_sq))
+            v_sum_eigen = _mm256_add_ps(v_s_xx, v_s_yy)
+
+            v_sum_safe = _mm256_max_ps(v_sum_eigen, v_epsilon)
+            v_coher = _mm256_div_ps(v_diff, v_sum_safe)
+
+            _mm256_storeu_ps(&coher_out[r, c], v_coher)
+
+            _mm256_storeu_ps(tmp_s_xy, v_s_xy)
+            v_denom = _mm256_sub_ps(v_s_xx, v_s_yy)
+            _mm256_storeu_ps(tmp_denom, v_denom)
+
+            for k in range(8):
+                orient_out[r, c+k] = 0.5 * atan2(2.0 * tmp_s_xy[k], tmp_denom[k])
+
+            # --- Hessian ---
+            v_ix_p1 = _mm256_loadu_ps(&Ix_buf[br * buf_stride + (bc+1)])
+            v_ix_m1 = _mm256_loadu_ps(&Ix_buf[br * buf_stride + (bc-1)])
+            v_ixx = _mm256_mul_ps(_mm256_sub_ps(v_ix_p1, v_ix_m1), v_half)
+
+            v_iy_p1 = _mm256_loadu_ps(&Iy_buf[(br+1) * buf_stride + bc])
+            v_iy_m1 = _mm256_loadu_ps(&Iy_buf[(br-1) * buf_stride + bc])
+            v_iyy = _mm256_mul_ps(_mm256_sub_ps(v_iy_p1, v_iy_m1), v_half)
+
+            v_ix_y_p1 = _mm256_loadu_ps(&Ix_buf[(br+1) * buf_stride + bc])
+            v_ix_y_m1 = _mm256_loadu_ps(&Ix_buf[(br-1) * buf_stride + bc])
+            v_ixy = _mm256_mul_ps(_mm256_sub_ps(v_ix_y_p1, v_ix_y_m1), v_half)
+
+            v_det = _mm256_sub_ps(
+                _mm256_mul_ps(v_ixx, v_iyy),
+                _mm256_mul_ps(v_ixy, v_ixy)
+            )
+            v_hess = _mm256_mul_ps(_mm256_abs_ps(v_det), v_hess_scale)
+            _mm256_storeu_ps(&hess_out[r, c], v_hess)
+
+            # --- GED ---
+            for k in range(8):
+                sum_in = 0.0; cnt_in = 0.0
+                sum_out = 0.0; cnt_out = 0.0
+                curr_c = c + k
+
+                for i in range(-3, 4):
+                    for j in range(-3, 4):
+                        if r+i >= 0 and r+i < h and curr_c+j >= 0 and curr_c+j < w:
+                            val_img = img[r+i, curr_c+j]
+                            if i >= -1 and i <= 1 and j >= -1 and j <= 1:
+                                sum_in += val_img
+                                cnt_in += 1.0
+                            else:
+                                sum_out += val_img
+                                cnt_out += 1.0
+                if cnt_in > 0 and cnt_out > 0:
+                    ged_out[r, curr_c] = fabs(sum_in/cnt_in - sum_out/cnt_out)
+                else:
+                    ged_out[r, curr_c] = 0.0
+
+        # Handle Remaining Columns Scalar
+        for c in range(vec_limit, c_end):
+            bc = c - c_start + 1
+
+            # ST Scalar
+            s_xx = 0.0; s_yy = 0.0; s_xy = 0.0
             for i in range(-1, 2):
                 for j in range(-1, 2):
                     val_ix = Ix_buf[(br+i) * buf_stride + (bc+j)]
@@ -140,29 +254,23 @@ cdef inline void process_tile_features(
 
             diff = sqrt((s_xx - s_yy)**2 + 4 * s_xy * s_xy)
             sum_eigen = s_xx + s_yy
-            lambda1 = (sum_eigen + diff) * 0.5
-            lambda2 = (sum_eigen - diff) * 0.5
 
             if sum_eigen > 1e-6:
-                coher_out[r, c] = (lambda1 - lambda2) / sum_eigen
+                coher_out[r, c] = ((sum_eigen + diff)/2.0 - (sum_eigen - diff)/2.0) / sum_eigen
             else:
                 coher_out[r, c] = 0.0
             orient_out[r, c] = 0.5 * atan2(2 * s_xy, s_xx - s_yy)
 
-            # --- Hessian ---
-            # Ix_buf stores Ix. We need d/dx(Ix) etc.
-            # Ixx ~ (Ix(x+1) - Ix(x-1)) / 2
+            # Hessian Scalar
             i_xx = (Ix_buf[br * buf_stride + (bc+1)] - Ix_buf[br * buf_stride + (bc-1)]) * 0.5
             i_yy = (Iy_buf[(br+1) * buf_stride + bc] - Iy_buf[(br-1) * buf_stride + bc]) * 0.5
             i_xy = (Ix_buf[(br+1) * buf_stride + bc] - Ix_buf[(br-1) * buf_stride + bc]) * 0.5
-
             det = i_xx * i_yy - i_xy * i_xy
             hess_out[r, c] = fabs(det) * hess_scale_norm
 
-            # --- GED --- (Uses Global Image, access pattern is scattered but localized)
+            # GED Scalar
             sum_in = 0.0; cnt_in = 0.0
             sum_out = 0.0; cnt_out = 0.0
-
             for i in range(-3, 4):
                 for j in range(-3, 4):
                     if r+i >= 0 and r+i < h and c+j >= 0 and c+j < w:
@@ -173,7 +281,6 @@ cdef inline void process_tile_features(
                         else:
                             sum_out += val_img
                             cnt_out += 1.0
-
             if cnt_in > 0 and cnt_out > 0:
                 ged_out[r, c] = fabs(sum_in/cnt_in - sum_out/cnt_out)
             else:
@@ -247,20 +354,18 @@ def compute_texture_hypercube(float[:, ::1] image, int levels=3):
     cdef float[:, ::1] temp_blur_h
     cdef float[:, ::1] next_img
 
-    # Output buffers
     cdef float[:, ::1] orient
     cdef float[:, ::1] coher
     cdef float[:, ::1] hess
     cdef float[:, ::1] ged
 
     cdef int l, ch, cw
-    cdef int TILE_SIZE = 32 # Small tile to fit L1 cache (32x32x4x2 ~ 8KB)
+    cdef int TILE_SIZE = 32
     cdef float scale_factor
 
-    cdef int num_strips_r, strip_r, r_start, r_end
-    cdef int num_strips_c, strip_c, c_start, c_end
+    cdef int num_strips_r, num_strips_c, total_tiles, tile_idx
+    cdef int strip_r, strip_c, r_start, r_end, c_start, c_end
 
-    # Scratchpads pointers
     cdef float *Ix_buf
     cdef float *Iy_buf
     cdef int buf_w, buf_h, buf_size
@@ -278,15 +383,9 @@ def compute_texture_hypercube(float[:, ::1] image, int levels=3):
 
         num_strips_r = (ch + TILE_SIZE - 1) // TILE_SIZE
         num_strips_c = (cw + TILE_SIZE - 1) // TILE_SIZE
-
-        # We perform 2D tiling.
-        # Parallelize over ROW strips. Each thread handles a full row of tiles.
-        # Inside the thread, we iterate over COL tiles.
-        # We allocate ONE buffer per thread and reuse it.
+        total_tiles = num_strips_r * num_strips_c
 
         with nogil, parallel():
-            # Allocate thread-local buffers
-            # Max buffer size is (TILE_SIZE + 2) x (TILE_SIZE + 2)
             buf_h = TILE_SIZE + 2
             buf_w = TILE_SIZE + 2
             buf_size = buf_h * buf_w
@@ -295,27 +394,27 @@ def compute_texture_hypercube(float[:, ::1] image, int levels=3):
             Iy_buf = <float *> malloc(buf_size * sizeof(float))
 
             if Ix_buf != NULL and Iy_buf != NULL:
+                for tile_idx in prange(total_tiles, schedule='dynamic'):
+                    strip_r = tile_idx // num_strips_c
+                    strip_c = tile_idx % num_strips_c
 
-                for strip_r in prange(num_strips_r, schedule='static'):
                     r_start = strip_r * TILE_SIZE
                     r_end = r_start + TILE_SIZE
                     if r_end > ch: r_end = ch
 
-                    for strip_c in range(num_strips_c):
-                        c_start = strip_c * TILE_SIZE
-                        c_end = c_start + TILE_SIZE
-                        if c_end > cw: c_end = cw
+                    c_start = strip_c * TILE_SIZE
+                    c_end = c_start + TILE_SIZE
+                    if c_end > cw: c_end = cw
 
-                        process_tile_features(
-                            r_start, r_end, c_start, c_end,
-                            ch, cw,
-                            current_img,
-                            orient, coher, hess, ged,
-                            pow(scale_factor, 4),
-                            Ix_buf, Iy_buf, buf_w
-                        )
+                    process_tile_features_simd(
+                        r_start, r_end, c_start, c_end,
+                        ch, cw,
+                        current_img,
+                        orient, coher, hess, ged,
+                        pow(scale_factor, 4),
+                        Ix_buf, Iy_buf, buf_w
+                    )
 
-            # Cleanup
             free(Ix_buf)
             free(Iy_buf)
 
@@ -328,7 +427,6 @@ def compute_texture_hypercube(float[:, ::1] image, int levels=3):
             temp_blur_h = np.empty((ch, cw), dtype=np.float32)
             temp_blur_v = np.empty((ch, cw), dtype=np.float32)
             gaussian_blur(current_img, temp_blur_v, temp_blur_h, ch, cw)
-
             next_img = np.empty((ch // 2, cw // 2), dtype=np.float32)
             downsample(temp_blur_v, next_img, ch, cw)
             current_img = next_img
