@@ -150,7 +150,7 @@ class MockImageViewer:
                     self.cv_img_payload = cv_img
 
             msg = MockImageMsg(img)
-            ts = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e9
+            ts = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
             self.data_queue.put((ts, 'IMAGE', msg))
 
             time.sleep(1/30.0) # 30 FPS
@@ -210,7 +210,7 @@ def process_visuals(config, frame_state, button_state, video_state, cache_state,
     handle_modes(frame_state, drone_state, button_state, pursuit_state, input_state, display_frame, width, height)
     handle_pursuit_alignment(pursuit_state, drone_state, frame_state, display_frame)
     display_frame = draw_control_mode(display_frame, control_mode)
-    show_video(config, display_frame, logger)
+    return show_video(config, display_frame, logger)
 
 def handle_modes(frame_state, drone_state, button_state, pursuit_state, input_state, display_frame, width, height):
     bbox_size = 50
@@ -530,7 +530,9 @@ def processing_loop(data_queue, frame_state, drone_state, pursuit_state, button_
                     else:
                          frame_state.current_frame = data
 
-                process_visuals(config, frame_state, button_state, video_state, cache_state, shared_input_state, drone_state, pursuit_state, control_mode, logger)
+                should_continue = process_visuals(config, frame_state, button_state, video_state, cache_state, shared_input_state, drone_state, pursuit_state, control_mode, logger)
+                if should_continue is False:
+                    break
             except Exception as e:
                 logger.error(str(e))
 
