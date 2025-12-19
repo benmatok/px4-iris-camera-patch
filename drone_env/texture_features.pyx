@@ -203,7 +203,6 @@ cdef inline void collapse_features(int r, int w,
         output[r, c, 1] = c0
 
         # Scale Drift with cyclic wrap-around (period pi)
-        # Orientation is in [-pi/2, pi/2]
         drift = o1 - o0
         if drift > M_PI * 0.5:
             drift -= M_PI
@@ -213,6 +212,7 @@ cdef inline void collapse_features(int r, int w,
 
         output[r, c, 3] = c0 - c1
 
+        # Scale selection (Max Response)
         if h0 >= h1 and h0 >= h2:
             output[r, c, 4] = 0.0
         elif h1 >= h0 and h1 >= h2:
@@ -220,11 +220,14 @@ cdef inline void collapse_features(int r, int w,
         else:
             output[r, c, 4] = 2.0
 
-        output[r, c, 5] = (g0 + g1 + g2) / 3.0
+        # Boundary: Geometric Mean (pow(g0*g1*g2, 1/3))
+        # Add small epsilon to avoid zero issues if desired?
+        # But geometric mean should be 0 if any is 0 (suppression).
+        output[r, c, 5] = pow(g0 * g1 * g2, 0.3333333)
 
 def compute_texture_hypercube(float[:, ::1] image, int levels=3):
-    if levels < 3:
-        raise ValueError("Levels must be at least 3 for feature collapse.")
+    if levels != 3:
+        raise ValueError("Texture Engine currently supports exactly 3 levels.")
 
     cdef int h = image.shape[0]
     cdef int w = image.shape[1]
@@ -246,6 +249,7 @@ def compute_texture_hypercube(float[:, ::1] image, int levels=3):
     cdef float[:, ::1] ged
 
     cdef int l, ch, cw
+    cdef float scale_factor
 
     for l in range(levels):
         ch = current_img.shape[0]
@@ -264,7 +268,11 @@ def compute_texture_hypercube(float[:, ::1] image, int levels=3):
         st_orientations.append(orient)
         st_coherences.append(coher)
 
-        compute_hessian_features(Ix, Iy, hess, 1.0, ch, cw)
+        scale_factor = pow(2.0, l)
+        # Normalization: pow(scale_factor, 4) matches Lindeberg's t^2 normalization (t = sigma^2)
+        # t^2 det(H) = sigma^4 det(H).
+        # We use scale_factor = 2^l approx sigma.
+        compute_hessian_features(Ix, Iy, hess, pow(scale_factor, 4), ch, cw)
         hessian_responses.append(hess)
 
         compute_ged_features(current_img, ged, ch, cw)
