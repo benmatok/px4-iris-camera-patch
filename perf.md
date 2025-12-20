@@ -53,8 +53,15 @@ We replaced the auto-vectorized loops with hand-tuned AVX2 intrinsics (`immintri
 *   **Speedup:** **~1.15x**.
 *   **Memory Efficiency:** Drastic reduction in thread-local memory allocation (KB vs MB).
 
-### Further Tuning
-Profiling revealed that `memset` operations (zero-initialization of output buffers) consumed ~3.4% of instructions. We replaced `np.zeros` with `np.empty`. Additionally, we optimized the GED geometric mean calculation using `cbrt`.
+### Bottleneck Analysis (512x512 Image)
+Profiling with `cachegrind` reveals the remaining hotspots in the optimized engine:
+
+*   **Main Loop (SIMD Logic + Overhead):** **~57%**. This includes the vectorized feature computation, GED scalar loop, and loop control.
+*   **Orientation Calculation (`atan2`):** **~13%**. The scalar fallback for `atan2` (used for Structure Tensor orientation) is the most significant mathematical bottleneck.
+*   **Gaussian Blur:** **~8.6%**. The separable convolution steps (`convolve_horizontal` + `convolve_vertical`) take a moderate chunk.
+*   **GED Aggregation (`cbrtf`):** **~4.4%**. The cube root calculation for boundary fusion.
+
+**Conclusion:** The implementation is now **Compute Bound**. Memory access (L1/L2 misses) is no longer the primary constraint. Further optimization would require an approximate SIMD `atan2` implementation or algorithmic simplification.
 
 ## Validation
 
