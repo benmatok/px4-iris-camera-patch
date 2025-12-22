@@ -59,9 +59,8 @@ cdef class TextureTracker:
 
         # Create Gaussian Target Y
         # Y is a 2D Gaussian peak centered at the middle of the feature map
-        cdef float output_sigma = np.sqrt(self.target_w * self.target_h) * self.sigma / (self.target_w / self.feature_w) # Roughly scale sigma
-        # Better: sigma relative to feature size
-        output_sigma = np.sqrt(self.feature_w * self.feature_h) * self.sigma * 0.5 # Heuristic
+        # Sigma relative to feature size
+        cdef float output_sigma = np.sqrt(self.feature_w * self.feature_h) * self.sigma * 0.5 # Heuristic
 
         y_h, x_h = np.ogrid[:self.feature_h, :self.feature_w]
         center_y = self.feature_h // 2
