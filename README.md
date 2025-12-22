@@ -198,3 +198,32 @@ Implement a tracker that allows the drone to lock onto complex textured targets 
 ### Expected Benefits
 *   **Robustness to Illumination**: Texture features (gradients, hessians) are largely invariant to global lighting changes, unlike raw pixel intensity.
 *   **Ambiguity Resolution**: Distinguish between objects with similar color but different surface roughness (e.g., smooth road vs. rough gravel).
+
+## Roadmap: RL-Based Homing Control
+
+Following the development of the robust **Texture-Based Tracker**, the next major milestone is to upgrade the control stack from simple PID-based pursuit to a learned **Reinforcement Learning (RL) Policy** for high-speed homing and visual servoing.
+
+### Objective
+Train a generic "Homing Policy" that maps tracker outputs directly to velocity commands, enabling the drone to pursue dynamic targets with complex maneuvers that analytic PID controllers struggle to handle.
+
+### Implementation Plan
+
+1.  **Observation Space Integration**:
+    *   Augment the current observation vector (IMU history) with high-level tracker state:
+        *   **Bounding Box Error**: Normalized deviation of target center $(u, v)$ from the frame center.
+        *   **Relative Size**: Ratio of current bbox area to target area (proxy for distance).
+        *   **Tracker Confidence**: The correlation peak strength (from the Texture Engine), allowing the policy to behave conservatively when tracking is weak.
+
+2.  **Simulation Environment (Training)**:
+    *   **Target Entity**: Introduce a "virtual target" in the `DroneEnv` (Cython/CUDA) that follows randomized trajectories (e.g., Lissajous curves, sudden jerks) to simulate an evasive object.
+    *   **Tracker Simulation**: Instead of running the full visual tracker during training (which is computationally expensive), simulate the tracker's output by projecting the target's 3D position onto the drone's virtual camera plane, adding synthetic noise and "failure" probabilities based on angular velocity (motion blur simulation).
+
+3.  **Reward Function Design**:
+    *   **Visual Servoing Reward**: Penalty proportional to the distance of the target from the image center ($L_2$ norm).
+    *   **Range Reward**: Incentive to maintain a specific bounding box size (optimal tracking distance).
+    *   **Smoothness**: Penalties for jerky control inputs to ensure stable video footage.
+
+4.  **Sim-to-Real Transfer**:
+    *   Train the policy using the massive parallelization capabilities (2000+ agents) of the current setup.
+    *   Deploy the trained policy in `main.py`, feeding it real outputs from the `TextureTracker`.
+    *   **Robustness Test**: Evaluate behavior when the tracker drifts or momentarily fails (using the confidence input to trigger recovery behaviors).
