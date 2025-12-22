@@ -106,6 +106,13 @@ def warp_bbox(H, last_bbox):
     return new_bbox, True
 
 def megatrack():
+    # Try using our custom TextureTracker if available
+    try:
+        from drone_env.tracker import TextureTracker
+        return TextureTracker()
+    except ImportError:
+        pass
+
     if hasattr(cv2, 'TrackerCSRT_create'):
         return cv2.TrackerCSRT_create()
     else:
