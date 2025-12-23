@@ -31,6 +31,7 @@ cdef extern from "physics_avx.hpp":
         float* masses, float* drag_coeffs, float* thrust_coeffs,
         float* target_vx, float* target_vy, float* target_vz, float* target_yaw_rate,
         float* vt_x, float* vt_y, float* vt_z, # Virtual Target Position
+        float* traj_params, # Trajectory Parameters
         float* pos_history,
         float* observations,
         float* rewards,
@@ -56,6 +57,7 @@ cdef void _step_agent_scalar(
     float[:] masses, float[:] drag_coeffs, float[:] thrust_coeffs,
     float[:] target_vx, float[:] target_vy, float[:] target_vz, float[:] target_yaw_rate,
     float[:] vt_x, float[:] vt_y, float[:] vt_z,
+    float[:, :] traj_params,
     float[:] pos_history,
     float[:, :] observations,
     float[:] rewards,
@@ -87,7 +89,7 @@ cdef void _step_agent_scalar(
 
     cdef float vx_b, vy_b, vz_b
     cdef float v_err_sq, yaw_rate_err_sq
-    cdef float rew
+    cdef float rew, rew_vis, rew_range, rew_smooth
     cdef int collision
 
     # Load state
@@ -110,11 +112,25 @@ cdef void _step_agent_scalar(
     pitch_rate_cmd = actions[i * 4 + 2]
     yaw_rate_cmd = actions[i * 4 + 3]
 
-    # Update Virtual Target
+    # Update Virtual Target using Trajectory Params
     cdef float t_f = <float>t
-    cdef float vtx_val = 5.0 * sin(0.05 * t_f)
-    cdef float vty_val = 5.0 * cos(0.05 * t_f)
-    cdef float vtz_val = 10.0 + 2.0 * sin(0.1 * t_f)
+
+    # 0:Ax, 1:Fx, 2:Px, 3:Ay, 4:Fy, 5:Py, 6:Az, 7:Fz, 8:Pz, 9:Oz
+    cdef float ax_p = traj_params[i, 0]
+    cdef float fx_p = traj_params[i, 1]
+    cdef float px_p = traj_params[i, 2]
+    cdef float ay_p = traj_params[i, 3]
+    cdef float fy_p = traj_params[i, 4]
+    cdef float py_p = traj_params[i, 5]
+    cdef float az_p = traj_params[i, 6]
+    cdef float fz_p = traj_params[i, 7]
+    cdef float pz_p = traj_params[i, 8]
+    cdef float oz_p = traj_params[i, 9]
+
+    cdef float vtx_val = ax_p * sin(fx_p * t_f + px_p)
+    cdef float vty_val = ay_p * sin(fy_p * t_f + py_p)
+    cdef float vtz_val = oz_p + az_p * sin(fz_p * t_f + pz_p)
+
     vt_x[i] = vtx_val
     vt_y[i] = vty_val
     vt_z[i] = vtz_val
@@ -270,8 +286,23 @@ cdef void _step_agent_scalar(
     v_err_sq = (vx_b - tvx)*(vx_b - tvx) + (vy_b - tvy)*(vy_b - tvy) + (vz_b - tvz)*(vz_b - tvz)
     yaw_rate_err_sq = (yaw_rate_cmd - tyr)*(yaw_rate_cmd - tyr)
 
+    # 1. Base
     rew = 1.0 * exp(-2.0 * v_err_sq)
     rew += 0.5 * exp(-2.0 * yaw_rate_err_sq)
+
+    # 2. Visual Servoing
+    rew_vis = exp(-2.0 * (u*u + v*v))
+    rew += 0.5 * rew_vis
+
+    # 3. Range
+    rew_range = exp(-2.0 * (size - 1.0)*(size - 1.0))
+    rew += 0.5 * rew_range
+
+    # 4. Smoothness
+    rew_smooth = exp(-0.1 * w2)
+    rew += 0.2 * rew_smooth
+
+    # Penalties
     rew -= 0.01 * (r*r + p*p)
 
     if fabs(r) > 1.0 or fabs(p) > 1.0:
@@ -296,6 +327,7 @@ cdef void _reset_agent_scalar(
     float[:] roll, float[:] pitch, float[:] yaw,
     float[:] masses, float[:] drag_coeffs, float[:] thrust_coeffs,
     float[:] target_vx, float[:] target_vy, float[:] target_vz, float[:] target_yaw_rate,
+    float[:, :] traj_params,
     float[:, :] observations
 ) noexcept nogil:
     cdef int k
@@ -306,6 +338,21 @@ cdef void _reset_agent_scalar(
     masses[i] = 0.5 + rand_float() * 1.0
     drag_coeffs[i] = 0.05 + rand_float() * 0.1
     thrust_coeffs[i] = 0.8 + rand_float() * 0.4
+
+    # Randomize Trajectory Params
+    # 0:Ax, 1:Fx, 2:Px, 3:Ay, 4:Fy, 5:Py, 6:Az, 7:Fz, 8:Pz, 9:Oz
+    traj_params[i, 0] = 3.0 + rand_float() * 4.0
+    traj_params[i, 1] = 0.03 + rand_float() * 0.07
+    traj_params[i, 2] = rand_float() * 6.28318
+
+    traj_params[i, 3] = 3.0 + rand_float() * 4.0
+    traj_params[i, 4] = 0.03 + rand_float() * 0.07
+    traj_params[i, 5] = rand_float() * 6.28318
+
+    traj_params[i, 6] = 1.0 + rand_float() * 2.0
+    traj_params[i, 7] = 0.05 + rand_float() * 0.1
+    traj_params[i, 8] = rand_float() * 6.28318
+    traj_params[i, 9] = 8.0 + rand_float() * 4.0
 
     rnd_cmd = rand_float()
     tvx=0.0; tvy=0.0; tvz=0.0; tyr=0.0
@@ -360,6 +407,7 @@ def step_cython(
     float[:] masses, float[:] drag_coeffs, float[:] thrust_coeffs,
     float[:] target_vx, float[:] target_vy, float[:] target_vz, float[:] target_yaw_rate,
     float[:] vt_x, float[:] vt_y, float[:] vt_z,
+    float[:, :] traj_params, # New
     float[:] pos_history,
     float[:, :] observations,
     float[:] rewards,
@@ -388,6 +436,9 @@ def step_cython(
                 &masses[0], &drag_coeffs[0], &thrust_coeffs[0],
                 &target_vx[0], &target_vy[0], &target_vz[0], &target_yaw_rate[0],
                 &vt_x[0], &vt_y[0], &vt_z[0],
+                &traj_params[0,0], # Pass pointer to first element (it's contiguous 2D array if assumed C-style)
+                # Note: traj_params is (num_agents, 10). Memory layout is contiguous.
+                # &traj_params[0,0] is correct.
                 &pos_history[0],
                 &observations[0,0],
                 &rewards[0],
@@ -408,6 +459,7 @@ def step_cython(
                 masses, drag_coeffs, thrust_coeffs,
                 target_vx, target_vy, target_vz, target_yaw_rate,
                 vt_x, vt_y, vt_z,
+                traj_params,
                 pos_history,
                 observations,
                 rewards,
@@ -423,6 +475,7 @@ def reset_cython(
     float[:] roll, float[:] pitch, float[:] yaw,
     float[:] masses, float[:] drag_coeffs, float[:] thrust_coeffs,
     float[:] target_vx, float[:] target_vy, float[:] target_vz, float[:] target_yaw_rate,
+    float[:, :] traj_params, # New
     float[:] pos_history,
     float[:, :] observations,
     int[:] rng_states,
@@ -443,6 +496,7 @@ def reset_cython(
                 roll, pitch, yaw,
                 masses, drag_coeffs, thrust_coeffs,
                 target_vx, target_vy, target_vz, target_yaw_rate,
+                traj_params,
                 observations
             )
 

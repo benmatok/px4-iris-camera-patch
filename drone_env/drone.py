@@ -39,6 +39,7 @@ def step_cpu(
     masses, drag_coeffs, thrust_coeffs,
     target_vx, target_vy, target_vz, target_yaw_rate,
     vt_x, vt_y, vt_z,
+    traj_params, # New: Trajectory Parameters
     pos_history,
     observations,
     rewards,
@@ -68,12 +69,20 @@ def step_cpu(
     vx, vy, vz = vel_x, vel_y, vel_z
     r, p, y_ang = roll, pitch, yaw
 
-    # Update Virtual Target
+    # Update Virtual Target using Trajectory Params
+    # traj_params: (num_agents, 10)
+    # 0:Ax, 1:Fx, 2:Px, 3:Ay, 4:Fy, 5:Py, 6:Az, 7:Fz, 8:Pz, 9:Oz
     t = step_counts[0] + 1
     t_f = float(t)
-    vtx_val = 5.0 * np.sin(0.05 * t_f)
-    vty_val = 5.0 * np.cos(0.05 * t_f)
-    vtz_val = 10.0 + 2.0 * np.sin(0.1 * t_f)
+
+    tp = traj_params # alias
+
+    # x = Ax * sin(Fx * t + Px)
+    vtx_val = tp[:, 0] * np.sin(tp[:, 1] * t_f + tp[:, 2])
+    # y = Ay * sin(Fy * t + Py) (using sin for consistency, phase controls cos)
+    vty_val = tp[:, 3] * np.sin(tp[:, 4] * t_f + tp[:, 5])
+    # z = Oz + Az * sin(Fz * t + Pz)
+    vtz_val = tp[:, 9] + tp[:, 6] * np.sin(tp[:, 7] * t_f + tp[:, 8])
 
     vt_x[:] = vtx_val
     vt_y[:] = vty_val
@@ -227,7 +236,10 @@ def step_cpu(
     observations[:, 606] = size
     observations[:, 607] = conf
 
-    # Rewards
+    # -------------------------------------------------------------------------
+    # Improved Reward Function
+    # -------------------------------------------------------------------------
+    # 1. Base Velocity/Yaw Reward (Legacy)
     vx_b = r11 * vx + r12 * vy + r13 * vz
     vy_b = r21 * vx + r22 * vy + r23 * vz
     vz_b = r31 * vx + r32 * vy + r33 * vz
@@ -238,13 +250,30 @@ def step_cpu(
     rew = np.zeros(num_agents, dtype=np.float32)
     rew += 1.0 * np.exp(-2.0 * v_err_sq)
     rew += 0.5 * np.exp(-2.0 * yaw_rate_err_sq)
+
+    # 2. Visual Servoing Reward (Keep target in center)
+    # Penalize u^2 + v^2
+    rew_vis = np.exp(-2.0 * (u**2 + v**2))
+    rew += 0.5 * rew_vis
+
+    # 3. Range Reward (Keep optimal size)
+    # Target size = 1.0 (approx 3m distance)
+    rew_range = np.exp(-2.0 * (size - 1.0)**2)
+    rew += 0.5 * rew_range
+
+    # 4. Smoothness Reward (Penalize high control rates)
+    # w2 is sum of squared rates
+    rew_smooth = np.exp(-0.1 * w2)
+    rew += 0.2 * rew_smooth
+
+    # Penalize high angles (Stability)
     rew -= 0.01 * (r*r + p*p)
 
     unstable = (np.abs(r) > 1.0) | (np.abs(p) > 1.0)
     rew = np.where(unstable, rew - 0.1, rew)
 
     rew = np.where(collision, rew - 10.0, rew)
-    rew += 0.1
+    rew += 0.1 # Survival bonus
 
     rewards[:] = rew
 
@@ -256,6 +285,7 @@ def reset_cpu(
     roll, pitch, yaw,
     masses, drag_coeffs, thrust_coeffs,
     target_vx, target_vy, target_vz, target_yaw_rate,
+    traj_params, # New
     pos_history,
     observations,
     rng_states,
@@ -267,6 +297,21 @@ def reset_cpu(
     masses[:] = 0.5 + np.random.rand(num_agents) * 1.0
     drag_coeffs[:] = 0.05 + np.random.rand(num_agents) * 0.1
     thrust_coeffs[:] = 0.8 + np.random.rand(num_agents) * 0.4
+
+    # Initialize Trajectory Parameters (Lissajous / Complex)
+    # 0:Ax, 1:Fx, 2:Px, 3:Ay, 4:Fy, 5:Py, 6:Az, 7:Fz, 8:Pz, 9:Oz
+    traj_params[:, 0] = 3.0 + np.random.rand(num_agents) * 4.0 # Ax: 3-7
+    traj_params[:, 1] = 0.03 + np.random.rand(num_agents) * 0.07 # Fx: 0.03-0.1
+    traj_params[:, 2] = np.random.rand(num_agents) * 2 * np.pi # Px
+
+    traj_params[:, 3] = 3.0 + np.random.rand(num_agents) * 4.0 # Ay
+    traj_params[:, 4] = 0.03 + np.random.rand(num_agents) * 0.07 # Fy
+    traj_params[:, 5] = np.random.rand(num_agents) * 2 * np.pi # Py
+
+    traj_params[:, 6] = 1.0 + np.random.rand(num_agents) * 2.0 # Az
+    traj_params[:, 7] = 0.05 + np.random.rand(num_agents) * 0.1 # Fz
+    traj_params[:, 8] = np.random.rand(num_agents) * 2 * np.pi # Pz
+    traj_params[:, 9] = 8.0 + np.random.rand(num_agents) * 4.0 # Oz: 8-12
 
     rnd_cmd = np.random.rand(num_agents)
 
@@ -345,6 +390,7 @@ class DroneEnv(CUDAEnvironmentState):
                 "masses", "drag_coeffs", "thrust_coeffs",
                 "target_vx", "target_vy", "target_vz", "target_yaw_rate",
                 "vt_x", "vt_y", "vt_z",
+                "traj_params", # New
                 "pos_history",
                 "rng_states",
                 "step_counts"
@@ -364,6 +410,7 @@ class DroneEnv(CUDAEnvironmentState):
             "vt_x": {"shape": (self.num_agents,), "dtype": np.float32},
             "vt_y": {"shape": (self.num_agents,), "dtype": np.float32},
             "vt_z": {"shape": (self.num_agents,), "dtype": np.float32},
+            "traj_params": {"shape": (self.num_agents, 10), "dtype": np.float32}, # New
             "pos_history": {"shape": (self.num_agents * self.episode_length * 3,), "dtype": np.float32},
             "rng_states": {"shape": (self.num_agents,), "dtype": np.int32},
              "pos_x": {"shape": (self.num_agents,), "dtype": np.float32},
@@ -398,6 +445,7 @@ class DroneEnv(CUDAEnvironmentState):
                 "masses", "drag_coeffs", "thrust_coeffs",
                 "target_vx", "target_vy", "target_vz", "target_yaw_rate",
                 "vt_x", "vt_y", "vt_z",
+                "traj_params",
                 "pos_history",
                 "rng_states",
                 "observations", "rewards", "done_flags",
@@ -421,6 +469,7 @@ class DroneEnv(CUDAEnvironmentState):
             "masses": "masses", "drag_coeffs": "drag_coeffs", "thrust_coeffs": "thrust_coeffs",
             "target_vx": "target_vx", "target_vy": "target_vy", "target_vz": "target_vz", "target_yaw_rate": "target_yaw_rate",
             "vt_x": "vt_x", "vt_y": "vt_y", "vt_z": "vt_z",
+            "traj_params": "traj_params", # New
             "pos_history": "pos_history",
             "observations": "observations",
             "rewards": "rewards",
@@ -439,6 +488,7 @@ class DroneEnv(CUDAEnvironmentState):
             "roll": "roll", "pitch": "pitch", "yaw": "yaw",
             "masses": "masses", "drag_coeffs": "drag_coeffs", "thrust_coeffs": "thrust_coeffs",
             "target_vx": "target_vx", "target_vy": "target_vy", "target_vz": "target_vz", "target_yaw_rate": "target_yaw_rate",
+            "traj_params": "traj_params", # New
             "pos_history": "pos_history",
             "observations": "observations",
             "rng_states": "rng_states",

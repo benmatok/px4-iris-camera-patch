@@ -47,7 +47,11 @@ class TestObsIntegration(unittest.TestCase):
         vt_y = data["vt_y"][0]
         vt_z = data["vt_z"][0]
 
-        expected_x = 5.0 * np.sin(0.05 * 1.0)
+        # Calculate expected based on randomized params
+        # traj_params are now randomized in reset.
+        tp = data["traj_params"][0]
+        # 0:Ax, 1:Fx, 2:Px
+        expected_x = tp[0] * np.sin(tp[1] * 1.0 + tp[2])
         self.assertAlmostEqual(vt_x, expected_x, places=5)
 
         # Check tracker features in obs [604:608]
