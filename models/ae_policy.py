@@ -293,15 +293,23 @@ class DronePolicy(nn.Module):
         # RL Agent Input: Latent(20) + Target(4) + Tracker(4) = 28
         input_dim = self.latent_dim + self.target_dim + self.tracker_dim
 
-        layers = []
+        # Separate feature extraction from heads
+        feature_layers = []
         in_dim = input_dim
         for h_dim in hidden_dims:
-            layers.append(nn.Linear(in_dim, h_dim))
-            layers.append(nn.ReLU())
+            feature_layers.append(nn.Linear(in_dim, h_dim))
+            feature_layers.append(nn.ReLU())
             in_dim = h_dim
-        layers.append(nn.Linear(in_dim, self.action_dim))
 
-        self.policy_head = nn.Sequential(*layers)
+        self.feature_extractor = nn.Sequential(*feature_layers)
+
+        # Action Head
+        self.action_head = nn.Sequential(
+            nn.Linear(in_dim, self.action_dim),
+            nn.Tanh() # Bound actions to [-1, 1]
+        )
+
+        # Value Head
         self.value_head = nn.Linear(in_dim, 1)
 
     def forward(self, obs):
@@ -318,12 +326,11 @@ class DronePolicy(nn.Module):
         # RL Input
         rl_input = torch.cat([latent, aux_features], dim=1) # 20 + 8 = 28
 
-        # Policy
-        x = rl_input
-        for layer in self.policy_head[:-1]:
-             x = layer(x)
+        # Feature Extraction
+        features = self.feature_extractor(rl_input)
 
-        action_logits = self.policy_head[-1](x)
-        value = self.value_head(x)
+        # Heads
+        action_logits = self.action_head(features)
+        value = self.value_head(features)
 
         return action_logits, value, recon, history

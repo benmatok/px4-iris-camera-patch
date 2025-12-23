@@ -123,7 +123,7 @@ class CPUTrainer:
         # Separate optimizers:
         # 1. RL Optimizer: Policy Head + Value Head
         # 2. AE Optimizer: Autoencoder (Encoder + Decoder)
-        rl_params = list(self.policy.policy_head.parameters()) + list(self.policy.value_head.parameters())
+        rl_params = list(self.policy.feature_extractor.parameters()) + list(self.policy.action_head.parameters()) + list(self.policy.value_head.parameters())
         ae_params = list(self.policy.ae.parameters())
 
         self.optimizer = torch.optim.Adam(rl_params, lr=config['algorithm']['lr'])
@@ -297,9 +297,11 @@ class CPUTrainer:
                 self.ae_optimizer.zero_grad()
 
                 loss.backward(retain_graph=True)
+                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 1.0)
                 self.optimizer.step()
 
                 ae_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.policy.ae.parameters(), 1.0)
                 self.ae_optimizer.step()
 
                 total_loss += loss.item()
