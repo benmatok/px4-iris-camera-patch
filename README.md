@@ -163,67 +163,42 @@ hypercube = compute_texture_hypercube(image, levels=3)
 *   **Backbone**: Gaussian Pyramid generation and Feature Collapse are fused where possible to minimize memory overhead.
 *   **Benchmarks**: Processes a 512x512 image in **~30-50ms** on a modern CPU.
 
-## Roadmap: Texture-Based Object Tracking
+## Roadmap
+
+### Texture-Based Object Tracking
 
 The next phase of development involves integrating the **Texture Hypercube** with a Correlation Filter framework to enable robust object tracking that relies on structural texture signatures rather than just raw intensity.
 
-### Objective
-Implement a tracker that allows the drone to lock onto complex textured targets (e.g., a specific patch of grass, a landing pad, or a vehicle) that might be camouflaged in standard color space but distinct in "Texture Space."
+- [x] **Feature Extraction Layer**:
+    - Replace the standard grayscale input of a correlation filter with the 6-channel **Texture Hypercube**.
+    - This transforms the tracking problem from intensity matching to matching geometric signatures (Orientation, Scale, Coherence).
+- [x] **Correlation Filter (MOSSE/KCF)**:
+    - **Architecture**: Adapt a Kernelized Correlation Filter (KCF) or Minimum Output Sum of Squared Error (MOSSE) filter to handle multi-channel input.
+    - **FFT Processing**: Perform Fast Fourier Transforms on each of the 6 feature channels efficiently.
+    - **Fusion**: Compute the correlation response map by summing the responses from individual feature channels (or using a learnable weight vector).
+- [ ] **Scale Adaptation**:
+    - Leverage the **Intrinsic Size** channel from the Texture Engine to assist the tracker's scale update step, potentially removing the need for an expensive multi-scale search in the tracking loop.
+- [x] **Pipeline**:
+    - **Frame $t$**: Extract ROI -> Compute `Texture Hypercube` (Cython) -> Apply Hanning Window -> FFT -> Filter -> Peak -> Update.
+    - **Update**: Extract new patch -> Update filter numerator/denominator.
 
-### Integration Plan
-
-1.  **Feature Extraction Layer**:
-    *   Replace the standard grayscale input of a correlation filter with the 6-channel **Texture Hypercube**.
-    *   This transforms the tracking problem from intensity matching to matching geometric signatures (Orientation, Scale, Coherence).
-
-2.  **Correlation Filter (MOSSE/KCF)**:
-    *   **Architecture**: Adapt a Kernelized Correlation Filter (KCF) or Minimum Output Sum of Squared Error (MOSSE) filter to handle multi-channel input.
-    *   **FFT Processing**: Perform Fast Fourier Transforms on each of the 6 feature channels efficiently.
-    *   **Fusion**: Compute the correlation response map by summing the responses from individual feature channels (or using a learnable weight vector).
-
-3.  **Scale Adaptation**:
-    *   Leverage the **Intrinsic Size** channel from the Texture Engine to assist the tracker's scale update step, potentially removing the need for an expensive multi-scale search in the tracking loop.
-
-4.  **Pipeline**:
-    *   **Frame $t$**:
-        *   Extract ROI around predicted position.
-        *   Compute `Texture Hypercube` (Cython).
-        *   Apply Hanning Window.
-        *   FFT -> Element-wise Multiply with Filter -> Inverse FFT.
-        *   Find peak response -> Update Position.
-    *   **Update**:
-        *   Extract new patch features.
-        *   Update filter numerator/denominator with learning rate $\eta$.
-
-### Expected Benefits
-*   **Robustness to Illumination**: Texture features (gradients, hessians) are largely invariant to global lighting changes, unlike raw pixel intensity.
-*   **Ambiguity Resolution**: Distinguish between objects with similar color but different surface roughness (e.g., smooth road vs. rough gravel).
-
-## Roadmap: RL-Based Homing Control
+### RL-Based Homing Control
 
 Following the development of the robust **Texture-Based Tracker**, the next major milestone is to upgrade the control stack from simple PID-based pursuit to a learned **Reinforcement Learning (RL) Policy** for high-speed homing and visual servoing.
 
-### Objective
-Train a generic "Homing Policy" that maps tracker outputs directly to velocity commands, enabling the drone to pursue dynamic targets with complex maneuvers that analytic PID controllers struggle to handle.
-
-### Implementation Plan
-
-1.  **Observation Space Integration**:
-    *   Augment the current observation vector (IMU history) with high-level tracker state:
-        *   **Bounding Box Error**: Normalized deviation of target center $(u, v)$ from the frame center.
-        *   **Relative Size**: Ratio of current bbox area to target area (proxy for distance).
-        *   **Tracker Confidence**: The correlation peak strength (from the Texture Engine), allowing the policy to behave conservatively when tracking is weak.
-
-2.  **Simulation Environment (Training)**:
-    *   **Target Entity**: Introduce a "virtual target" in the `DroneEnv` (Cython/CUDA) that follows randomized trajectories (e.g., Lissajous curves, sudden jerks) to simulate an evasive object.
-    *   **Tracker Simulation**: Instead of running the full visual tracker during training (which is computationally expensive), simulate the tracker's output by projecting the target's 3D position onto the drone's virtual camera plane, adding synthetic noise and "failure" probabilities based on angular velocity (motion blur simulation).
-
-3.  **Reward Function Design**:
-    *   **Visual Servoing Reward**: Penalty proportional to the distance of the target from the image center ($L_2$ norm).
-    *   **Range Reward**: Incentive to maintain a specific bounding box size (optimal tracking distance).
-    *   **Smoothness**: Penalties for jerky control inputs to ensure stable video footage.
-
-4.  **Sim-to-Real Transfer**:
-    *   Train the policy using the massive parallelization capabilities (2000+ agents) of the current setup.
-    *   Deploy the trained policy in `main.py`, feeding it real outputs from the `TextureTracker`.
-    *   **Robustness Test**: Evaluate behavior when the tracker drifts or momentarily fails (using the confidence input to trigger recovery behaviors).
+- [ ] **Observation Space Integration**:
+    - Augment the current observation vector (IMU history) with high-level tracker state:
+        - **Bounding Box Error**: Normalized deviation of target center $(u, v)$ from the frame center.
+        - **Relative Size**: Ratio of current bbox area to target area (proxy for distance).
+        - **Tracker Confidence**: The correlation peak strength (from the Texture Engine), allowing the policy to behave conservatively when tracking is weak.
+- [ ] **Simulation Environment (Training)**:
+    - **Target Entity**: Introduce a "virtual target" in the `DroneEnv` (Cython/CUDA) that follows randomized trajectories (e.g., Lissajous curves, sudden jerks) to simulate an evasive object.
+    - **Tracker Simulation**: Instead of running the full visual tracker during training (which is computationally expensive), simulate the tracker's output by projecting the target's 3D position onto the drone's virtual camera plane, adding synthetic noise and "failure" probabilities based on angular velocity (motion blur simulation).
+- [ ] **Reward Function Design**:
+    - **Visual Servoing Reward**: Penalty proportional to the distance of the target from the image center ($L_2$ norm).
+    - **Range Reward**: Incentive to maintain a specific bounding box size (optimal tracking distance).
+    - **Smoothness**: Penalties for jerky control inputs to ensure stable video footage.
+- [ ] **Sim-to-Real Transfer**:
+    - Train the policy using the massive parallelization capabilities (2000+ agents) of the current setup.
+    - Deploy the trained policy in `main.py`, feeding it real outputs from the `TextureTracker`.
+    - **Robustness Test**: Evaluate behavior when the tracker drifts or momentarily fails (using the confidence input to trigger recovery behaviors).
