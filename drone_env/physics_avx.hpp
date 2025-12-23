@@ -20,6 +20,7 @@ inline void step_agents_avx2(
     float* masses, float* drag_coeffs, float* thrust_coeffs,
     float* target_vx, float* target_vy, float* target_vz, float* target_yaw_rate,
     float* vt_x, float* vt_y, float* vt_z, // Virtual Target Position
+    float* traj_params, // Trajectory Parameters
     float* pos_history,
     float* observations, // stride 608
     float* rewards,
@@ -73,11 +74,44 @@ inline void step_agents_avx2(
     __m256 c_noise_scale = _mm256_set1_ps(0.04f);
     __m256 c_noise_offset = _mm256_set1_ps(0.5f);
 
-    // Update Virtual Target Position
+    // ------------------------------------------------------------------------
+    // Update Virtual Target Position (Complex Trajectory)
+    // ------------------------------------------------------------------------
+    // traj_params: num_agents * 10 floats
+    // Need to gather or loadu if stride is matching, but here it's 10 floats per agent, so not contiguous for AVX load of same param across agents.
+    // We need to gather parameters: Ax, Fx, Px...
+
+    // Indices for gather: i*10, (i+1)*10 ...
+    __m256i idx_tp_base = _mm256_set_epi32(7*10, 6*10, 5*10, 4*10, 3*10, 2*10, 1*10, 0);
+    __m256i idx_tp_base_adj = _mm256_add_epi32(idx_tp_base, _mm256_set1_epi32(i*10));
+
+    __m256 ax = _mm256_i32gather_ps(traj_params, idx_tp_base_adj, 4);
+    __m256 fx = _mm256_i32gather_ps(traj_params, _mm256_add_epi32(idx_tp_base_adj, _mm256_set1_epi32(1)), 4);
+    __m256 px_ph = _mm256_i32gather_ps(traj_params, _mm256_add_epi32(idx_tp_base_adj, _mm256_set1_epi32(2)), 4);
+
+    __m256 ay = _mm256_i32gather_ps(traj_params, _mm256_add_epi32(idx_tp_base_adj, _mm256_set1_epi32(3)), 4);
+    __m256 fy = _mm256_i32gather_ps(traj_params, _mm256_add_epi32(idx_tp_base_adj, _mm256_set1_epi32(4)), 4);
+    __m256 py_ph = _mm256_i32gather_ps(traj_params, _mm256_add_epi32(idx_tp_base_adj, _mm256_set1_epi32(5)), 4);
+
+    __m256 az = _mm256_i32gather_ps(traj_params, _mm256_add_epi32(idx_tp_base_adj, _mm256_set1_epi32(6)), 4);
+    __m256 fz = _mm256_i32gather_ps(traj_params, _mm256_add_epi32(idx_tp_base_adj, _mm256_set1_epi32(7)), 4);
+    __m256 pz_ph = _mm256_i32gather_ps(traj_params, _mm256_add_epi32(idx_tp_base_adj, _mm256_set1_epi32(8)), 4);
+    __m256 oz = _mm256_i32gather_ps(traj_params, _mm256_add_epi32(idx_tp_base_adj, _mm256_set1_epi32(9)), 4);
+
     float t_f = (float)t;
-    __m256 vtx = _mm256_set1_ps(5.0f * std::sin(0.05f * t_f));
-    __m256 vty = _mm256_set1_ps(5.0f * std::cos(0.05f * t_f));
-    __m256 vtz = _mm256_set1_ps(10.0f + 2.0f * std::sin(0.1f * t_f));
+    __m256 t_v = _mm256_set1_ps(t_f);
+
+    // x = Ax * sin(Fx * t + Px)
+    __m256 arg_x = _mm256_add_ps(_mm256_mul_ps(fx, t_v), px_ph);
+    __m256 vtx = _mm256_mul_ps(ax, sin256_ps(arg_x));
+
+    // y = Ay * sin(Fy * t + Py)
+    __m256 arg_y = _mm256_add_ps(_mm256_mul_ps(fy, t_v), py_ph);
+    __m256 vty = _mm256_mul_ps(ay, sin256_ps(arg_y));
+
+    // z = Oz + Az * sin(Fz * t + Pz)
+    __m256 arg_z = _mm256_add_ps(_mm256_mul_ps(fz, t_v), pz_ph);
+    __m256 vtz = _mm256_add_ps(oz, _mm256_mul_ps(az, sin256_ps(arg_z)));
 
     _mm256_storeu_ps(&vt_x[i], vtx);
     _mm256_storeu_ps(&vt_y[i], vty);
@@ -297,7 +331,9 @@ inline void step_agents_avx2(
         observations[off+7] = tmp_conf[k];
     }
 
-    // Reward Logic (Reuse previous logic)
+    // ------------------------------------------------------------------------
+    // Improved Reward Logic
+    // ------------------------------------------------------------------------
     __m256 vxb = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r11, vx), _mm256_mul_ps(r12, vy)), _mm256_mul_ps(r13, vz));
     __m256 vyb = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r21, vx), _mm256_mul_ps(r22, vy)), _mm256_mul_ps(r23, vz));
     __m256 vzb = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r31, vx), _mm256_mul_ps(r32, vy)), _mm256_mul_ps(r33, vz));
@@ -310,11 +346,31 @@ inline void step_agents_avx2(
     __m256 dyr = _mm256_sub_ps(yaw_rate_cmd, tyr);
     __m256 y_err_sq = _mm256_mul_ps(dyr, dyr);
 
+    // 1. Base Velocity/Yaw Reward
     __m256 rew = _mm256_add_ps(
         exp256_ps(_mm256_mul_ps(_mm256_set1_ps(-2.0f), v_err_sq)),
         _mm256_mul_ps(c05, exp256_ps(_mm256_mul_ps(_mm256_set1_ps(-2.0f), y_err_sq)))
     );
 
+    // 2. Visual Servoing Reward (Keep target in center)
+    // rew += 0.5 * exp(-2 * (u^2 + v^2))
+    __m256 uv_sq = _mm256_add_ps(_mm256_mul_ps(u, u), _mm256_mul_ps(v, v));
+    __m256 rew_vis = exp256_ps(_mm256_mul_ps(_mm256_set1_ps(-2.0f), uv_sq));
+    rew = _mm256_add_ps(rew, _mm256_mul_ps(c05, rew_vis));
+
+    // 3. Range Reward (Optimal size = 1.0)
+    // rew += 0.5 * exp(-2 * (size - 1.0)^2)
+    __m256 size_diff = _mm256_sub_ps(rel_size, c1);
+    __m256 size_diff_sq = _mm256_mul_ps(size_diff, size_diff);
+    __m256 rew_range = exp256_ps(_mm256_mul_ps(_mm256_set1_ps(-2.0f), size_diff_sq));
+    rew = _mm256_add_ps(rew, _mm256_mul_ps(c05, rew_range));
+
+    // 4. Smoothness Reward (Penalize high control rates)
+    // rew += 0.2 * exp(-0.1 * w2)
+    __m256 rew_smooth = exp256_ps(_mm256_mul_ps(_mm256_set1_ps(-0.1f), w2));
+    rew = _mm256_add_ps(rew, _mm256_mul_ps(_mm256_set1_ps(0.2f), rew_smooth));
+
+    // Stability Penalty
     rew = _mm256_sub_ps(rew, _mm256_mul_ps(c01, _mm256_mul_ps(c01, _mm256_add_ps(_mm256_mul_ps(r, r), _mm256_mul_ps(p, p)))));
 
     __m256 m_abs = _mm256_castsi256_ps(_mm256_set1_epi32(0x7fffffff));

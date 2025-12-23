@@ -29,8 +29,17 @@ def benchmark():
     target_vy = np.zeros(num_agents, dtype=np.float32)
     target_vz = np.zeros(num_agents, dtype=np.float32)
     target_yaw_rate = np.zeros(num_agents, dtype=np.float32)
+
+    # New Trajectory Params
+    traj_params = np.zeros((num_agents, 10), dtype=np.float32)
+
+    # Virtual Targets
+    vt_x = np.zeros(num_agents, dtype=np.float32)
+    vt_y = np.zeros(num_agents, dtype=np.float32)
+    vt_z = np.zeros(num_agents, dtype=np.float32)
+
     pos_history = np.zeros(num_agents * episode_length * 3, dtype=np.float32)
-    observations = np.zeros((num_agents, 1804), dtype=np.float32)
+    observations = np.zeros((num_agents, 608), dtype=np.float32) # Updated Size
     rewards = np.zeros(num_agents, dtype=np.float32)
     done_flags = np.zeros(num_agents, dtype=np.float32)
     step_counts = np.zeros(1, dtype=np.int32)
@@ -44,6 +53,7 @@ def benchmark():
     step_cpu(
         pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, roll, pitch, yaw,
         masses, drag_coeffs, thrust_coeffs, target_vx, target_vy, target_vz, target_yaw_rate,
+        vt_x, vt_y, vt_z, traj_params,
         pos_history, observations, rewards, done_flags, step_counts, actions,
         num_agents, episode_length, env_ids
     )
@@ -52,6 +62,7 @@ def benchmark():
         step_cython(
             pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, roll, pitch, yaw,
             masses, drag_coeffs, thrust_coeffs, target_vx, target_vy, target_vz, target_yaw_rate,
+            vt_x, vt_y, vt_z, traj_params,
             pos_history, observations, rewards, done_flags, step_counts, actions,
             num_agents, episode_length, env_ids
         )
@@ -62,6 +73,7 @@ def benchmark():
         step_cpu(
             pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, roll, pitch, yaw,
             masses, drag_coeffs, thrust_coeffs, target_vx, target_vy, target_vz, target_yaw_rate,
+            vt_x, vt_y, vt_z, traj_params,
             pos_history, observations, rewards, done_flags, step_counts, actions,
             num_agents, episode_length, env_ids
         )
@@ -74,6 +86,7 @@ def benchmark():
             step_cython(
                 pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, roll, pitch, yaw,
                 masses, drag_coeffs, thrust_coeffs, target_vx, target_vy, target_vz, target_yaw_rate,
+                vt_x, vt_y, vt_z, traj_params,
                 pos_history, observations, rewards, done_flags, step_counts, actions,
                 num_agents, episode_length, env_ids
             )

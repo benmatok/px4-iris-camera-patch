@@ -175,6 +175,7 @@ class CPUTrainer:
                 roll=self.data["roll"], pitch=self.data["pitch"], yaw=self.data["yaw"],
                 masses=self.data["masses"], drag_coeffs=self.data["drag_coeffs"], thrust_coeffs=self.data["thrust_coeffs"],
                 target_vx=self.data["target_vx"], target_vy=self.data["target_vy"], target_vz=self.data["target_vz"], target_yaw_rate=self.data["target_yaw_rate"],
+                traj_params=self.data["traj_params"],
                 pos_history=self.data["pos_history"], observations=self.data["observations"],
                 rng_states=self.data["rng_states"], step_counts=self.data["step_counts"],
                 num_agents=self.env.num_agents, reset_indices=np.array([0], dtype=np.int32)
@@ -221,6 +222,7 @@ class CPUTrainer:
                     masses=self.data["masses"], drag_coeffs=self.data["drag_coeffs"], thrust_coeffs=self.data["thrust_coeffs"],
                     target_vx=self.data["target_vx"], target_vy=self.data["target_vy"], target_vz=self.data["target_vz"], target_yaw_rate=self.data["target_yaw_rate"],
                     vt_x=self.data["vt_x"], vt_y=self.data["vt_y"], vt_z=self.data["vt_z"],
+                    traj_params=self.data["traj_params"],
                     pos_history=self.data["pos_history"],
                     observations=self.data["observations"], rewards=self.data["rewards"],
                     done_flags=self.data["done_flags"], step_counts=self.data["step_counts"],
