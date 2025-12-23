@@ -191,13 +191,15 @@ Following the development of the robust **Texture-Based Tracker**, the next majo
         - **Bounding Box Error**: Normalized deviation of target center $(u, v)$ from the frame center.
         - **Relative Size**: Ratio of current bbox area to target area (proxy for distance).
         - **Tracker Confidence**: The correlation peak strength (from the Texture Engine), allowing the policy to behave conservatively when tracking is weak.
-- [x] **Simulation Environment (Training)**:
-    - **Target Entity**: Introduce a "virtual target" in the `DroneEnv` (Cython/CUDA) that follows randomized trajectories (e.g., Lissajous curves, sudden jerks) to simulate an evasive object.
-    - **Tracker Simulation**: Instead of running the full visual tracker during training (which is computationally expensive), simulate the tracker's output by projecting the target's 3D position onto the drone's virtual camera plane, adding synthetic noise and "failure" probabilities based on angular velocity (motion blur simulation).
-- [x] **Reward Function Design**:
-    - **Visual Servoing Reward**: Penalty proportional to the distance of the target from the image center ($L_2$ norm).
-    - **Range Reward**: Incentive to maintain a specific bounding box size (optimal tracking distance).
-    - **Smoothness**: Penalties for jerky control inputs to ensure stable video footage.
+- [ ] **Simulation Environment (Training)**:
+    - [x] **Target Entity**: Introduce a "virtual target" in the `DroneEnv` (Cython/CUDA).
+    - [ ] **Complex Trajectories**: Implement randomized trajectories (e.g., Lissajous curves, sudden jerks) to simulate an evasive object. (Current: Deterministic circular path)
+    - [x] **Tracker Simulation**: Simulate the tracker's output by projecting the target's 3D position onto the drone's virtual camera plane, adding synthetic noise and "failure" probabilities based on angular velocity (motion blur simulation).
+- [ ] **Reward Function Design**:
+    - [ ] **Visual Servoing Reward**: Penalty proportional to the distance of the target from the image center ($L_2$ norm).
+    - [ ] **Range Reward**: Incentive to maintain a specific bounding box size (optimal tracking distance).
+    - [ ] **Smoothness**: Penalties for jerky control inputs to ensure stable video footage.
+    - [x] **Base Rewards**: Velocity tracking and stability penalties.
 - [ ] **Sim-to-Real Transfer**:
     - Train the policy using the massive parallelization capabilities (2000+ agents) of the current setup.
     - Deploy the trained policy in `main.py`, feeding it real outputs from the `TextureTracker`.
