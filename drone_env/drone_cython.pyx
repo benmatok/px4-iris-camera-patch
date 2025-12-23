@@ -30,6 +30,7 @@ cdef extern from "physics_avx.hpp":
         float* roll, float* pitch, float* yaw,
         float* masses, float* drag_coeffs, float* thrust_coeffs,
         float* target_vx, float* target_vy, float* target_vz, float* target_yaw_rate,
+        float* vt_x, float* vt_y, float* vt_z, # Virtual Target Position
         float* pos_history,
         float* observations,
         float* rewards,
@@ -54,6 +55,7 @@ cdef void _step_agent_scalar(
     float[:] roll, float[:] pitch, float[:] yaw,
     float[:] masses, float[:] drag_coeffs, float[:] thrust_coeffs,
     float[:] target_vx, float[:] target_vy, float[:] target_vz, float[:] target_yaw_rate,
+    float[:] vt_x, float[:] vt_y, float[:] vt_z,
     float[:] pos_history,
     float[:, :] observations,
     float[:] rewards,
@@ -108,8 +110,18 @@ cdef void _step_agent_scalar(
     pitch_rate_cmd = actions[i * 4 + 2]
     yaw_rate_cmd = actions[i * 4 + 3]
 
+    # Update Virtual Target
+    cdef float t_f = <float>t
+    cdef float vtx_val = 5.0 * sin(0.05 * t_f)
+    cdef float vty_val = 5.0 * cos(0.05 * t_f)
+    cdef float vtz_val = 10.0 + 2.0 * sin(0.1 * t_f)
+    vt_x[i] = vtx_val
+    vt_y[i] = vty_val
+    vt_z[i] = vtz_val
+
     # Shift Observations
-    memmove(&observations[i, 0], &observations[i, 60], 1740 * 4)
+    # 608 total. 6..600 -> 0..594
+    memmove(&observations[i, 0], &observations[i, 6], 594 * 4)
 
     # Substeps
     for s in range(substeps):
@@ -155,32 +167,15 @@ cdef void _step_agent_scalar(
             vy = 0.0
             vz = 0.0
 
-        # 2. Capture IMU
-        r11 = cy * cp
-        r12 = sy * cp
-        r13 = -sp
-        r21 = cy * sp * sr - sy * cr
-        r22 = sy * sp * sr + cy * cr
-        r23 = cp * sr
-        r31 = cy * sp * cr + sy * sr
-        r32 = sy * sp * cr - cy * sr
-        r33 = cp * cr
-
-        acc_w_x = ax_thrust + ax_drag
-        acc_w_y = ay_thrust + ay_drag
-        acc_w_z = az_thrust + az_drag
-
-        acc_b_x = r11 * acc_w_x + r12 * acc_w_y + r13 * acc_w_z
-        acc_b_y = r21 * acc_w_x + r22 * acc_w_y + r23 * acc_w_z
-        acc_b_z = r31 * acc_w_x + r32 * acc_w_y + r33 * acc_w_z
-
-        # Write directly to observations end buffer
-        observations[i, 1740 + s*6 + 0] = acc_b_x
-        observations[i, 1740 + s*6 + 1] = acc_b_y
-        observations[i, 1740 + s*6 + 2] = acc_b_z
-        observations[i, 1740 + s*6 + 3] = roll_rate_cmd
-        observations[i, 1740 + s*6 + 4] = pitch_rate_cmd
-        observations[i, 1740 + s*6 + 5] = yaw_rate_cmd
+        # Capture Samples at s=4 and s=9
+        if s == 4 or s == 9:
+            k = 0 if s == 4 else 1 # 0 or 1 index
+            # Noise +/- 0.02
+            # 0.04 * (rand - 0.5)
+            # Offset = 594 + k*3
+            observations[i, 594 + k*3 + 0] = r + (rand_float() - 0.5) * 0.04
+            observations[i, 594 + k*3 + 1] = p + (rand_float() - 0.5) * 0.04
+            observations[i, 594 + k*3 + 2] = y_ang + (rand_float() - 0.5) * 0.04
 
     # Final terrain check
     terr_z = terrain_height(px, py)
@@ -202,24 +197,16 @@ cdef void _step_agent_scalar(
 
     # Pos History
     if t <= episode_length:
-        # pos_history is flat: idx * episode_length * 3 + (t-1) * 3
-        # But here pos_history is memoryview.
         pos_history[i * episode_length * 3 + (t-1) * 3 + 0] = px
         pos_history[i * episode_length * 3 + (t-1) * 3 + 1] = py
         pos_history[i * episode_length * 3 + (t-1) * 3 + 2] = pz
 
-    # Targets
-    tvx = target_vx[i]
-    tvy = target_vy[i]
-    tvz = target_vz[i]
-    tyr = target_yaw_rate[i]
+    # Tracker Features
+    cdef float dx_w, dy_w, dz_w
+    dx_w = vtx_val - px
+    dy_w = vty_val - py
+    dz_w = vtz_val - pz
 
-    observations[i, 1800] = tvx
-    observations[i, 1801] = tvy
-    observations[i, 1802] = tvz
-    observations[i, 1803] = tyr
-
-    # Rewards
     sincosf(r, &sr, &cr)
     sincosf(p, &sp, &cp)
     sincosf(y_ang, &sy, &cy)
@@ -234,6 +221,48 @@ cdef void _step_agent_scalar(
     r32 = sy * sp * cr - cy * sr
     r33 = cp * cr
 
+    cdef float xb, yb, zb
+    xb = r11 * dx_w + r12 * dy_w + r13 * dz_w
+    yb = r21 * dx_w + r22 * dy_w + r23 * dz_w
+    zb = r31 * dx_w + r32 * dy_w + r33 * dz_w
+
+    cdef float xc, yc, zc
+    cdef float s30 = 0.5
+    cdef float c30 = 0.866025
+    xc = yb
+    yc = s30 * xb + c30 * zb
+    zc = c30 * xb - s30 * zb
+
+    cdef float u, v, size, conf
+    if zc < 0.1:
+        zc = 0.1
+    u = xc / zc
+    v = yc / zc
+    size = 10.0 / (zc*zc + 1.0)
+
+    cdef float w2 = roll_rate_cmd*roll_rate_cmd + pitch_rate_cmd*pitch_rate_cmd + yaw_rate_cmd*yaw_rate_cmd
+    conf = exp(-0.1 * w2)
+    if zc <= 0.1: # Actually checked < 0.1 above
+        if (c30 * xb - s30 * zb) < 0:
+            conf = 0.0
+
+    # Targets
+    tvx = target_vx[i]
+    tvy = target_vy[i]
+    tvz = target_vz[i]
+    tyr = target_yaw_rate[i]
+
+    observations[i, 600] = tvx
+    observations[i, 601] = tvy
+    observations[i, 602] = tvz
+    observations[i, 603] = tyr
+
+    observations[i, 604] = u
+    observations[i, 605] = v
+    observations[i, 606] = size
+    observations[i, 607] = conf
+
+    # Rewards
     vx_b = r11 * vx + r12 * vy + r13 * vz
     vy_b = r21 * vx + r22 * vy + r23 * vz
     vz_b = r31 * vx + r32 * vy + r33 * vz
@@ -305,13 +334,13 @@ cdef void _reset_agent_scalar(
     target_vz[i] = tvz
     target_yaw_rate[i] = tyr
 
-    # Reset Observations
-    memset(&observations[i, 0], 0, 1800 * 4)
+    # Reset Observations (Size 608)
+    memset(&observations[i, 0], 0, 608 * 4)
 
-    observations[i, 1800] = tvx
-    observations[i, 1801] = tvy
-    observations[i, 1802] = tvz
-    observations[i, 1803] = tyr
+    observations[i, 600] = tvx
+    observations[i, 601] = tvy
+    observations[i, 602] = tvz
+    observations[i, 603] = tyr
 
     pos_x[i] = 0.0
     pos_y[i] = 0.0
@@ -330,6 +359,7 @@ def step_cython(
     float[:] roll, float[:] pitch, float[:] yaw,
     float[:] masses, float[:] drag_coeffs, float[:] thrust_coeffs,
     float[:] target_vx, float[:] target_vy, float[:] target_vz, float[:] target_yaw_rate,
+    float[:] vt_x, float[:] vt_y, float[:] vt_z,
     float[:] pos_history,
     float[:, :] observations,
     float[:] rewards,
@@ -357,6 +387,7 @@ def step_cython(
                 &roll[0], &pitch[0], &yaw[0],
                 &masses[0], &drag_coeffs[0], &thrust_coeffs[0],
                 &target_vx[0], &target_vy[0], &target_vz[0], &target_yaw_rate[0],
+                &vt_x[0], &vt_y[0], &vt_z[0],
                 &pos_history[0],
                 &observations[0,0],
                 &rewards[0],
@@ -376,6 +407,7 @@ def step_cython(
                 roll, pitch, yaw,
                 masses, drag_coeffs, thrust_coeffs,
                 target_vx, target_vy, target_vz, target_yaw_rate,
+                vt_x, vt_y, vt_z,
                 pos_history,
                 observations,
                 rewards,

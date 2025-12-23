@@ -13,14 +13,11 @@ def try_contiguous(x):
     return x
 
 def _extract_patches(x, kernel_size, stride, padding):
-    # Specialized for 1D: (batch, in_c, L)
-    # Conv1d expects (batch, in_c, L)
-    # unfold(dimension, size, step)
     if padding > 0:
         x = F.pad(x, (padding, padding))
-    x = x.unfold(2, kernel_size, stride) # (batch, in_c, n_patches, kernel_size)
-    x = x.transpose(1, 2) # (batch, n_patches, in_c, kernel_size)
-    x = x.contiguous().view(x.size(0), x.size(1), -1) # (batch, n_patches, in_c*kernel_size)
+    x = x.unfold(2, kernel_size, stride)
+    x = x.transpose(1, 2)
+    x = x.contiguous().view(x.size(0), x.size(1), -1)
     return x
 
 def update_running_stat(aa, m_aa, stat_decay):
@@ -39,15 +36,12 @@ class ComputeCovA:
 
     @staticmethod
     def conv1d(a, layer):
-        # a: (batch, in_c, L)
         batch_size = a.size(0)
-        # padding is int or tuple. nn.Conv1d padding is usually tuple or int.
         padding = layer.padding[0] if isinstance(layer.padding, tuple) else layer.padding
         kernel_size = layer.kernel_size[0] if isinstance(layer.kernel_size, tuple) else layer.kernel_size
         stride = layer.stride[0] if isinstance(layer.stride, tuple) else layer.stride
 
         a = _extract_patches(a, kernel_size, stride, padding)
-        # a: (batch, n_patches, features)
         spatial_size = a.size(1)
         a = a.view(-1, a.size(-1))
         if layer.bias is not None:
@@ -73,10 +67,9 @@ class ComputeCovG:
 
     @staticmethod
     def conv1d(g, layer, batch_averaged):
-        # g: (batch, out_c, L_out)
         spatial_size = g.size(2)
         batch_size = g.shape[0]
-        g = g.transpose(1, 2) # (batch, L_out, out_c)
+        g = g.transpose(1, 2)
         g = try_contiguous(g)
         g = g.view(-1, g.size(-1))
 
@@ -149,7 +142,6 @@ class KFACOptimizer(optim.Optimizer):
 
     def _update_inv(self, m):
         eps = 1e-10
-        # symeig is deprecated, using linalg.eigh
         d_a, Q_a = torch.linalg.eigh(self.m_aa[m])
         d_g, Q_g = torch.linalg.eigh(self.m_gg[m])
 
@@ -169,7 +161,6 @@ class KFACOptimizer(optim.Optimizer):
         return p_grad_mat
 
     def _get_natural_grad(self, m, p_grad_mat, damping):
-        # Q_g (1/R_g) Q_g^T @ p_grad_mat @ Q_a (1/R_a) Q_a^T
         v1 = self.Q_g[m].t() @ p_grad_mat @ self.Q_a[m]
         v2 = v1 / (self.d_g[m].unsqueeze(1) * self.d_a[m].unsqueeze(0) + damping)
         v = self.Q_g[m] @ v2 @ self.Q_a[m].t()
@@ -214,7 +205,7 @@ class KFACOptimizer(optim.Optimizer):
                         buf.mul_(momentum).add_(d_p)
                     else:
                         buf = param_state['momentum_buffer']
-                        buf.mul_(momentum).add_(d_p) # Fixed Nesterov logic simplified
+                        buf.mul_(momentum).add_(d_p)
                     d_p = buf
                 p.data.add_(d_p, alpha=-group['lr'])
 
@@ -235,28 +226,25 @@ class KFACOptimizer(optim.Optimizer):
         self.steps += 1
 
 class KFACOptimizerPlaceholder(KFACOptimizer):
-    """
-    Placeholder class for KFACOptimizer to ensure import compatibility.
-    """
     pass
 
 # --- End KFAC Implementation ---
 
 class Autoencoder1D(nn.Module):
-    def __init__(self, input_dim=6, seq_len=300, latent_dim=20):
+    def __init__(self, input_dim=3, seq_len=200, latent_dim=20):
         super(Autoencoder1D, self).__init__()
         self.seq_len = seq_len
         self.input_dim = input_dim
         self.latent_dim = latent_dim
 
-        # Encoder: 1D Conv for sequence length 300
-        # Input: (Batch, 6, 300)
+        # Encoder: 1D Conv for sequence length 200
+        # Input: (Batch, 3, 200)
         self.encoder = nn.Sequential(
-            nn.Conv1d(input_dim, 16, kernel_size=5, stride=2, padding=2), # -> 150
+            nn.Conv1d(input_dim, 16, kernel_size=5, stride=2, padding=2), # -> 100
             nn.ReLU(),
-            nn.Conv1d(16, 32, kernel_size=5, stride=2, padding=2), # -> 75
+            nn.Conv1d(16, 32, kernel_size=5, stride=2, padding=2), # -> 50
             nn.ReLU(),
-            nn.Conv1d(32, 64, kernel_size=5, stride=3, padding=1), # -> 25
+            nn.Conv1d(32, 64, kernel_size=5, stride=2, padding=2), # -> 25
             nn.ReLU(),
             nn.Flatten(), # 64*25 = 1600
             nn.Linear(1600, latent_dim),
@@ -266,23 +254,23 @@ class Autoencoder1D(nn.Module):
         # Decoder
         self.decoder_linear = nn.Linear(latent_dim, 1600)
         self.decoder = nn.Sequential(
-            nn.ConvTranspose1d(64, 32, kernel_size=5, stride=3, padding=1, output_padding=0), # 25 -> 75
+            nn.ConvTranspose1d(64, 32, kernel_size=5, stride=2, padding=2, output_padding=1), # 25 -> 50
             nn.ReLU(),
-            nn.ConvTranspose1d(32, 16, kernel_size=5, stride=2, padding=2, output_padding=1), # 75 -> 150
+            nn.ConvTranspose1d(32, 16, kernel_size=5, stride=2, padding=2, output_padding=1), # 50 -> 100
             nn.ReLU(),
-            nn.ConvTranspose1d(16, input_dim, kernel_size=5, stride=2, padding=2, output_padding=1), # 150 -> 300
+            nn.ConvTranspose1d(16, input_dim, kernel_size=5, stride=2, padding=2, output_padding=1), # 100 -> 200
         )
 
     def forward(self, x):
-        # x is (Batch, 1800). Reshape to (Batch, 6, 300)
+        # x is (Batch, 600). Reshape to (Batch, 3, 200)
         batch_size = x.shape[0]
-        x_reshaped = x.view(batch_size, self.seq_len, self.input_dim).permute(0, 2, 1) # (N, 6, 300)
+        x_reshaped = x.view(batch_size, self.seq_len, self.input_dim).permute(0, 2, 1) # (N, 3, 200)
 
         latent = self.encoder(x_reshaped)
 
         recon_features = self.decoder_linear(latent)
         recon_features = recon_features.view(batch_size, 64, 25)
-        recon = self.decoder(recon_features) # (N, 6, 300)
+        recon = self.decoder(recon_features) # (N, 3, 200)
 
         # Flatten recon to match input
         recon_flat = recon.permute(0, 2, 1).reshape(batch_size, -1)
@@ -292,17 +280,18 @@ class Autoencoder1D(nn.Module):
 class DronePolicy(nn.Module):
     def __init__(self, env, hidden_dims=[128, 128]):
         super(DronePolicy, self).__init__()
-        # Observation space is 1804 (1800 history + 4 target)
+        # Observation space is 608 (600 history + 4 target + 4 tracker)
 
-        self.history_dim = 1800
-        self.target_dim = 4
+        self.history_dim = 600
+        self.target_dim = 4 # Target Commands
+        self.tracker_dim = 4 # New Tracker Features
         self.latent_dim = 20
         self.action_dim = 4
 
-        self.ae = Autoencoder1D(input_dim=6, seq_len=300, latent_dim=self.latent_dim)
+        self.ae = Autoencoder1D(input_dim=3, seq_len=200, latent_dim=self.latent_dim)
 
-        # RL Agent Input: Latent(20) + Target(4) = 24
-        input_dim = self.latent_dim + self.target_dim
+        # RL Agent Input: Latent(20) + Target(4) + Tracker(4) = 28
+        input_dim = self.latent_dim + self.target_dim + self.tracker_dim
 
         layers = []
         in_dim = input_dim
@@ -316,16 +305,18 @@ class DronePolicy(nn.Module):
         self.value_head = nn.Linear(in_dim, 1)
 
     def forward(self, obs):
-        # Obs: (Batch, 1804)
+        # Obs: (Batch, 608)
 
         history = obs[:, :self.history_dim]
-        targets = obs[:, self.history_dim:]
+        # targets = 600:604
+        # tracker = 604:608
+        aux_features = obs[:, self.history_dim:] # (Batch, 8)
 
         # Autoencode
         latent, recon = self.ae(history)
 
         # RL Input
-        rl_input = torch.cat([latent, targets], dim=1)
+        rl_input = torch.cat([latent, aux_features], dim=1) # 20 + 8 = 28
 
         # Policy
         x = rl_input

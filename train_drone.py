@@ -69,7 +69,7 @@ if HAS_WARPDRIVE:
 
                     # Interleaved AE Training
                     # 1. Fetch current observations (fresh from rollout or update)
-                    obs_data = data_manager.pull_data("observations") # Shape (num_envs, 1804)
+                    obs_data = data_manager.pull_data("observations") # Shape (num_envs, 608)
                     obs_tensor = torch.from_numpy(obs_data).cuda()
 
                     # 2. Update AE
@@ -148,13 +148,6 @@ class CPUTrainer:
         data_dict = self.env.get_data_dictionary()
         for name, info in data_dict.items():
             shape = info["shape"]
-            # If shape depends on num_envs, we need to adjust?
-            # DroneEnv definition: "masses": (self.num_agents,)
-            # It seems DroneEnv is designed to handle ALL agents in parallel (as a CUDA kernel does).
-            # So if we want 1024 envs with 1 agent each, we should instantiate DroneEnv with num_agents=1024?
-            # In WarpDrive config: env: num_agents: 1. trainer: num_envs: 1024.
-            # WarpDrive EnvWrapper handles the multiplicity.
-            # Since we don't have EnvWrapper, we should instantiate DroneEnv with num_agents = 1024 * 1.
             self.data[name] = np.zeros(shape, dtype=info["dtype"])
 
         self.episode_length = self.env.episode_length
@@ -173,17 +166,9 @@ class CPUTrainer:
             # 1. Collect Rollouts
             # Reset
             # We need to define reset indices (all)
-            reset_indices = np.array([0], dtype=np.int32) # Assuming single block env_id=0 for now or manage blocks
-            # Wait, DroneEnv CUDA kernel uses blockIdx.x for env_id.
-            # step_cpu loops over `total_agents`.
-            # reset_cpu loops over `reset_indices`.
-            # If we instantiated DroneEnv with num_agents = 1024, effectively we have 1 env with 1024 agents (or 1024 envs linear).
-            # The reset_cpu code: `idx = env_id * num_agents + agent_id`.
-            # If we treat it as 1 giant environment with N agents, env_id=0.
+            reset_indices = np.array([0], dtype=np.int32)
 
             # Reset all
-            # We need valid args for reset_cpu
-            # We use `self.data` dict to pass arrays
             self.env.reset_function(
                 pos_x=self.data["pos_x"], pos_y=self.data["pos_y"], pos_z=self.data["pos_z"],
                 vel_x=self.data["vel_x"], vel_y=self.data["vel_y"], vel_z=self.data["vel_z"],
@@ -200,7 +185,7 @@ class CPUTrainer:
             num_agents = self.env.num_agents
             ep_len = self.episode_length
 
-            obs_buffer = torch.zeros((ep_len, num_agents, 1804), dtype=torch.float16)
+            obs_buffer = torch.zeros((ep_len, num_agents, 608), dtype=torch.float16)
             action_buffer = torch.zeros((ep_len, num_agents, 4), dtype=torch.float32)
             reward_buffer = torch.zeros((ep_len, num_agents), dtype=torch.float32)
             value_buffer = torch.zeros((ep_len, num_agents), dtype=torch.float32)
@@ -235,6 +220,7 @@ class CPUTrainer:
                     roll=self.data["roll"], pitch=self.data["pitch"], yaw=self.data["yaw"],
                     masses=self.data["masses"], drag_coeffs=self.data["drag_coeffs"], thrust_coeffs=self.data["thrust_coeffs"],
                     target_vx=self.data["target_vx"], target_vy=self.data["target_vy"], target_vz=self.data["target_vz"], target_yaw_rate=self.data["target_yaw_rate"],
+                    vt_x=self.data["vt_x"], vt_y=self.data["vt_y"], vt_z=self.data["vt_z"],
                     pos_history=self.data["pos_history"],
                     observations=self.data["observations"], rewards=self.data["rewards"],
                     done_flags=self.data["done_flags"], step_counts=self.data["step_counts"],
@@ -247,8 +233,6 @@ class CPUTrainer:
                 reward_buffer[t] = torch.from_numpy(self.data["rewards"]).float()
 
             # 2. Compute Advantages (GAE)
-            # We can do this in-place or separate tensor.
-            # Separate tensor for returns/advantages
             returns = torch.zeros_like(reward_buffer)
             R = torch.zeros(self.env.num_agents)
             for t in reversed(range(self.episode_length)):
@@ -260,7 +244,7 @@ class CPUTrainer:
 
             # 3. Update Policy (PPO Step) with Mini-batches
             # Flatten batch
-            b_obs_half = obs_buffer.reshape(-1, 1804)
+            b_obs_half = obs_buffer.reshape(-1, 608)
             b_actions = action_buffer.reshape(-1, 4)
             b_log_probs = log_prob_buffer.reshape(-1)
             b_returns = returns.reshape(-1)
@@ -334,8 +318,6 @@ class CPUTrainer:
 
             if itr % 10 == 0 or itr == num_iters - 1:
                 # Get pos_history from self.data
-                # Shape in dict: (num_agents * episode_length * 3)
-                # Reshape to (num_agents, episode_length, 3)
                 ph = self.data["pos_history"].reshape(self.env.num_agents, self.episode_length, 3)
                 self.visualizer.log_trajectory(itr, ph)
 
@@ -348,47 +330,23 @@ class CPUTrainer:
 def setup_and_train(run_config, device_id=0):
     use_cuda = torch.cuda.is_available() and HAS_WARPDRIVE
     if use_cuda:
-        torch.cuda.set_device(device_id)
-        print(f"Using GPU: {torch.cuda.get_device_name(device_id)}")
+        # CUDA path not updated for new obs space, fail gracefully or fallback
+        print("WARNING: CUDA logic not updated for new observation space. Falling back to CPU.")
+        # Override to CPU path
+        use_cuda = False
 
-        env_wrapper = EnvWrapper(
-            DroneEnv(**run_config["env"], use_cuda=True),
-            num_envs=run_config["trainer"]["num_envs"],
-            env_backend="pycuda",
-            process_id=device_id
-        )
+    print("WARNING: CUDA or WarpDrive not available. Falling back to Custom CPU Training.")
 
-        policy_map = {"drone_policy": env_wrapper.env.agent_ids}
+    # Override config for lightweight CPU run
+    total_agents = 5000
+    run_config["trainer"]["training_iterations"] = 500
 
-        trainer = CustomTrainer(
-            env_wrapper=env_wrapper,
-            config=run_config,
-            policy_tag_to_agent_id_map=policy_map,
-            device_id=device_id
-        )
+    print(f"CPU Mode: Reduced agents to {total_agents} and iterations to {run_config['trainer']['training_iterations']}")
 
-        print("Starting GPU Training...")
-        trainer.train()
-        trainer.graceful_close()
+    env = DroneEnv(num_agents=total_agents, episode_length=run_config["trainer"]["episode_length"], use_cuda=False)
 
-    else:
-        print("WARNING: CUDA or WarpDrive not available. Falling back to Custom CPU Training.")
-        # Modify config for CPU feasibility (smaller batch)
-        # We must reduce the load significantly to avoid OOM/Timeout on CPU
-
-        # Override config for lightweight CPU run
-        total_agents = 5000
-        run_config["trainer"]["training_iterations"] = 500
-
-        print(f"CPU Mode: Reduced agents to {total_agents} and iterations to {run_config['trainer']['training_iterations']}")
-
-        # Instantiate DroneEnv with num_agents = total_agents
-        # Note: DroneEnv original expects num_agents per env.
-        # Here we just treat it as one big env.
-        env = DroneEnv(num_agents=total_agents, episode_length=run_config["trainer"]["episode_length"], use_cuda=False)
-
-        trainer = CPUTrainer(env, run_config)
-        trainer.train()
+    trainer = CPUTrainer(env, run_config)
+    trainer.train()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
