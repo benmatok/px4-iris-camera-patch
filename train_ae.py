@@ -26,7 +26,8 @@ class AETrainer:
             self.data[name] = np.zeros(info["shape"], dtype=info["dtype"])
 
         # Initialize Autoencoder
-        self.ae = Autoencoder1D(input_dim=6, seq_len=300, latent_dim=20).to(self.device)
+        # Input dim 3, seq len 200
+        self.ae = Autoencoder1D(input_dim=3, seq_len=200, latent_dim=20).to(self.device)
 
         if load_checkpoint and os.path.exists(load_checkpoint):
             print(f"Loading checkpoint from {load_checkpoint}...")
@@ -66,33 +67,20 @@ class AETrainer:
         kp_z = 0.2
         kp_yaw = 1.0
 
-        # Velocity Control (World Frame approx for small angles)
-        # Pitch produces forward acceleration (positive pitch -> backward force? No.
-        # Body frame: x forward. Positive pitch (nose up) -> backward force.
-        # So to accelerate forward (+x), we need negative pitch (nose down).
-        # target_pitch = -gain * error_x
-
         v_err_x = target_vx - vel_x
         v_err_y = target_vy - vel_y
         v_err_z = target_vz - vel_z
 
         # Desired Attitude
         target_pitch = -kp_vel * v_err_x
-        target_roll = kp_vel * v_err_y # Positive roll -> right force -> +y
+        target_roll = kp_vel * v_err_y
 
         # Rate commands
         roll_rate_cmd = kp_att * (target_roll - roll)
         pitch_rate_cmd = kp_att * (target_pitch - pitch)
-        yaw_rate_cmd = kp_yaw * (target_yaw_rate - 0.0) # Tracking yaw rate directly usually?
-        # Actually target_yaw_rate is the command for yaw rate.
-        # But we control yaw rate directly?
-        # Actions are: Thrust, RollRate, PitchRate, YawRate.
-        # So we can just feed target_yaw_rate if we want to spin.
         yaw_rate_cmd = target_yaw_rate
 
         # Thrust command
-        # Hover thrust ~ 0.5 (assuming T_max=20, m=1, g=9.8 -> 10/20 = 0.5)
-        # Add Z velocity control
         thrust_cmd = 0.5 + kp_z * v_err_z
 
         # Clip
@@ -113,9 +101,6 @@ class AETrainer:
 
         for ep in range(num_episodes):
             # Reset
-            # Pass all environment IDs if needed, though pure CPU usually ignores this except for step counts.
-            # Assuming env_ids matches reset_indices.
-            # If we assume 1 block with num_agents, env_id=0 is correct.
             self.env.reset_function(
                 pos_x=self.data["pos_x"], pos_y=self.data["pos_y"], pos_z=self.data["pos_z"],
                 vel_x=self.data["vel_x"], vel_y=self.data["vel_y"], vel_z=self.data["vel_z"],
@@ -142,6 +127,7 @@ class AETrainer:
                     roll=self.data["roll"], pitch=self.data["pitch"], yaw=self.data["yaw"],
                     masses=self.data["masses"], drag_coeffs=self.data["drag_coeffs"], thrust_coeffs=self.data["thrust_coeffs"],
                     target_vx=self.data["target_vx"], target_vy=self.data["target_vy"], target_vz=self.data["target_vz"], target_yaw_rate=self.data["target_yaw_rate"],
+                    vt_x=self.data["vt_x"], vt_y=self.data["vt_y"], vt_z=self.data["vt_z"],
                     pos_history=self.data["pos_history"],
                     observations=self.data["observations"], rewards=self.data["rewards"],
                     done_flags=self.data["done_flags"], step_counts=self.data["step_counts"],
@@ -151,7 +137,8 @@ class AETrainer:
                 )
 
                 # 3. Train AE
-                obs_np = self.data["observations"][:, :1800]
+                # Extract history (first 600)
+                obs_np = self.data["observations"][:, :600]
                 obs_tensor = torch.from_numpy(obs_np).float().to(self.device)
 
                 # Forward

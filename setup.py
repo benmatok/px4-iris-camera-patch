@@ -10,20 +10,6 @@ extensions = [
         extra_compile_args=["-O3", "-fopenmp", "-ffast-math", "-mavx2", "-mfma"],
         extra_link_args=["-fopenmp"],
     ),
-    Extension(
-        "drone_env.texture_features",
-        ["drone_env/texture_features.pyx"],
-        include_dirs=[numpy.get_include()],
-        extra_compile_args=["-O3", "-fopenmp", "-ffast-math", "-mavx2", "-mfma"],
-        extra_link_args=["-fopenmp"],
-    ),
-    Extension(
-        "drone_env.tracker",
-        ["drone_env/tracker.pyx"],
-        include_dirs=[numpy.get_include()],
-        extra_compile_args=["-O3", "-fopenmp", "-ffast-math", "-mavx2", "-mfma"],
-        extra_link_args=["-fopenmp"],
-    )
 ]
 
 setup(
