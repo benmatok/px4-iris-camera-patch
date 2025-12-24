@@ -355,8 +355,9 @@ def setup_and_train(run_config, device_id=0):
     print("WARNING: CUDA or WarpDrive not available. Falling back to Custom CPU Training.")
 
     # Override config for lightweight CPU run
-    total_agents = 5000
+    total_agents = 200
     run_config["trainer"]["training_iterations"] = 1000
+    run_config["trainer"]["episode_length"] = 20
 
     print(f"CPU Mode: Reduced agents to {total_agents} and iterations to {run_config['trainer']['training_iterations']}")
 
