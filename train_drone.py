@@ -196,6 +196,9 @@ class CPUTrainer:
             value_buffer = torch.zeros((ep_len, num_agents), dtype=torch.float32)
             log_prob_buffer = torch.zeros((ep_len, num_agents), dtype=torch.float32)
 
+            # Temp buffer for target history for visualization
+            target_history_buffer = np.zeros((ep_len, num_agents, 3), dtype=np.float32)
+
             for t in range(self.episode_length):
                 if t % 20 == 0:
                     print(f"  Step {t}/{self.episode_length}")
@@ -236,6 +239,12 @@ class CPUTrainer:
                     num_agents=self.env.num_agents, episode_length=self.episode_length,
                     env_ids=env_ids_to_step
                 )
+
+                # Capture target position for visualization
+                # vt_x, vt_y, vt_z are updated in step_function
+                target_history_buffer[t, :, 0] = self.data["vt_x"]
+                target_history_buffer[t, :, 1] = self.data["vt_y"]
+                target_history_buffer[t, :, 2] = self.data["vt_z"]
 
                 # Store reward
                 reward_buffer[t] = torch.from_numpy(self.data["rewards"]).float()
@@ -336,15 +345,20 @@ class CPUTrainer:
                 # Reshape/Transpose to (N, T, 3) for visualizer
                 ph = self.data["pos_history"]
                 ph = ph.transpose(1, 0, 2)
-                self.visualizer.log_trajectory(itr, ph)
 
-        # Generate Plots
-        self.visualizer.plot_rewards()
-        gif_path = self.visualizer.generate_trajectory_gif()
-        print(f"Visualization complete. GIF saved at {gif_path}")
+                # Get target history (T, N, 3) -> (N, T, 3)
+                th = target_history_buffer.transpose(1, 0, 2)
+
+                self.visualizer.log_trajectory(itr, ph, targets=th)
+
+            # Generate Plots periodically
+            if itr % 50 == 0 or itr == num_iters - 1:
+                self.visualizer.plot_rewards()
+                gif_path = self.visualizer.generate_trajectory_gif()
+                print(f"Visualization updated. GIF saved at {gif_path}")
 
 
-def setup_and_train(run_config, device_id=0):
+def setup_and_train(run_config, device_id=0, load_path=None):
     use_cuda = torch.cuda.is_available() and HAS_WARPDRIVE
     if use_cuda:
         # CUDA path not updated for new obs space, fail gracefully or fallback
@@ -364,11 +378,21 @@ def setup_and_train(run_config, device_id=0):
     env = DroneEnv(num_agents=total_agents, episode_length=run_config["trainer"]["episode_length"], use_cuda=False)
 
     trainer = CPUTrainer(env, run_config)
+
+    if load_path:
+        print(f"Loading checkpoint from {load_path}")
+        try:
+            trainer.policy.load_state_dict(torch.load(load_path))
+            print("Checkpoint loaded successfully.")
+        except Exception as e:
+            print(f"Failed to load checkpoint: {e}")
+
     trainer.train()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", "-c", type=str, default="configs/drone.yaml")
+    parser.add_argument("--load", "-l", type=str, default=None, help="Path to checkpoint to load")
     args = parser.parse_args()
 
     if not os.path.exists(args.config):
@@ -377,4 +401,4 @@ if __name__ == "__main__":
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
 
-    setup_and_train(config)
+    setup_and_train(config, load_path=args.load)
