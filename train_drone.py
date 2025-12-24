@@ -166,6 +166,7 @@ class CPUTrainer:
         entropy_coeff = self.config['algorithm']['entropy_coeff']
 
         for itr in range(num_iters):
+            print(f"Starting Iteration {itr}")
             # 1. Collect Rollouts
             # Reset
             # We need to define reset indices (all)
@@ -196,6 +197,8 @@ class CPUTrainer:
             log_prob_buffer = torch.zeros((ep_len, num_agents), dtype=torch.float32)
 
             for t in range(self.episode_length):
+                if t % 20 == 0:
+                    print(f"  Step {t}/{self.episode_length}")
                 # IMPORTANT: Use .float() for model input
                 current_obs_np = self.data["observations"]
                 current_obs = torch.from_numpy(current_obs_np).float()
@@ -237,6 +240,7 @@ class CPUTrainer:
                 # Store reward
                 reward_buffer[t] = torch.from_numpy(self.data["rewards"]).float()
 
+            print("  Computing Advantages...")
             # 2. Compute Advantages (GAE)
             returns = torch.zeros_like(reward_buffer)
             R = torch.zeros(self.env.num_agents)
@@ -247,6 +251,7 @@ class CPUTrainer:
             advantages = returns - value_buffer
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
+            print("  Updating Policy...")
             # 3. Update Policy (PPO Step) with Mini-batches
             # Flatten batch
             b_obs_half = obs_buffer.reshape(-1, 608)
@@ -318,10 +323,13 @@ class CPUTrainer:
             avg_loss = total_loss / num_updates
             avg_ae_loss = total_ae_loss / num_updates
 
-            if itr % 5 == 0:
-                print(f"Iter {itr}: Reward {mean_reward:.3f} Loss {avg_loss:.3f} AE {avg_ae_loss:.3f}")
-
+            print(f"Iter {itr}: Reward {mean_reward:.3f} Loss {avg_loss:.3f} AE {avg_ae_loss:.3f}")
             self.visualizer.log_reward(itr, mean_reward)
+
+            # Save Checkpoint
+            if itr % 50 == 0 or itr == num_iters - 1:
+                torch.save(self.policy.state_dict(), f"policy_{itr}.pth")
+                print(f"Saved checkpoint to policy_{itr}.pth")
 
             if itr % 10 == 0 or itr == num_iters - 1:
                 # Get pos_history from self.data (T, N, 3)
@@ -348,7 +356,7 @@ def setup_and_train(run_config, device_id=0):
 
     # Override config for lightweight CPU run
     total_agents = 5000
-    run_config["trainer"]["training_iterations"] = 500
+    run_config["trainer"]["training_iterations"] = 1000
 
     print(f"CPU Mode: Reduced agents to {total_agents} and iterations to {run_config['trainer']['training_iterations']}")
 
