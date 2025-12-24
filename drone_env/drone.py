@@ -231,6 +231,8 @@ def step_cpu(
     conf = np.exp(-0.1 * w2)
     # Behind camera check
     conf = np.where((c30 * xb - s30 * zb) < 0.0, 0.0, conf)
+    # Strictly behind check
+    conf = np.where(xb < 0.0, 0.0, conf)
 
     observations[:, 604] = u
     observations[:, 605] = v
@@ -303,7 +305,9 @@ def reset_cpu(
     # 0:Ax, 1:Fx, 2:Px, 3:Ay, 4:Fy, 5:Py, 6:Az, 7:Fz, 8:Pz, 9:Oz
     traj_params[0] = 3.0 + np.random.rand(num_agents) * 4.0 # Ax
     traj_params[1] = 0.03 + np.random.rand(num_agents) * 0.07 # Fx
-    traj_params[2] = np.random.rand(num_agents) * 2 * np.pi # Px
+    # Ensure starting in front (Positive X)
+    # x = Ax * sin(Px) > 0 => sin(Px) > 0 => Px in [0, pi]
+    traj_params[2] = np.random.rand(num_agents) * np.pi # Px [0, pi]
 
     traj_params[3] = 3.0 + np.random.rand(num_agents) * 4.0 # Ay
     traj_params[4] = 0.03 + np.random.rand(num_agents) * 0.07 # Fy
