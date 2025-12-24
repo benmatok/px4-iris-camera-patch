@@ -340,7 +340,7 @@ class CPUTrainer:
                 torch.save(self.policy.state_dict(), f"policy_{itr}.pth")
                 print(f"Saved checkpoint to policy_{itr}.pth")
 
-            if itr % 10 == 0 or itr == num_iters - 1:
+            if itr == 0 or itr == num_iters - 1:
                 # Get pos_history from self.data (T, N, 3)
                 # Reshape/Transpose to (N, T, 3) for visualizer
                 ph = self.data["pos_history"]
