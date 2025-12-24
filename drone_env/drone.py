@@ -39,8 +39,8 @@ def step_cpu(
     masses, drag_coeffs, thrust_coeffs,
     target_vx, target_vy, target_vz, target_yaw_rate,
     vt_x, vt_y, vt_z,
-    traj_params, # New: Trajectory Parameters
-    pos_history,
+    traj_params, # Shape: (10, num_agents)
+    pos_history, # Shape: (episode_length, num_agents, 3)
     observations,
     rewards,
     done_flags,
@@ -70,19 +70,18 @@ def step_cpu(
     r, p, y_ang = roll, pitch, yaw
 
     # Update Virtual Target using Trajectory Params
-    # traj_params: (num_agents, 10)
+    # traj_params: (10, num_agents)
     # 0:Ax, 1:Fx, 2:Px, 3:Ay, 4:Fy, 5:Py, 6:Az, 7:Fz, 8:Pz, 9:Oz
     t = step_counts[0] + 1
     t_f = float(t)
 
-    tp = traj_params # alias
-
+    # Use rows
     # x = Ax * sin(Fx * t + Px)
-    vtx_val = tp[:, 0] * np.sin(tp[:, 1] * t_f + tp[:, 2])
-    # y = Ay * sin(Fy * t + Py) (using sin for consistency, phase controls cos)
-    vty_val = tp[:, 3] * np.sin(tp[:, 4] * t_f + tp[:, 5])
+    vtx_val = traj_params[0] * np.sin(traj_params[1] * t_f + traj_params[2])
+    # y = Ay * sin(Fy * t + Py)
+    vty_val = traj_params[3] * np.sin(traj_params[4] * t_f + traj_params[5])
     # z = Oz + Az * sin(Fz * t + Pz)
-    vtz_val = tp[:, 9] + tp[:, 6] * np.sin(tp[:, 7] * t_f + tp[:, 8])
+    vtz_val = traj_params[9] + traj_params[6] * np.sin(traj_params[7] * t_f + traj_params[8])
 
     vt_x[:] = vtx_val
     vt_y[:] = vty_val
@@ -169,11 +168,13 @@ def step_cpu(
     t = step_counts[0]
 
     # Store Position History
+    # shape: (episode_length, num_agents, 3) flattened
     if t <= episode_length:
-        ph_reshaped = pos_history.reshape(num_agents, episode_length, 3)
-        ph_reshaped[:, t-1, 0] = px
-        ph_reshaped[:, t-1, 1] = py
-        ph_reshaped[:, t-1, 2] = pz
+        # Reshape to (episode_length, num_agents, 3) for easy indexing
+        ph_view = pos_history.reshape(episode_length, num_agents, 3)
+        ph_view[t-1, :, 0] = px
+        ph_view[t-1, :, 1] = py
+        ph_view[t-1, :, 2] = pz
 
     # Update Observations
     # observations: (num_agents, 608)
@@ -285,7 +286,7 @@ def reset_cpu(
     roll, pitch, yaw,
     masses, drag_coeffs, thrust_coeffs,
     target_vx, target_vy, target_vz, target_yaw_rate,
-    traj_params, # New
+    traj_params, # New shape (10, num_agents)
     pos_history,
     observations,
     rng_states,
@@ -300,18 +301,18 @@ def reset_cpu(
 
     # Initialize Trajectory Parameters (Lissajous / Complex)
     # 0:Ax, 1:Fx, 2:Px, 3:Ay, 4:Fy, 5:Py, 6:Az, 7:Fz, 8:Pz, 9:Oz
-    traj_params[:, 0] = 3.0 + np.random.rand(num_agents) * 4.0 # Ax: 3-7
-    traj_params[:, 1] = 0.03 + np.random.rand(num_agents) * 0.07 # Fx: 0.03-0.1
-    traj_params[:, 2] = np.random.rand(num_agents) * 2 * np.pi # Px
+    traj_params[0] = 3.0 + np.random.rand(num_agents) * 4.0 # Ax
+    traj_params[1] = 0.03 + np.random.rand(num_agents) * 0.07 # Fx
+    traj_params[2] = np.random.rand(num_agents) * 2 * np.pi # Px
 
-    traj_params[:, 3] = 3.0 + np.random.rand(num_agents) * 4.0 # Ay
-    traj_params[:, 4] = 0.03 + np.random.rand(num_agents) * 0.07 # Fy
-    traj_params[:, 5] = np.random.rand(num_agents) * 2 * np.pi # Py
+    traj_params[3] = 3.0 + np.random.rand(num_agents) * 4.0 # Ay
+    traj_params[4] = 0.03 + np.random.rand(num_agents) * 0.07 # Fy
+    traj_params[5] = np.random.rand(num_agents) * 2 * np.pi # Py
 
-    traj_params[:, 6] = 1.0 + np.random.rand(num_agents) * 2.0 # Az
-    traj_params[:, 7] = 0.05 + np.random.rand(num_agents) * 0.1 # Fz
-    traj_params[:, 8] = np.random.rand(num_agents) * 2 * np.pi # Pz
-    traj_params[:, 9] = 8.0 + np.random.rand(num_agents) * 4.0 # Oz: 8-12
+    traj_params[6] = 1.0 + np.random.rand(num_agents) * 2.0 # Az
+    traj_params[7] = 0.05 + np.random.rand(num_agents) * 0.1 # Fz
+    traj_params[8] = np.random.rand(num_agents) * 2 * np.pi # Pz
+    traj_params[9] = 8.0 + np.random.rand(num_agents) * 4.0 # Oz
 
     rnd_cmd = np.random.rand(num_agents)
 
@@ -410,8 +411,8 @@ class DroneEnv(CUDAEnvironmentState):
             "vt_x": {"shape": (self.num_agents,), "dtype": np.float32},
             "vt_y": {"shape": (self.num_agents,), "dtype": np.float32},
             "vt_z": {"shape": (self.num_agents,), "dtype": np.float32},
-            "traj_params": {"shape": (self.num_agents, 10), "dtype": np.float32}, # New
-            "pos_history": {"shape": (self.num_agents * self.episode_length * 3,), "dtype": np.float32},
+            "traj_params": {"shape": (10, self.num_agents), "dtype": np.float32}, # Optimized Shape
+            "pos_history": {"shape": (self.episode_length, self.num_agents, 3), "dtype": np.float32}, # Optimized Shape
             "rng_states": {"shape": (self.num_agents,), "dtype": np.int32},
              "pos_x": {"shape": (self.num_agents,), "dtype": np.float32},
              "pos_y": {"shape": (self.num_agents,), "dtype": np.float32},
@@ -425,7 +426,7 @@ class DroneEnv(CUDAEnvironmentState):
              "step_counts": {"shape": (self.num_agents,), "dtype": np.int32},
              "done_flags": {"shape": (self.num_agents,), "dtype": np.float32},
              "rewards": {"shape": (self.num_agents,), "dtype": np.float32},
-             "observations": {"shape": (self.num_agents, 608), "dtype": np.float32}, # 600 + 4 + 4
+             "observations": {"shape": (self.num_agents, 608), "dtype": np.float32},
         }
 
     def get_action_space(self):

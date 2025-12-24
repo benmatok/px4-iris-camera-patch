@@ -20,8 +20,8 @@ inline void step_agents_avx2(
     float* masses, float* drag_coeffs, float* thrust_coeffs,
     float* target_vx, float* target_vy, float* target_vz, float* target_yaw_rate,
     float* vt_x, float* vt_y, float* vt_z, // Virtual Target Position
-    float* traj_params, // Trajectory Parameters
-    float* pos_history,
+    float* traj_params, // Trajectory Parameters. Shape (10, num_agents).
+    float* pos_history, // Shape (episode_length, num_agents, 3)
     float* observations, // stride 608
     float* rewards,
     float* done_flags,
@@ -71,32 +71,42 @@ inline void step_agents_avx2(
     __m256 c10 = _mm256_set1_ps(10.0f);
     __m256 c05 = _mm256_set1_ps(0.5f);
     // Noise scaling: 0.04 (range +/- 0.02)
-    __m256 c_noise_scale = _mm256_set1_ps(0.04f);
-    __m256 c_noise_offset = _mm256_set1_ps(0.5f);
+    // __m256 c_noise_scale = _mm256_set1_ps(0.04f);
+    // __m256 c_noise_offset = _mm256_set1_ps(0.5f);
 
     // ------------------------------------------------------------------------
     // Update Virtual Target Position (Complex Trajectory)
     // ------------------------------------------------------------------------
-    // traj_params: num_agents * 10 floats
-    // Need to gather or loadu if stride is matching, but here it's 10 floats per agent, so not contiguous for AVX load of same param across agents.
-    // We need to gather parameters: Ax, Fx, Px...
+    // traj_params: (10, num_agents).
+    // Row 0: Ax, Row 1: Fx, ...
+    // To access parameter X for agents i..i+7, we access traj_params[row * num_agents + i]
+    // This is contiguous!
 
-    // Indices for gather: i*10, (i+1)*10 ...
-    __m256i idx_tp_base = _mm256_set_epi32(7*10, 6*10, 5*10, 4*10, 3*10, 2*10, 1*10, 0);
-    __m256i idx_tp_base_adj = _mm256_add_epi32(idx_tp_base, _mm256_set1_epi32(i*10));
+    int offset_i = i;
+    int stride = num_agents;
 
-    __m256 ax = _mm256_i32gather_ps(traj_params, idx_tp_base_adj, 4);
-    __m256 fx = _mm256_i32gather_ps(traj_params, _mm256_add_epi32(idx_tp_base_adj, _mm256_set1_epi32(1)), 4);
-    __m256 px_ph = _mm256_i32gather_ps(traj_params, _mm256_add_epi32(idx_tp_base_adj, _mm256_set1_epi32(2)), 4);
+    // Ax (0)
+    __m256 ax = _mm256_loadu_ps(&traj_params[0 * stride + offset_i]);
+    // Fx (1)
+    __m256 fx = _mm256_loadu_ps(&traj_params[1 * stride + offset_i]);
+    // Px (2)
+    __m256 px_ph = _mm256_loadu_ps(&traj_params[2 * stride + offset_i]);
 
-    __m256 ay = _mm256_i32gather_ps(traj_params, _mm256_add_epi32(idx_tp_base_adj, _mm256_set1_epi32(3)), 4);
-    __m256 fy = _mm256_i32gather_ps(traj_params, _mm256_add_epi32(idx_tp_base_adj, _mm256_set1_epi32(4)), 4);
-    __m256 py_ph = _mm256_i32gather_ps(traj_params, _mm256_add_epi32(idx_tp_base_adj, _mm256_set1_epi32(5)), 4);
+    // Ay (3)
+    __m256 ay = _mm256_loadu_ps(&traj_params[3 * stride + offset_i]);
+    // Fy (4)
+    __m256 fy = _mm256_loadu_ps(&traj_params[4 * stride + offset_i]);
+    // Py (5)
+    __m256 py_ph = _mm256_loadu_ps(&traj_params[5 * stride + offset_i]);
 
-    __m256 az = _mm256_i32gather_ps(traj_params, _mm256_add_epi32(idx_tp_base_adj, _mm256_set1_epi32(6)), 4);
-    __m256 fz = _mm256_i32gather_ps(traj_params, _mm256_add_epi32(idx_tp_base_adj, _mm256_set1_epi32(7)), 4);
-    __m256 pz_ph = _mm256_i32gather_ps(traj_params, _mm256_add_epi32(idx_tp_base_adj, _mm256_set1_epi32(8)), 4);
-    __m256 oz = _mm256_i32gather_ps(traj_params, _mm256_add_epi32(idx_tp_base_adj, _mm256_set1_epi32(9)), 4);
+    // Az (6)
+    __m256 az = _mm256_loadu_ps(&traj_params[6 * stride + offset_i]);
+    // Fz (7)
+    __m256 fz = _mm256_loadu_ps(&traj_params[7 * stride + offset_i]);
+    // Pz (8)
+    __m256 pz_ph = _mm256_loadu_ps(&traj_params[8 * stride + offset_i]);
+    // Oz (9)
+    __m256 oz = _mm256_loadu_ps(&traj_params[9 * stride + offset_i]);
 
     float t_f = (float)t;
     __m256 t_v = _mm256_set1_ps(t_f);
@@ -230,16 +240,31 @@ inline void step_agents_avx2(
     __m256 mask_coll = _mm256_cmp_ps(pz, terr_z_final, _CMP_LT_OQ);
 
     if (t <= episode_length) {
+        // Optimized History Write: pos_history[t, i, 0..2]
+        // This is a contiguous block for all agents at time t.
+        // Wait, pos_history layout: (episode_length, num_agents, 3).
+        // Memory offset: (t-1) * num_agents * 3 + i * 3
+        // So for agents i..i+7, the writes are:
+        // [i*3, i*3+1, i*3+2], [(i+1)*3...], ...
+        // This is contiguous block of 8*3 = 24 floats.
+
+        int base_idx = (t-1) * num_agents * 3 + i * 3;
+
+        // We have px, py, pz registers.
+        // We need to interleave them: x0, y0, z0, x1, y1, z1...
+        // AVX doesn't have easy interleave for 3 streams.
+        // So we just store to temp and memcpy or scalar assign.
+        // Scalar assign is fine because it's writing to L1 cache (contiguous block).
+
         float tmp_px[8], tmp_py[8], tmp_pz[8];
         _mm256_storeu_ps(tmp_px, px);
         _mm256_storeu_ps(tmp_py, py);
         _mm256_storeu_ps(tmp_pz, pz);
+
         for(int k=0; k<8; k++) {
-            int agent_idx = i+k;
-            int idx = agent_idx * episode_length * 3 + (t-1)*3;
-            pos_history[idx+0] = tmp_px[k];
-            pos_history[idx+1] = tmp_py[k];
-            pos_history[idx+2] = tmp_pz[k];
+            pos_history[base_idx + k*3 + 0] = tmp_px[k];
+            pos_history[base_idx + k*3 + 1] = tmp_py[k];
+            pos_history[base_idx + k*3 + 2] = tmp_pz[k];
         }
     }
 

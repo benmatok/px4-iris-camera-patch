@@ -91,9 +91,12 @@ if HAS_WARPDRIVE:
 
                     # Capture Trajectory every 50 iterations (or 10% of total)
                     if itr % 50 == 0 or itr == num_iters - 1:
-                        pos_history = data_manager.pull_data("pos_history") # (num_envs * episode_length * 3)
                         # Reshape: (num_envs, episode_length, 3)
+                        # NOTE: This part in CUDA trainer might need update if CUDA backend was used,
+                        # but we are in CPU mode primarily.
+                        pos_history = data_manager.pull_data("pos_history")
                         episode_length = self.env_wrapper.env.episode_length
+                        # Assuming legacy shape for CUDA if not updated
                         pos_history = pos_history.reshape(self.config['trainer']['num_envs'], episode_length, 3)
                         self.visualizer.log_trajectory(itr, pos_history)
 
@@ -321,8 +324,10 @@ class CPUTrainer:
             self.visualizer.log_reward(itr, mean_reward)
 
             if itr % 10 == 0 or itr == num_iters - 1:
-                # Get pos_history from self.data
-                ph = self.data["pos_history"].reshape(self.env.num_agents, self.episode_length, 3)
+                # Get pos_history from self.data (T, N, 3)
+                # Reshape/Transpose to (N, T, 3) for visualizer
+                ph = self.data["pos_history"]
+                ph = ph.transpose(1, 0, 2)
                 self.visualizer.log_trajectory(itr, ph)
 
         # Generate Plots
