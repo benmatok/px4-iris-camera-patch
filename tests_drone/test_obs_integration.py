@@ -49,9 +49,11 @@ class TestObsIntegration(unittest.TestCase):
 
         # Calculate expected based on randomized params
         # traj_params are now randomized in reset.
-        tp = data["traj_params"][0]
+        # Shape: (10, num_agents)
+        tp = data["traj_params"] # Shape (10, 1)
         # 0:Ax, 1:Fx, 2:Px
-        expected_x = tp[0] * np.sin(tp[1] * 1.0 + tp[2])
+        # access via [idx, agent_idx]
+        expected_x = tp[0, 0] * np.sin(tp[1, 0] * 1.0 + tp[2, 0])
         self.assertAlmostEqual(vt_x, expected_x, places=5)
 
         # Check tracker features in obs [604:608]

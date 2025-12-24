@@ -57,8 +57,8 @@ cdef void _step_agent_scalar(
     float[:] masses, float[:] drag_coeffs, float[:] thrust_coeffs,
     float[:] target_vx, float[:] target_vy, float[:] target_vz, float[:] target_yaw_rate,
     float[:] vt_x, float[:] vt_y, float[:] vt_z,
-    float[:, :] traj_params,
-    float[:] pos_history,
+    float[:, :] traj_params, # Shape (10, num_agents)
+    float[:, :, :] pos_history, # Shape (episode_length, num_agents, 3)
     float[:, :] observations,
     float[:] rewards,
     float[:] done_flags,
@@ -116,16 +116,17 @@ cdef void _step_agent_scalar(
     cdef float t_f = <float>t
 
     # 0:Ax, 1:Fx, 2:Px, 3:Ay, 4:Fy, 5:Py, 6:Az, 7:Fz, 8:Pz, 9:Oz
-    cdef float ax_p = traj_params[i, 0]
-    cdef float fx_p = traj_params[i, 1]
-    cdef float px_p = traj_params[i, 2]
-    cdef float ay_p = traj_params[i, 3]
-    cdef float fy_p = traj_params[i, 4]
-    cdef float py_p = traj_params[i, 5]
-    cdef float az_p = traj_params[i, 6]
-    cdef float fz_p = traj_params[i, 7]
-    cdef float pz_p = traj_params[i, 8]
-    cdef float oz_p = traj_params[i, 9]
+    # New Layout: (10, num_agents) -> traj_params[param_idx, agent_idx]
+    cdef float ax_p = traj_params[0, i]
+    cdef float fx_p = traj_params[1, i]
+    cdef float px_p = traj_params[2, i]
+    cdef float ay_p = traj_params[3, i]
+    cdef float fy_p = traj_params[4, i]
+    cdef float py_p = traj_params[5, i]
+    cdef float az_p = traj_params[6, i]
+    cdef float fz_p = traj_params[7, i]
+    cdef float pz_p = traj_params[8, i]
+    cdef float oz_p = traj_params[9, i]
 
     cdef float vtx_val = ax_p * sin(fx_p * t_f + px_p)
     cdef float vty_val = ay_p * sin(fy_p * t_f + py_p)
@@ -211,11 +212,11 @@ cdef void _step_agent_scalar(
     pitch[i] = p
     yaw[i] = y_ang
 
-    # Pos History
+    # Pos History: (episode_length, num_agents, 3)
     if t <= episode_length:
-        pos_history[i * episode_length * 3 + (t-1) * 3 + 0] = px
-        pos_history[i * episode_length * 3 + (t-1) * 3 + 1] = py
-        pos_history[i * episode_length * 3 + (t-1) * 3 + 2] = pz
+        pos_history[t-1, i, 0] = px
+        pos_history[t-1, i, 1] = py
+        pos_history[t-1, i, 2] = pz
 
     # Tracker Features
     cdef float dx_w, dy_w, dz_w
@@ -327,7 +328,7 @@ cdef void _reset_agent_scalar(
     float[:] roll, float[:] pitch, float[:] yaw,
     float[:] masses, float[:] drag_coeffs, float[:] thrust_coeffs,
     float[:] target_vx, float[:] target_vy, float[:] target_vz, float[:] target_yaw_rate,
-    float[:, :] traj_params,
+    float[:, :] traj_params, # Shape (10, num_agents)
     float[:, :] observations
 ) noexcept nogil:
     cdef int k
@@ -341,18 +342,18 @@ cdef void _reset_agent_scalar(
 
     # Randomize Trajectory Params
     # 0:Ax, 1:Fx, 2:Px, 3:Ay, 4:Fy, 5:Py, 6:Az, 7:Fz, 8:Pz, 9:Oz
-    traj_params[i, 0] = 3.0 + rand_float() * 4.0
-    traj_params[i, 1] = 0.03 + rand_float() * 0.07
-    traj_params[i, 2] = rand_float() * 6.28318
+    traj_params[0, i] = 3.0 + rand_float() * 4.0
+    traj_params[1, i] = 0.03 + rand_float() * 0.07
+    traj_params[2, i] = rand_float() * 6.28318
 
-    traj_params[i, 3] = 3.0 + rand_float() * 4.0
-    traj_params[i, 4] = 0.03 + rand_float() * 0.07
-    traj_params[i, 5] = rand_float() * 6.28318
+    traj_params[3, i] = 3.0 + rand_float() * 4.0
+    traj_params[4, i] = 0.03 + rand_float() * 0.07
+    traj_params[5, i] = rand_float() * 6.28318
 
-    traj_params[i, 6] = 1.0 + rand_float() * 2.0
-    traj_params[i, 7] = 0.05 + rand_float() * 0.1
-    traj_params[i, 8] = rand_float() * 6.28318
-    traj_params[i, 9] = 8.0 + rand_float() * 4.0
+    traj_params[6, i] = 1.0 + rand_float() * 2.0
+    traj_params[7, i] = 0.05 + rand_float() * 0.1
+    traj_params[8, i] = rand_float() * 6.28318
+    traj_params[9, i] = 8.0 + rand_float() * 4.0
 
     rnd_cmd = rand_float()
     tvx=0.0; tvy=0.0; tvz=0.0; tyr=0.0
@@ -407,8 +408,8 @@ def step_cython(
     float[:] masses, float[:] drag_coeffs, float[:] thrust_coeffs,
     float[:] target_vx, float[:] target_vy, float[:] target_vz, float[:] target_yaw_rate,
     float[:] vt_x, float[:] vt_y, float[:] vt_z,
-    float[:, :] traj_params, # New
-    float[:] pos_history,
+    float[:, :] traj_params, # Shape (10, num_agents)
+    float[:, :, :] pos_history, # Shape (episode_length, num_agents, 3)
     float[:, :] observations,
     float[:] rewards,
     float[:] done_flags,
@@ -436,10 +437,8 @@ def step_cython(
                 &masses[0], &drag_coeffs[0], &thrust_coeffs[0],
                 &target_vx[0], &target_vy[0], &target_vz[0], &target_yaw_rate[0],
                 &vt_x[0], &vt_y[0], &vt_z[0],
-                &traj_params[0,0], # Pass pointer to first element (it's contiguous 2D array if assumed C-style)
-                # Note: traj_params is (num_agents, 10). Memory layout is contiguous.
-                # &traj_params[0,0] is correct.
-                &pos_history[0],
+                &traj_params[0,0], # This is now start of contiguous block for (10, num_agents) -> Correct
+                &pos_history[0,0,0], # Correct start
                 &observations[0,0],
                 &rewards[0],
                 &done_flags[0],
@@ -475,8 +474,8 @@ def reset_cython(
     float[:] roll, float[:] pitch, float[:] yaw,
     float[:] masses, float[:] drag_coeffs, float[:] thrust_coeffs,
     float[:] target_vx, float[:] target_vy, float[:] target_vz, float[:] target_yaw_rate,
-    float[:, :] traj_params, # New
-    float[:] pos_history,
+    float[:, :] traj_params, # Shape (10, num_agents)
+    float[:, :, :] pos_history,
     float[:, :] observations,
     int[:] rng_states,
     int[:] step_counts,

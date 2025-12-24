@@ -30,16 +30,18 @@ def benchmark():
     target_vz = np.zeros(num_agents, dtype=np.float32)
     target_yaw_rate = np.zeros(num_agents, dtype=np.float32)
 
-    # New Trajectory Params
-    traj_params = np.zeros((num_agents, 10), dtype=np.float32)
+    # New Trajectory Params Shape: (10, num_agents)
+    traj_params = np.zeros((10, num_agents), dtype=np.float32)
 
     # Virtual Targets
     vt_x = np.zeros(num_agents, dtype=np.float32)
     vt_y = np.zeros(num_agents, dtype=np.float32)
     vt_z = np.zeros(num_agents, dtype=np.float32)
 
-    pos_history = np.zeros(num_agents * episode_length * 3, dtype=np.float32)
-    observations = np.zeros((num_agents, 608), dtype=np.float32) # Updated Size
+    # Pos History Shape: (episode_length, num_agents, 3)
+    pos_history = np.zeros((episode_length, num_agents, 3), dtype=np.float32)
+
+    observations = np.zeros((num_agents, 608), dtype=np.float32)
     rewards = np.zeros(num_agents, dtype=np.float32)
     done_flags = np.zeros(num_agents, dtype=np.float32)
     step_counts = np.zeros(1, dtype=np.int32)
