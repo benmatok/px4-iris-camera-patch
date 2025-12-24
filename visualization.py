@@ -13,15 +13,17 @@ class Visualizer:
     def log_reward(self, iteration, reward):
         self.rewards_history.append((iteration, reward))
 
-    def log_trajectory(self, iteration, trajectories):
+    def log_trajectory(self, iteration, trajectories, targets=None):
         """
         trajectories: shape (num_agents, episode_length, 3)
+        targets: shape (num_agents, episode_length, 3) (Optional)
         """
         # We only keep one agent's trajectory for visualization clarity
         # Or a few. Let's keep the first agent's trajectory.
         # IMPORTANT: Use .copy() to ensure we store data, not a view into a buffer
         single_traj = trajectories[0].copy() # (episode_length, 3)
-        self.trajectory_snapshots.append((iteration, single_traj))
+        single_target = targets[0].copy() if targets is not None else None
+        self.trajectory_snapshots.append((iteration, single_traj, single_target))
 
     def plot_rewards(self):
         iterations, rewards = zip(*self.rewards_history)
@@ -42,7 +44,8 @@ class Visualizer:
         filenames = []
 
         # Determine bounds for consistent axes
-        all_trajs = np.array([t for _, t in self.trajectory_snapshots])
+        # item is (itr, traj, target)
+        all_trajs = np.array([item[1] for item in self.trajectory_snapshots])
         # all_trajs shape: (num_snapshots, episode_length, 3)
 
         x_min, x_max = all_trajs[:, :, 0].min(), all_trajs[:, :, 0].max()
@@ -55,13 +58,17 @@ class Visualizer:
         y_lim = (y_min - pad, y_max + pad)
         z_lim = (z_min - pad, z_max + pad) # Z should be > 0 ideally, but let's see.
 
-        for i, (itr, traj) in enumerate(self.trajectory_snapshots):
+        for i, (itr, traj, target) in enumerate(self.trajectory_snapshots):
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
 
             # Top-down view (X vs Y)
-            ax1.plot(traj[:, 0], traj[:, 1], 'b-')
+            ax1.plot(traj[:, 0], traj[:, 1], 'b-', label="Drone")
             ax1.plot(traj[0, 0], traj[0, 1], 'go', label="Start")
             ax1.plot(traj[-1, 0], traj[-1, 1], 'rx', label="End")
+            if target is not None:
+                ax1.plot(target[:, 0], target[:, 1], 'r--', alpha=0.5, label="Target")
+                ax1.plot(target[-1, 0], target[-1, 1], 'r*', markersize=10, label="Target End")
+
             ax1.set_xlim(x_lim)
             ax1.set_ylim(y_lim)
             ax1.set_title(f"Top-Down View (Iter {itr})")
@@ -71,9 +78,13 @@ class Visualizer:
             ax1.legend()
 
             # Side view (X vs Z)
-            ax2.plot(traj[:, 0], traj[:, 2], 'b-')
+            ax2.plot(traj[:, 0], traj[:, 2], 'b-', label="Drone")
             ax2.plot(traj[0, 0], traj[0, 2], 'go', label="Start")
             ax2.plot(traj[-1, 0], traj[-1, 2], 'rx', label="End")
+            if target is not None:
+                ax2.plot(target[:, 0], target[:, 2], 'r--', alpha=0.5, label="Target")
+                ax2.plot(target[-1, 0], target[-1, 2], 'r*', markersize=10, label="Target End")
+
             ax2.set_xlim(x_lim)
             ax2.set_ylim(z_lim)
             ax2.set_title(f"Side View (Iter {itr})")
