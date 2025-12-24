@@ -335,10 +335,14 @@ class CPUTrainer:
             print(f"Iter {itr}: Reward {mean_reward:.3f} Loss {avg_loss:.3f} AE {avg_ae_loss:.3f}")
             self.visualizer.log_reward(itr, mean_reward)
 
-            # Save Checkpoint
-            if itr % 50 == 0 or itr == num_iters - 1:
-                torch.save(self.policy.state_dict(), f"policy_{itr}.pth")
-                print(f"Saved checkpoint to policy_{itr}.pth")
+            # Save Checkpoint (Overwrite latest)
+            if itr % 50 == 0:
+                torch.save(self.policy.state_dict(), "latest_checkpoint.pth")
+                print("Saved checkpoint to latest_checkpoint.pth")
+
+            if itr == num_iters - 1:
+                torch.save(self.policy.state_dict(), "final_policy.pth")
+                print("Saved checkpoint to final_policy.pth")
 
             if itr == 0 or itr == num_iters - 1:
                 # Get pos_history from self.data (T, N, 3)
