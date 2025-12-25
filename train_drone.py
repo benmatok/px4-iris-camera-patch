@@ -198,6 +198,8 @@ class CPUTrainer:
 
             # Temp buffer for target history for visualization
             target_history_buffer = np.zeros((ep_len, num_agents, 3), dtype=np.float32)
+            # Temp buffer for tracker history (u, v, size, conf)
+            tracker_history_buffer = np.zeros((ep_len, num_agents, 4), dtype=np.float32)
 
             for t in range(self.episode_length):
                 if t % 20 == 0:
@@ -245,6 +247,10 @@ class CPUTrainer:
                 target_history_buffer[t, :, 0] = self.data["vt_x"]
                 target_history_buffer[t, :, 1] = self.data["vt_y"]
                 target_history_buffer[t, :, 2] = self.data["vt_z"]
+
+                # Capture tracker features (indices 604-608)
+                # data["observations"] shape: (num_agents, 608)
+                tracker_history_buffer[t] = self.data["observations"][:, 604:608]
 
                 # Store reward
                 reward_buffer[t] = torch.from_numpy(self.data["rewards"]).float()
@@ -353,7 +359,10 @@ class CPUTrainer:
                 # Get target history (T, N, 3) -> (N, T, 3)
                 th = target_history_buffer.transpose(1, 0, 2)
 
-                self.visualizer.log_trajectory(itr, ph, targets=th)
+                # Get tracker history (T, N, 4) -> (N, T, 4)
+                trh = tracker_history_buffer.transpose(1, 0, 2)
+
+                self.visualizer.log_trajectory(itr, ph, targets=th, tracker_data=trh)
 
             # Generate Plots periodically
             if itr % 50 == 0 or itr == num_iters - 1:

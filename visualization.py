@@ -13,17 +13,19 @@ class Visualizer:
     def log_reward(self, iteration, reward):
         self.rewards_history.append((iteration, reward))
 
-    def log_trajectory(self, iteration, trajectories, targets=None):
+    def log_trajectory(self, iteration, trajectories, targets=None, tracker_data=None):
         """
         trajectories: shape (num_agents, episode_length, 3)
         targets: shape (num_agents, episode_length, 3) (Optional)
+        tracker_data: shape (num_agents, episode_length, 4) (Optional) [u, v, size, conf]
         """
         # We only keep one agent's trajectory for visualization clarity
         # Or a few. Let's keep the first agent's trajectory.
         # IMPORTANT: Use .copy() to ensure we store data, not a view into a buffer
         single_traj = trajectories[0].copy() # (episode_length, 3)
         single_target = targets[0].copy() if targets is not None else None
-        self.trajectory_snapshots.append((iteration, single_traj, single_target))
+        single_tracker = tracker_data[0].copy() if tracker_data is not None else None
+        self.trajectory_snapshots.append((iteration, single_traj, single_target, single_tracker))
 
     def plot_rewards(self):
         iterations, rewards = zip(*self.rewards_history)
@@ -44,7 +46,7 @@ class Visualizer:
         filenames = []
 
         # Determine bounds for consistent axes
-        # item is (itr, traj, target)
+        # item is (itr, traj, target, tracker)
         all_trajs = np.array([item[1] for item in self.trajectory_snapshots])
         # all_trajs shape: (num_snapshots, episode_length, 3)
 
@@ -58,8 +60,9 @@ class Visualizer:
         y_lim = (y_min - pad, y_max + pad)
         z_lim = (z_min - pad, z_max + pad) # Z should be > 0 ideally, but let's see.
 
-        for i, (itr, traj, target) in enumerate(self.trajectory_snapshots):
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6))
+        for i, (itr, traj, target, tracker) in enumerate(self.trajectory_snapshots):
+            fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+            ax1, ax2, ax3 = axes
 
             # Top-down view (X vs Y)
             ax1.plot(traj[:, 0], traj[:, 1], 'b-', label="Drone")
@@ -92,6 +95,43 @@ class Visualizer:
             ax2.set_ylabel("Z")
             ax2.grid(True)
             ax2.legend()
+
+            # Drone POV View
+            if tracker is not None:
+                # tracker: (episode_length, 4) -> u, v, size, conf
+                # We plot the path of the target center in the image plane
+                u, v, size, conf = tracker[:, 0], tracker[:, 1], tracker[:, 2], tracker[:, 3]
+
+                # Plot Image Plane limits (Assuming FOV +/- 1.0 approx for u,v)
+                ax3.set_xlim(-1.0, 1.0)
+                ax3.set_ylim(-1.0, 1.0)
+                ax3.set_title(f"Drone POV (Iter {itr})")
+                ax3.set_xlabel("u (Horizontal)")
+                ax3.set_ylabel("v (Vertical)")
+
+                # Center crosshair
+                ax3.axhline(0, color='k', linestyle=':', alpha=0.5)
+                ax3.axvline(0, color='k', linestyle=':', alpha=0.5)
+
+                # Scatter plot colored by confidence
+                sc = ax3.scatter(u, v, c=conf, cmap='viridis', s=size*50, alpha=0.7, edgecolors='k')
+                plt.colorbar(sc, ax=ax3, label="Tracker Confidence")
+
+                # Draw the final bounding box
+                from matplotlib.patches import Rectangle
+                final_u, final_v, final_size = u[-1], v[-1], size[-1]
+                # Box width proxy: sqrt(size) * 0.5?
+                # size = 10 / (z^2+1). At z=3, size=1.0.
+                # Box size in u-space depends on real size / distance.
+                # u = x/z. width_u = real_width / z.
+                # size ~ 10/z^2. z ~ sqrt(10/size).
+                # width_u ~ real_width / sqrt(10/size) ~ k * sqrt(size).
+                # Let's assume real_width = 1.0, so width_u ~ sqrt(size)/3.
+                box_w = np.sqrt(final_size) * 0.4
+                rect = Rectangle((final_u - box_w/2, final_v - box_w/2), box_w, box_w,
+                                 linewidth=2, edgecolor='r', facecolor='none')
+                ax3.add_patch(rect)
+                ax3.text(final_u, final_v + box_w/2 + 0.05, "Target", color='r', ha='center')
 
             filename = os.path.join(self.output_dir, f"traj_{itr}.png")
             plt.savefig(filename)
