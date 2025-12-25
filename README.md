@@ -28,10 +28,29 @@ sudo docker exec -it <CONTAINER_ID> bash
 inside-container> python3 /src/px4-iris-camera-patch/main.py
 ```
 
-## Running Drone RL Training
+## Local Development & Training
 
-To run the custom Drone RL training:
+To run the project locally (without Docker), follow these steps to set up the environment and start training.
 
+### 1. Prerequisites
+- **Python 3.8+**
+- **C++ Compiler**: `g++` or `clang++` with OpenMP support.
+- **Python Packages**: Listed in `requirements.txt`.
+
+### 2. Installation & Compilation
+First, install the required Python dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+Next, compile the optimized Cython extensions (required for the CPU backend):
+```bash
+python3 setup.py build_ext --inplace
+```
+This builds the high-performance physics engine and texture feature extractor.
+
+### 3. Running RL Training
+To train the drone agent using PPO:
 ```bash
 python3 train_drone.py
 ```
@@ -93,23 +112,6 @@ To resume training from a checkpoint:
 python train_ae.py --agents 2000 --episodes 1000 --load ae_model.pth
 ```
 
-### Installation & Compilation
-
-To run the project (especially the CPU-optimized Cython backend) on a clean installation, you must compile the C++ extensions.
-
-#### Prerequisites
-- **Python 3.x**
-- **C++ Compiler**: `g++` or `clang++` with OpenMP support.
-- **Python Packages**: `numpy`, `Cython`, `setuptools`.
-
-#### Compilation Command
-Run the following command in the root directory to build the Cython extension in place:
-
-```bash
-python setup.py build_ext --inplace
-```
-
-This compiles `drone_env/drone_cython.pyx` into a shared object (`.so`) file that the Python scripts import automatically.
 
 #### Arguments
 - `--agents`: Number of parallel drones to simulate (default: 2000).
