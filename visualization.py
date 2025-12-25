@@ -149,3 +149,76 @@ class Visualizer:
             os.remove(f)
 
         return gif_path
+
+    def save_episode_gif(self, trajectory, target, tracker_data, filename):
+        """
+        Generates a GIF for a single episode/agent.
+        trajectory: (episode_length, 3)
+        target: (episode_length, 3)
+        tracker_data: (episode_length, 4)
+        """
+        images = []
+        filenames = []
+        episode_length = trajectory.shape[0]
+
+        # Bounds
+        x_min, x_max = trajectory[:, 0].min(), trajectory[:, 0].max()
+        y_min, y_max = trajectory[:, 1].min(), trajectory[:, 1].max()
+        z_min, z_max = trajectory[:, 2].min(), trajectory[:, 2].max()
+        pad = 1.0
+        x_lim = (x_min - pad, x_max + pad)
+        y_lim = (y_min - pad, y_max + pad)
+        z_lim = (z_min - pad, z_max + pad)
+
+        for t in range(episode_length):
+            fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+            ax1, ax2, ax3 = axes
+
+            # Plot full trajectory up to t
+            ax1.plot(trajectory[:t+1, 0], trajectory[:t+1, 1], 'b-')
+            ax1.plot(trajectory[t, 0], trajectory[t, 1], 'bo') # Current pos
+            if target is not None:
+                ax1.plot(target[:t+1, 0], target[:t+1, 1], 'r--')
+                ax1.plot(target[t, 0], target[t, 1], 'r*')
+
+            ax1.set_xlim(x_lim); ax1.set_ylim(y_lim)
+            ax1.set_title(f"Top-Down (Step {t})")
+            ax1.grid(True)
+
+            ax2.plot(trajectory[:t+1, 0], trajectory[:t+1, 2], 'b-')
+            ax2.plot(trajectory[t, 0], trajectory[t, 2], 'bo')
+            if target is not None:
+                ax2.plot(target[:t+1, 0], target[:t+1, 2], 'r--')
+                ax2.plot(target[t, 0], target[t, 2], 'r*')
+
+            ax2.set_xlim(x_lim); ax2.set_ylim(z_lim)
+            ax2.set_title(f"Side View (Step {t})")
+            ax2.grid(True)
+
+            # POV
+            if tracker_data is not None:
+                u, v, size, conf = tracker_data[t]
+                ax3.set_xlim(-1.0, 1.0)
+                ax3.set_ylim(-1.0, 1.0)
+                ax3.set_title(f"Drone POV (Step {t})")
+
+                ax3.axhline(0, color='k', linestyle=':', alpha=0.5)
+                ax3.axvline(0, color='k', linestyle=':', alpha=0.5)
+
+                sc = ax3.scatter([u], [v], c=[conf], cmap='viridis', vmin=0, vmax=1, s=size*50, edgecolors='k')
+
+                from matplotlib.patches import Rectangle
+                box_w = np.sqrt(size) * 0.4
+                rect = Rectangle((u - box_w/2, v - box_w/2), box_w, box_w,
+                                 linewidth=2, edgecolor='r', facecolor='none')
+                ax3.add_patch(rect)
+
+            fname = os.path.join(self.output_dir, f"ep_frame_{t}.png")
+            plt.savefig(fname)
+            filenames.append(fname)
+            plt.close()
+            images.append(imageio.imread(fname))
+
+        imageio.mimsave(os.path.join(self.output_dir, filename), images, fps=10)
+        for f in filenames:
+            os.remove(f)

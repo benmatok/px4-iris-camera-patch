@@ -355,6 +355,35 @@ cdef void _reset_agent_scalar(
     traj_params[8, i] = rand_float() * 6.28318
     traj_params[9, i] = 8.0 + rand_float() * 4.0
 
+    # -------------------------------------------------------------------------
+    # Fix Initialization to Center Tracking (Cython)
+    # -------------------------------------------------------------------------
+    cdef float tx0 = traj_params[0, i] * sin(traj_params[2, i])
+    cdef float ty0 = traj_params[3, i] * sin(traj_params[5, i])
+    cdef float tz0 = traj_params[9, i] + traj_params[6, i] * sin(traj_params[8, i])
+
+    cdef float dx = tx0
+    cdef float dy = ty0
+    cdef float dz = tz0 - 10.0
+
+    # Yaw
+    # atan2f is from math.h
+    cdef extern from "math.h" nogil:
+        float atan2f(float y, float x)
+
+    yaw[i] = atan2f(dy, dx)
+
+    # Pitch
+    cdef float dist_h = sqrt(dx*dx + dy*dy)
+    cdef float elevation = atan2f(dz, dist_h)
+    pitch[i] = elevation - (30.0 * 3.14159265 / 180.0)
+
+    # Initial velocities to zero
+    vel_x[i] = 0.0
+    vel_y[i] = 0.0
+    vel_z[i] = 0.0
+    roll[i] = 0.0
+
     rnd_cmd = rand_float()
     tvx=0.0; tvy=0.0; tvz=0.0; tyr=0.0
 
@@ -394,12 +423,12 @@ cdef void _reset_agent_scalar(
     pos_y[i] = 0.0
     pos_z[i] = 10.0
 
-    vel_x[i] = 0.0
-    vel_y[i] = 0.0
-    vel_z[i] = 0.0
-    roll[i] = 0.0
-    pitch[i] = 0.0
-    yaw[i] = 0.0
+    # vel_x[i] = 0.0
+    # vel_y[i] = 0.0
+    # vel_z[i] = 0.0
+    # roll[i] = 0.0
+    # pitch[i] = 0.0
+    # yaw[i] = 0.0
 
 def step_cython(
     float[:] pos_x, float[:] pos_y, float[:] pos_z,
