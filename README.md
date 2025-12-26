@@ -197,10 +197,10 @@ Following the development of the robust **Texture-Based Tracker**, the next majo
     - [x] **Target Entity**: Introduce a "virtual target" in the `DroneEnv` (Cython/CUDA).
     - [ ] **Complex Trajectories**: Implement randomized trajectories (e.g., Lissajous curves, sudden jerks) to simulate an evasive object. (Current: Deterministic circular path)
     - [x] **Tracker Simulation**: Simulate the tracker's output by projecting the target's 3D position onto the drone's virtual camera plane, adding synthetic noise and "failure" probabilities based on angular velocity (motion blur simulation).
-- [ ] **Reward Function Design**:
-    - [ ] **Visual Servoing Reward**: Penalty proportional to the distance of the target from the image center ($L_2$ norm).
-    - [ ] **Range Reward**: Incentive to maintain a specific bounding box size (optimal tracking distance).
-    - [ ] **Smoothness**: Penalties for jerky control inputs to ensure stable video footage.
+- [x] **Reward Function Design**:
+    - [x] **Visual Servoing Reward**: Penalty proportional to the distance of the target from the image center ($L_2$ norm).
+    - [x] **Range Reward**: Incentive to maintain a specific bounding box size (optimal tracking distance).
+    - [x] **Smoothness**: Penalties for jerky control inputs to ensure stable video footage.
     - [x] **Base Rewards**: Velocity tracking and stability penalties.
 - [ ] **Sim-to-Real Transfer**:
     - Train the policy using the massive parallelization capabilities (2000+ agents) of the current setup.

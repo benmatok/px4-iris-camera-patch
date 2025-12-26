@@ -318,6 +318,42 @@ def reset_cpu(
     traj_params[8] = np.random.rand(num_agents) * 2 * np.pi # Pz
     traj_params[9] = 8.0 + np.random.rand(num_agents) * 4.0 # Oz
 
+    # -------------------------------------------------------------------------
+    # Fix Initialization to Center Tracking
+    # -------------------------------------------------------------------------
+    # Calculate target position at t=0
+    # x = Ax * sin(Px)
+    # y = Ay * sin(Py)
+    # z = Oz + Az * sin(Pz)
+    tx0 = traj_params[0] * np.sin(traj_params[2])
+    ty0 = traj_params[3] * np.sin(traj_params[5])
+    tz0 = traj_params[9] + traj_params[6] * np.sin(traj_params[8])
+
+    # Drone is at (0, 0, 10)
+    dx = tx0
+    dy = ty0
+    dz = tz0 - 10.0
+
+    # Yaw to face target (Azimuth)
+    # x_body should point to target horizontally
+    # yaw = atan2(dy, dx)
+    yaw[:] = np.arctan2(dy, dx)
+
+    # Pitch to face target (Elevation)
+    # Camera is pitched up 30 deg (+0.523 rad) relative to body
+    # We want Camera Pitch = Elevation
+    # Body Pitch + 30 deg = Elevation
+    # Body Pitch = Elevation - 30 deg
+    dist_h = np.sqrt(dx*dx + dy*dy)
+    elevation = np.arctan2(dz, dist_h)
+    pitch[:] = elevation - np.deg2rad(30.0)
+
+    # Initial velocities to zero
+    vel_x[:] = 0.0
+    vel_y[:] = 0.0
+    vel_z[:] = 0.0
+    roll[:] = 0.0
+
     rnd_cmd = np.random.rand(num_agents)
 
     # Vectorized conditions for targets
@@ -352,12 +388,13 @@ def reset_cpu(
     pos_y[:] = 0.0
     pos_z[:] = 10.0
 
-    vel_x[:] = 0.0
-    vel_y[:] = 0.0
-    vel_z[:] = 0.0
-    roll[:] = 0.0
-    pitch[:] = 0.0
-    yaw[:] = 0.0
+    # Redundant initialization removed as it is handled above
+    # vel_x[:] = 0.0
+    # vel_y[:] = 0.0
+    # vel_z[:] = 0.0
+    # roll[:] = 0.0
+    # pitch[:] = 0.0
+    # yaw[:] = 0.0
 
     if len(reset_indices) > 0:
         step_counts[reset_indices] = 0

@@ -198,6 +198,10 @@ class CPUTrainer:
 
             # Temp buffer for target history for visualization
             target_history_buffer = np.zeros((ep_len, num_agents, 3), dtype=np.float32)
+            # Temp buffer for tracker history (u, v, size, conf)
+            tracker_history_buffer = np.zeros((ep_len, num_agents, 4), dtype=np.float32)
+            # Cumulative rewards
+            cumulative_rewards = np.zeros(num_agents, dtype=np.float32)
 
             for t in range(self.episode_length):
                 if t % 20 == 0:
@@ -246,8 +250,13 @@ class CPUTrainer:
                 target_history_buffer[t, :, 1] = self.data["vt_y"]
                 target_history_buffer[t, :, 2] = self.data["vt_z"]
 
+                # Capture tracker features (indices 604-608)
+                # data["observations"] shape: (num_agents, 608)
+                tracker_history_buffer[t] = self.data["observations"][:, 604:608]
+
                 # Store reward
                 reward_buffer[t] = torch.from_numpy(self.data["rewards"]).float()
+                cumulative_rewards += self.data["rewards"]
 
             print("  Computing Advantages...")
             # 2. Compute Advantages (GAE)
@@ -353,13 +362,32 @@ class CPUTrainer:
                 # Get target history (T, N, 3) -> (N, T, 3)
                 th = target_history_buffer.transpose(1, 0, 2)
 
-                self.visualizer.log_trajectory(itr, ph, targets=th)
+                # Get tracker history (T, N, 4) -> (N, T, 4)
+                trh = tracker_history_buffer.transpose(1, 0, 2)
+
+                self.visualizer.log_trajectory(itr, ph, targets=th, tracker_data=trh)
 
             # Generate Plots periodically
             if itr % 50 == 0 or itr == num_iters - 1:
                 self.visualizer.plot_rewards()
                 gif_path = self.visualizer.generate_trajectory_gif()
                 print(f"Visualization updated. GIF saved at {gif_path}")
+
+            # Save Best and Worst Episode GIFs at the last iteration
+            if itr == num_iters - 1:
+                best_idx = np.argmax(cumulative_rewards)
+                worst_idx = np.argmin(cumulative_rewards)
+                print(f"Generating Best/Worst GIFs. Best: Agent {best_idx} ({cumulative_rewards[best_idx]:.2f}), Worst: Agent {worst_idx} ({cumulative_rewards[worst_idx]:.2f})")
+
+                # Get Data
+                # pos_history: (T, N, 3) -> (N, T, 3) was done in `ph` variable earlier?
+                # No, `ph` was local.
+                ph_all = self.data["pos_history"].transpose(1, 0, 2)
+                th_all = target_history_buffer.transpose(1, 0, 2)
+                trh_all = tracker_history_buffer.transpose(1, 0, 2)
+
+                self.visualizer.save_episode_gif(ph_all[best_idx], th_all[best_idx], trh_all[best_idx], "best_episode.gif")
+                self.visualizer.save_episode_gif(ph_all[worst_idx], th_all[worst_idx], trh_all[worst_idx], "worst_episode.gif")
 
 
 def setup_and_train(run_config, device_id=0, load_path=None):
