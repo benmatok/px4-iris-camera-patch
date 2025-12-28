@@ -186,12 +186,6 @@ def step_cpu(
     new_data = captured_samples.reshape(num_agents, 6)
     observations[:, 594:600] = new_data
 
-    # Update targets (600:604)
-    observations[:, 600] = target_vx
-    observations[:, 601] = target_vy
-    observations[:, 602] = target_vz
-    observations[:, 603] = target_yaw_rate
-
     # Update Tracker Features (604:608)
     dx_w = vtx_val - px
     dy_w = vty_val - py
@@ -239,48 +233,86 @@ def step_cpu(
     observations[:, 606] = size
     observations[:, 607] = conf
 
+    # Calculate Relative Velocity
+    # vtvx, vtvy, vtvz needed.
+    # From traj_params
+    vtvx = traj_params[0] * traj_params[1] * np.cos(traj_params[1] * t_f + traj_params[2])
+    vtvy = traj_params[3] * traj_params[4] * np.cos(traj_params[4] * t_f + traj_params[5])
+    vtvz = traj_params[6] * traj_params[7] * np.cos(traj_params[7] * t_f + traj_params[8])
+
+    rvx = vtvx - vx
+    rvy = vtvy - vy
+    rvz = vtvz - vz
+
+    rvx_b = r11 * rvx + r12 * rvy + r13 * rvz
+    rvy_b = r21 * rvx + r22 * rvy + r23 * rvz
+    rvz_b = r31 * rvx + r32 * rvy + r33 * rvz
+
+    dist_sq = dx_w**2 + dy_w**2 + dz_w**2
+    dist = np.sqrt(dist_sq)
+    dist_safe = np.maximum(dist, 0.1)
+
+    # Update Obs 600-603
+    observations[:, 600] = rvx_b
+    observations[:, 601] = rvy_b
+    observations[:, 602] = rvz_b
+    observations[:, 603] = dist
+
     # -------------------------------------------------------------------------
-    # Improved Reward Function
+    # Homing Reward (Master Equation)
     # -------------------------------------------------------------------------
-    # 1. Base Velocity/Yaw Reward (Legacy)
+    # 1. Guidance (PN)
+    rvel_sq = rvx**2 + rvy**2 + rvz**2
+    r_dot_v = dx_w*rvx + dy_w*rvy + dz_w*rvz
+    omega_sq = (rvel_sq / dist_sq) - (r_dot_v**2 / (dist_sq**2))
+    omega_sq = np.maximum(omega_sq, 0.0)
+    rew_pn = -1.0 * omega_sq
+
+    # 2. Closing Speed
+    vd_dot_r = vx*dx_w + vy*dy_w + vz*dz_w
+    closing = vd_dot_r / dist_safe
+    rew_closing = 0.5 * closing
+
+    # 3. Vision (Gaze)
     vx_b = r11 * vx + r12 * vy + r13 * vz
-    vy_b = r21 * vx + r22 * vy + r23 * vz
-    vz_b = r31 * vx + r32 * vy + r33 * vz
+    v_ideal = 0.1 * vx_b
+    v_err = v - v_ideal
+    gaze_err = u**2 + v_err**2
+    rew_gaze = -1.0 * gaze_err
 
-    v_err_sq = (vx_b - target_vx)**2 + (vy_b - target_vy)**2 + (vz_b - target_vz)**2
-    yaw_rate_err_sq = (yaw_rate - target_yaw_rate)**2
+    # Funnel
+    funnel = 1.0 / (dist + 1.0)
+    rew_guidance = (rew_pn + rew_gaze + rew_closing) * funnel
 
-    rew = np.zeros(num_agents, dtype=np.float32)
-    rew += 1.0 * np.exp(-2.0 * v_err_sq)
-    rew += 0.5 * np.exp(-2.0 * yaw_rate_err_sq)
+    # 4. Stability
+    rew_rate = -0.1 * w2
+    # Upright r33
+    upright_err = 1.0 - r33
+    rew_upright = -1.0 * upright_err**2
+    rew_eff = -0.01 * thrust_cmd**2
 
-    # 2. Visual Servoing Reward (Keep target in center)
-    # Penalize u^2 + v^2
-    rew_vis = np.exp(-2.0 * (u**2 + v**2))
-    rew += 0.5 * rew_vis
+    rew = rew_guidance + rew_rate + rew_upright + rew_eff
 
-    # 3. Range Reward (Keep optimal size)
-    # Target size = 1.0 (approx 3m distance)
-    rew_range = np.exp(-2.0 * (size - 1.0)**2)
-    rew += 0.5 * rew_range
+    # Terminations
+    bonus = np.where(dist < 0.2, 10.0, 0.0)
+    rew += bonus
 
-    # 4. Smoothness Reward (Penalize high control rates)
-    # w2 is sum of squared rates
-    rew_smooth = np.exp(-0.1 * w2)
-    rew += 0.2 * rew_smooth
+    penalty = np.zeros(num_agents, dtype=np.float32)
+    penalty = np.where(r33 < 0.5, penalty + 10.0, penalty) # Tilt > 60
+    penalty = np.where(collision, penalty + 10.0, penalty)
 
-    # Penalize high angles (Stability)
-    rew -= 0.01 * (r*r + p*p)
-
-    unstable = (np.abs(r) > 1.0) | (np.abs(p) > 1.0)
-    rew = np.where(unstable, rew - 0.1, rew)
-
-    rew = np.where(collision, rew - 10.0, rew)
-    rew += 0.1 # Survival bonus
+    rew -= penalty
 
     rewards[:] = rew
 
-    done_flags[:] = np.where(t >= episode_length, 1.0, 0.0)
+    # Done Flags
+    d_flag = np.zeros(num_agents, dtype=np.float32)
+    d_flag = np.where(t >= episode_length, 1.0, d_flag)
+    d_flag = np.where(dist < 0.2, 1.0, d_flag)
+    d_flag = np.where(r33 < 0.5, 1.0, d_flag)
+    d_flag = np.where(collision, 1.0, d_flag)
+
+    done_flags[:] = d_flag
 
 def reset_cpu(
     pos_x, pos_y, pos_z,
@@ -335,29 +367,74 @@ def reset_cpu(
     mask = (rnd_cmd >= 0.8) & (rnd_cmd < 0.9); tyr[mask] = 1.0
     mask = (rnd_cmd >= 0.9); tyr[mask] = -1.0
 
-    target_vx[:] = tvx
-    target_vy[:] = tvy
-    target_vz[:] = tvz
-    target_yaw_rate[:] = tyr
-
     # Reset Observations (Size 608)
     observations[:, :600] = 0.0
-    observations[:, 600] = tvx
-    observations[:, 601] = tvy
-    observations[:, 602] = tvz
-    observations[:, 603] = tyr
-    observations[:, 604:608] = 0.0
 
+    # Initial Position
     pos_x[:] = 0.0
     pos_y[:] = 0.0
     pos_z[:] = 10.0
-
     vel_x[:] = 0.0
     vel_y[:] = 0.0
     vel_z[:] = 0.0
     roll[:] = 0.0
     pitch[:] = 0.0
     yaw[:] = 0.0
+
+    # Calculate Initial Target State (t=0)
+    # traj_params: (10, num_agents)
+    # 0:Ax, 1:Fx, 2:Px, 3:Ay, 4:Fy, 5:Py, 6:Az, 7:Fz, 8:Pz, 9:Oz
+
+    # t=0, so sin(Px)
+    # vtx = Ax * sin(Px)
+    vtx_val = traj_params[0] * np.sin(traj_params[2])
+    vtvx_val = traj_params[0] * traj_params[1] * np.cos(traj_params[2])
+
+    vty_val = traj_params[3] * np.sin(traj_params[5])
+    vtvy_val = traj_params[3] * traj_params[4] * np.cos(traj_params[5])
+
+    vtz_val = traj_params[9] + traj_params[6] * np.sin(traj_params[8])
+    vtvz_val = traj_params[6] * traj_params[7] * np.cos(traj_params[8])
+
+    # Populate Obs
+    rvx = vtvx_val - vel_x
+    rvy = vtvy_val - vel_y
+    rvz = vtvz_val - vel_z
+
+    # Body Frame Rel Vel (R=Identity at t=0)
+    observations[:, 600] = rvx
+    observations[:, 601] = rvy
+    observations[:, 602] = rvz
+
+    dx = vtx_val - pos_x
+    dy = vty_val - pos_y
+    dz = vtz_val - pos_z
+    dist = np.sqrt(dx*dx + dy*dy + dz*dz)
+    observations[:, 603] = dist
+
+    # Initial Tracker Features
+    # R=I
+    xb = dx
+    yb = dy
+    zb = dz
+    s30 = 0.5
+    c30 = 0.866025
+    xc = yb
+    yc = s30 * xb + c30 * zb
+    zc = c30 * xb - s30 * zb
+
+    zc_safe = np.maximum(zc, 0.1)
+    u = xc / zc_safe
+    v = yc / zc_safe
+    size = 10.0 / (zc*zc + 1.0)
+
+    conf = np.ones(num_agents, dtype=np.float32)
+    conf = np.where((c30 * xb - s30 * zb) < 0, 0.0, conf)
+
+    observations[:, 604] = u
+    observations[:, 605] = v
+    observations[:, 606] = size
+    observations[:, 607] = conf
 
     if len(reset_indices) > 0:
         step_counts[reset_indices] = 0

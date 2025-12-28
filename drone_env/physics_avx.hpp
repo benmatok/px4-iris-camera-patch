@@ -113,15 +113,21 @@ inline void step_agents_avx2(
 
     // x = Ax * sin(Fx * t + Px)
     __m256 arg_x = _mm256_add_ps(_mm256_mul_ps(fx, t_v), px_ph);
-    __m256 vtx = _mm256_mul_ps(ax, sin256_ps(arg_x));
+    __m256 sx, cx; sincos256_ps(arg_x, &sx, &cx);
+    __m256 vtx = _mm256_mul_ps(ax, sx);
+    __m256 vtvx = _mm256_mul_ps(ax, _mm256_mul_ps(fx, cx));
 
     // y = Ay * sin(Fy * t + Py)
     __m256 arg_y = _mm256_add_ps(_mm256_mul_ps(fy, t_v), py_ph);
-    __m256 vty = _mm256_mul_ps(ay, sin256_ps(arg_y));
+    __m256 sy_t, cy_t; sincos256_ps(arg_y, &sy_t, &cy_t);
+    __m256 vty = _mm256_mul_ps(ay, sy_t);
+    __m256 vtvy = _mm256_mul_ps(ay, _mm256_mul_ps(fy, cy_t));
 
     // z = Oz + Az * sin(Fz * t + Pz)
     __m256 arg_z = _mm256_add_ps(_mm256_mul_ps(fz, t_v), pz_ph);
-    __m256 vtz = _mm256_add_ps(oz, _mm256_mul_ps(az, sin256_ps(arg_z)));
+    __m256 sz, cz; sincos256_ps(arg_z, &sz, &cz);
+    __m256 vtz = _mm256_add_ps(oz, _mm256_mul_ps(az, sz));
+    __m256 vtvz = _mm256_mul_ps(az, _mm256_mul_ps(fz, cz));
 
     _mm256_storeu_ps(&vt_x[i], vtx);
     _mm256_storeu_ps(&vt_y[i], vty);
@@ -330,24 +336,38 @@ inline void step_agents_avx2(
     _mm256_storeu_ps(tmp_size, rel_size);
     _mm256_storeu_ps(tmp_conf, conf);
 
-    __m256 tvx = _mm256_loadu_ps(&target_vx[i]);
-    __m256 tvy = _mm256_loadu_ps(&target_vy[i]);
-    __m256 tvz = _mm256_loadu_ps(&target_vz[i]);
-    __m256 tyr = _mm256_loadu_ps(&target_yaw_rate[i]);
+    // Calculate Relative Velocity (World)
+    __m256 rvx = _mm256_sub_ps(vtvx, vx);
+    __m256 rvy = _mm256_sub_ps(vtvy, vy);
+    __m256 rvz = _mm256_sub_ps(vtvz, vz);
 
-    float tmp_tvx[8], tmp_tvy[8], tmp_tvz[8], tmp_tyr[8];
-    _mm256_storeu_ps(tmp_tvx, tvx);
-    _mm256_storeu_ps(tmp_tvy, tvy);
-    _mm256_storeu_ps(tmp_tvz, tvz);
-    _mm256_storeu_ps(tmp_tyr, tyr);
+    // Body Frame Relative Velocity
+    __m256 rvx_b = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r11, rvx), _mm256_mul_ps(r12, rvy)), _mm256_mul_ps(r13, rvz));
+    __m256 rvy_b = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r21, rvx), _mm256_mul_ps(r22, rvy)), _mm256_mul_ps(r23, rvz));
+    __m256 rvz_b = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r31, rvx), _mm256_mul_ps(r32, rvy)), _mm256_mul_ps(r33, rvz));
+
+    // Distance
+    __m256 rx = _mm256_sub_ps(vtx, px);
+    __m256 ry = _mm256_sub_ps(vty, py);
+    __m256 rz = _mm256_sub_ps(vtz, pz);
+    __m256 dist_sq = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(rx, rx), _mm256_mul_ps(ry, ry)), _mm256_mul_ps(rz, rz));
+    __m256 dist = _mm256_sqrt_ps(dist_sq);
+    __m256 dist_safe = _mm256_max_ps(dist, c01);
+
+    // Store State: Replace TargetCmds (600-603) with RelVel (600-602) and Distance (603)
+    float tmp_rvx[8], tmp_rvy[8], tmp_rvz[8], tmp_dist[8];
+    _mm256_storeu_ps(tmp_rvx, rvx_b);
+    _mm256_storeu_ps(tmp_rvy, rvy_b);
+    _mm256_storeu_ps(tmp_rvz, rvz_b);
+    _mm256_storeu_ps(tmp_dist, dist);
 
     for(int k=0; k<8; k++) {
         int agent_idx = i+k;
-        int off = agent_idx*608 + 600; // 600-603 commands
-        observations[off] = tmp_tvx[k];
-        observations[off+1] = tmp_tvy[k];
-        observations[off+2] = tmp_tvz[k];
-        observations[off+3] = tmp_tyr[k];
+        int off = agent_idx*608 + 600;
+        observations[off] = tmp_rvx[k];
+        observations[off+1] = tmp_rvy[k];
+        observations[off+2] = tmp_rvz[k];
+        observations[off+3] = tmp_dist[k];
 
         // 604-607 are tracker features
         observations[off+4] = tmp_u[k];
@@ -357,66 +377,84 @@ inline void step_agents_avx2(
     }
 
     // ------------------------------------------------------------------------
-    // Improved Reward Logic
+    // Homing Reward Logic (Master Equation)
     // ------------------------------------------------------------------------
-    __m256 vxb = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r11, vx), _mm256_mul_ps(r12, vy)), _mm256_mul_ps(r13, vz));
-    __m256 vyb = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r21, vx), _mm256_mul_ps(r22, vy)), _mm256_mul_ps(r23, vz));
-    __m256 vzb = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r31, vx), _mm256_mul_ps(r32, vy)), _mm256_mul_ps(r33, vz));
 
-    __m256 dx = _mm256_sub_ps(vxb, tvx);
-    __m256 dy = _mm256_sub_ps(vyb, tvy);
-    __m256 dz = _mm256_sub_ps(vzb, tvz);
-    __m256 v_err_sq = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(dx, dx), _mm256_mul_ps(dy, dy)), _mm256_mul_ps(dz, dz));
+    // 1. Guidance (PN)
+    // |Omega|^2 = (v_rel^2 / d^2) - ((r . v_rel)^2 / d^4)
+    __m256 rvel_sq = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(rvx, rvx), _mm256_mul_ps(rvy, rvy)), _mm256_mul_ps(rvz, rvz));
+    __m256 r_dot_v = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(rx, rvx), _mm256_mul_ps(ry, rvy)), _mm256_mul_ps(rz, rvz));
 
-    __m256 dyr = _mm256_sub_ps(yaw_rate_cmd, tyr);
-    __m256 y_err_sq = _mm256_mul_ps(dyr, dyr);
+    __m256 term1 = _mm256_div_ps(rvel_sq, dist_sq);
+    __m256 term2_num = _mm256_mul_ps(r_dot_v, r_dot_v);
+    __m256 term2_den = _mm256_mul_ps(dist_sq, dist_sq);
+    __m256 term2 = _mm256_div_ps(term2_num, term2_den);
 
-    // 1. Base Velocity/Yaw Reward
-    __m256 rew = _mm256_add_ps(
-        exp256_ps(_mm256_mul_ps(_mm256_set1_ps(-2.0f), v_err_sq)),
-        _mm256_mul_ps(c05, exp256_ps(_mm256_mul_ps(_mm256_set1_ps(-2.0f), y_err_sq)))
-    );
+    __m256 omega_sq = _mm256_sub_ps(term1, term2);
+    omega_sq = _mm256_max_ps(omega_sq, c0); // Clip
 
-    // 2. Visual Servoing Reward (Keep target in center)
-    // rew += 0.5 * exp(-2 * (u^2 + v^2))
-    __m256 uv_sq = _mm256_add_ps(_mm256_mul_ps(u, u), _mm256_mul_ps(v, v));
-    __m256 rew_vis = exp256_ps(_mm256_mul_ps(_mm256_set1_ps(-2.0f), uv_sq));
-    rew = _mm256_add_ps(rew, _mm256_mul_ps(c05, rew_vis));
+    __m256 rew_pn = _mm256_mul_ps(_mm256_set1_ps(-1.0f), omega_sq); // k1=1.0
 
-    // 3. Range Reward (Optimal size = 1.0)
-    // rew += 0.5 * exp(-2 * (size - 1.0)^2)
-    __m256 size_diff = _mm256_sub_ps(rel_size, c1);
-    __m256 size_diff_sq = _mm256_mul_ps(size_diff, size_diff);
-    __m256 rew_range = exp256_ps(_mm256_mul_ps(_mm256_set1_ps(-2.0f), size_diff_sq));
-    rew = _mm256_add_ps(rew, _mm256_mul_ps(c05, rew_range));
+    // 2. Closing Speed
+    // V_drone . r_hat.
+    // r_hat = r / d.
+    __m256 vd_dot_r = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(vx, rx), _mm256_mul_ps(vy, ry)), _mm256_mul_ps(vz, rz));
+    __m256 closing = _mm256_div_ps(vd_dot_r, dist_safe);
+    __m256 rew_closing = _mm256_mul_ps(_mm256_set1_ps(0.5f), closing); // k2=0.5
 
-    // 4. Smoothness Reward (Penalize high control rates)
-    // rew += 0.2 * exp(-0.1 * w2)
-    __m256 rew_smooth = exp256_ps(_mm256_mul_ps(_mm256_set1_ps(-0.1f), w2));
-    rew = _mm256_add_ps(rew, _mm256_mul_ps(_mm256_set1_ps(0.2f), rew_smooth));
+    // 3. Vision (Gaze)
+    // v_ideal = -0.1 * vx_b (heuristic: pitch forward -> vx_b > 0 -> target moves up -> v decreases?)
+    // Actually, if nose down (pitch positive in this specific physics?), ax > 0.
+    // Cam pitch up 30 deg.
+    // We want target in center.
+    // Velocity compensation: if flying fast, we are pitched down.
+    // Target appears higher in frame (negative v?).
+    // So ideal v is negative?
+    __m256 vx_b = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r11, vx), _mm256_mul_ps(r12, vy)), _mm256_mul_ps(r13, vz));
+    __m256 v_ideal = _mm256_mul_ps(_mm256_set1_ps(0.1f), vx_b); // Tuning direction
+    __m256 v_err = _mm256_sub_ps(v, v_ideal);
+    __m256 gaze_err = _mm256_add_ps(_mm256_mul_ps(u, u), _mm256_mul_ps(v_err, v_err));
+    __m256 rew_gaze = _mm256_mul_ps(_mm256_set1_ps(-1.0f), gaze_err); // k3=1.0
 
-    // Stability Penalty
-    rew = _mm256_sub_ps(rew, _mm256_mul_ps(c01, _mm256_mul_ps(c01, _mm256_add_ps(_mm256_mul_ps(r, r), _mm256_mul_ps(p, p)))));
+    // Funnel Scaling: 1 / (d + 1.0)
+    __m256 funnel = _mm256_div_ps(c1, _mm256_add_ps(dist, c1));
 
-    __m256 m_abs = _mm256_castsi256_ps(_mm256_set1_epi32(0x7fffffff));
-    __m256 ar = _mm256_and_ps(r, m_abs);
-    __m256 ap = _mm256_and_ps(p, m_abs);
-    __m256 mask_unst = _mm256_or_ps(
-        _mm256_cmp_ps(ar, c1, _CMP_GT_OQ),
-        _mm256_cmp_ps(ap, c1, _CMP_GT_OQ)
-    );
+    // Total Guidance + Gaze
+    __m256 rew_guidance = _mm256_mul_ps(_mm256_add_ps(_mm256_add_ps(rew_pn, rew_gaze), rew_closing), funnel);
 
-    rew = _mm256_sub_ps(rew, _mm256_and_ps(mask_unst, c01));
-    rew = _mm256_sub_ps(rew, _mm256_and_ps(mask_coll, c10));
-    rew = _mm256_add_ps(rew, c01);
+    // 4. Stability
+    // Rate damping
+    __m256 rew_rate = _mm256_mul_ps(_mm256_set1_ps(-0.1f), w2);
+    // Upright: (1 - r33)^2. r33 = cp*cr
+    __m256 upright_err = _mm256_sub_ps(c1, r33);
+    __m256 rew_upright = _mm256_mul_ps(_mm256_set1_ps(-1.0f), _mm256_mul_ps(upright_err, upright_err));
+    // Efficiency
+    __m256 rew_eff = _mm256_mul_ps(_mm256_set1_ps(-0.01f), _mm256_mul_ps(thrust_cmd, thrust_cmd));
+
+    __m256 rew = _mm256_add_ps(rew_guidance, _mm256_add_ps(rew_rate, _mm256_add_ps(rew_upright, rew_eff)));
+
+    // Terminations
+    // Success: dist < 0.2
+    __m256 mask_success = _mm256_cmp_ps(dist, _mm256_set1_ps(0.2f), _CMP_LT_OQ);
+    rew = _mm256_add_ps(rew, _mm256_and_ps(mask_success, _mm256_set1_ps(10.0f)));
+
+    // Fail: Tilt > 60 deg (r33 < 0.5)
+    __m256 mask_tilt = _mm256_cmp_ps(r33, c05, _CMP_LT_OQ);
+
+    // Penalties
+    rew = _mm256_sub_ps(rew, _mm256_and_ps(mask_tilt, _mm256_set1_ps(10.0f)));
+    rew = _mm256_sub_ps(rew, _mm256_and_ps(mask_coll, _mm256_set1_ps(10.0f)));
 
     _mm256_storeu_ps(&rewards[i], rew);
 
-    if (t >= episode_length) {
-        _mm256_storeu_ps(&done_flags[i], c1);
-    } else {
-        _mm256_storeu_ps(&done_flags[i], c0);
-    }
+    __m256 mask_done = _mm256_or_ps(mask_success, _mm256_or_ps(mask_tilt, mask_coll));
+
+    // Handle episode length done
+    __m256 mask_timeout = c0;
+    if (t >= episode_length) mask_timeout = c1;
+    mask_done = _mm256_or_ps(mask_done, mask_timeout);
+
+    _mm256_storeu_ps(&done_flags[i], mask_done);
 }
 
 #endif
