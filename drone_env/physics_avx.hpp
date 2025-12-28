@@ -24,6 +24,7 @@ inline void step_agents_avx2(
     float* pos_history, // Shape (episode_length, num_agents, 3)
     float* observations, // stride 608
     float* rewards,
+    float* reward_components, // New: stride 8 (num_agents, 8)
     float* done_flags,
     float* actions, // stride 4
     int episode_length,
@@ -385,9 +386,12 @@ inline void step_agents_avx2(
     __m256 rvel_sq = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(rvx, rvx), _mm256_mul_ps(rvy, rvy)), _mm256_mul_ps(rvz, rvz));
     __m256 r_dot_v = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(rx, rvx), _mm256_mul_ps(ry, rvy)), _mm256_mul_ps(rz, rvz));
 
-    __m256 term1 = _mm256_div_ps(rvel_sq, dist_sq);
+    // Fix: Safe division for PN calculation
+    __m256 dist_sq_safe = _mm256_max_ps(dist_sq, _mm256_set1_ps(0.01f));
+
+    __m256 term1 = _mm256_div_ps(rvel_sq, dist_sq_safe);
     __m256 term2_num = _mm256_mul_ps(r_dot_v, r_dot_v);
-    __m256 term2_den = _mm256_mul_ps(dist_sq, dist_sq);
+    __m256 term2_den = _mm256_mul_ps(dist_sq_safe, dist_sq_safe);
     __m256 term2 = _mm256_div_ps(term2_num, term2_den);
 
     __m256 omega_sq = _mm256_sub_ps(term1, term2);
@@ -435,17 +439,52 @@ inline void step_agents_avx2(
 
     // Terminations
     // Success: dist < 0.2
+    __m256 bonus_val = _mm256_set1_ps(10.0f);
     __m256 mask_success = _mm256_cmp_ps(dist, _mm256_set1_ps(0.2f), _CMP_LT_OQ);
-    rew = _mm256_add_ps(rew, _mm256_and_ps(mask_success, _mm256_set1_ps(10.0f)));
+    __m256 bonus = _mm256_and_ps(mask_success, bonus_val);
+    rew = _mm256_add_ps(rew, bonus);
 
     // Fail: Tilt > 60 deg (r33 < 0.5)
     __m256 mask_tilt = _mm256_cmp_ps(r33, c05, _CMP_LT_OQ);
 
     // Penalties
-    rew = _mm256_sub_ps(rew, _mm256_and_ps(mask_tilt, _mm256_set1_ps(10.0f)));
-    rew = _mm256_sub_ps(rew, _mm256_and_ps(mask_coll, _mm256_set1_ps(10.0f)));
+    __m256 penalty = c0;
+    penalty = _mm256_add_ps(penalty, _mm256_and_ps(mask_tilt, _mm256_set1_ps(10.0f)));
+    penalty = _mm256_add_ps(penalty, _mm256_and_ps(mask_coll, _mm256_set1_ps(10.0f)));
+
+    rew = _mm256_sub_ps(rew, penalty);
 
     _mm256_storeu_ps(&rewards[i], rew);
+
+    // Store Components
+    // 0:pn, 1:closing, 2:gaze, 3:rate, 4:upright, 5:eff, 6:penalty, 7:bonus
+    // We need to transpose 8x8 matrix to store effectively.
+    // Or just store scalar for simplicity since it's debug info (will not be bottleneck?)
+    // Actually, storing 8 floats for 8 agents is 64 stores.
+    // Let's do scalar store for components to avoid complexity of register transpose.
+
+    float t_pn[8], t_cl[8], t_gz[8], t_rt[8], t_up[8], t_ef[8], t_pe[8], t_bo[8];
+    _mm256_storeu_ps(t_pn, rew_pn);
+    _mm256_storeu_ps(t_cl, rew_closing);
+    _mm256_storeu_ps(t_gz, rew_gaze);
+    _mm256_storeu_ps(t_rt, rew_rate);
+    _mm256_storeu_ps(t_up, rew_upright);
+    _mm256_storeu_ps(t_ef, rew_eff);
+    _mm256_storeu_ps(t_pe, penalty); // Store positive penalty
+    _mm256_storeu_ps(t_bo, bonus);
+
+    for(int k=0; k<8; k++) {
+        int agent_idx = i+k;
+        int off = agent_idx*8;
+        reward_components[off+0] = t_pn[k];
+        reward_components[off+1] = t_cl[k];
+        reward_components[off+2] = t_gz[k];
+        reward_components[off+3] = t_rt[k];
+        reward_components[off+4] = t_up[k];
+        reward_components[off+5] = t_ef[k];
+        reward_components[off+6] = -t_pe[k]; // Store as negative impact
+        reward_components[off+7] = t_bo[k];
+    }
 
     __m256 mask_done = _mm256_or_ps(mask_success, _mm256_or_ps(mask_tilt, mask_coll));
 

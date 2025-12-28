@@ -11,7 +11,21 @@ except ImportError:
     # Define a dummy class for inheritance if pycuda is missing
     class CUDAEnvironmentState:
         def __init__(self, **kwargs):
-            pass
+            self.cuda_data_manager = self # Mock
+
+        @property
+        def data_dictionary(self):
+            if not hasattr(self, '_data_dictionary'):
+                 self._data_dictionary = {}
+            return self._data_dictionary
+
+        def init_data_manager(self):
+             # Allocate data based on get_data_dictionary
+             dd = self.get_data_dictionary()
+             for name, meta in dd.items():
+                 shape = meta["shape"]
+                 dtype = meta["dtype"]
+                 self.data_dictionary[name] = np.zeros(shape, dtype=dtype)
 
 # Try importing the Cython extension
 try:
@@ -43,6 +57,7 @@ def step_cpu(
     pos_history, # Shape: (episode_length, num_agents, 3)
     observations,
     rewards,
+    reward_components, # New: Shape (num_agents, 8)
     done_flags,
     step_counts,
     actions,
@@ -264,7 +279,11 @@ def step_cpu(
     # 1. Guidance (PN)
     rvel_sq = rvx**2 + rvy**2 + rvz**2
     r_dot_v = dx_w*rvx + dy_w*rvy + dz_w*rvz
-    omega_sq = (rvel_sq / dist_sq) - (r_dot_v**2 / (dist_sq**2))
+
+    # Safe division for omega_sq
+    dist_sq_safe = np.maximum(dist_sq, 0.01) # Avoid division by zero
+
+    omega_sq = (rvel_sq / dist_sq_safe) - (r_dot_v**2 / (dist_sq_safe**2))
     omega_sq = np.maximum(omega_sq, 0.0)
     rew_pn = -1.0 * omega_sq
 
@@ -304,6 +323,17 @@ def step_cpu(
     rew -= penalty
 
     rewards[:] = rew
+
+    # Store Reward Components
+    # 0:pn, 1:closing, 2:gaze, 3:rate, 4:upright, 5:eff, 6:penalty, 7:bonus
+    reward_components[:, 0] = rew_pn
+    reward_components[:, 1] = rew_closing
+    reward_components[:, 2] = rew_gaze
+    reward_components[:, 3] = rew_rate
+    reward_components[:, 4] = rew_upright
+    reward_components[:, 5] = rew_eff
+    reward_components[:, 6] = -penalty
+    reward_components[:, 7] = bonus
 
     # Done Flags
     d_flag = np.zeros(num_agents, dtype=np.float32)
@@ -452,6 +482,13 @@ class DroneEnv(CUDAEnvironmentState):
              logging.warning("CUDA backend requested but not supported in this patch. Falling back to CPU.")
              self.use_cuda = False
 
+        # Explicitly initialize mock CUDAEnvironmentState behavior for CPU mode
+        if not hasattr(self, "cuda_data_manager"):
+             self.cuda_data_manager = self
+
+        # Now init data
+        self.init_data_manager()
+
         if _HAS_CYTHON:
             logging.info("DroneEnv: Using CPU/Cython backend.")
             self.step_function = step_cython
@@ -460,6 +497,46 @@ class DroneEnv(CUDAEnvironmentState):
             logging.info("DroneEnv: Using CPU/NumPy backend.")
             self.step_function = step_cpu
             self.reset_function = reset_cpu
+
+    @property
+    def data_dictionary(self):
+        if not hasattr(self, '_data_dictionary'):
+                self._data_dictionary = {}
+        return self._data_dictionary
+
+    def init_data_manager(self):
+        # Allocate data based on get_data_dictionary
+        dd = self.get_data_dictionary()
+        for name, meta in dd.items():
+            shape = meta["shape"]
+            dtype = meta["dtype"]
+            self.data_dictionary[name] = np.zeros(shape, dtype=dtype)
+
+        # Ensure reset_indices is available (shared buffer)
+        if "reset_indices" not in self.data_dictionary:
+            self.data_dictionary["reset_indices"] = np.zeros((self.num_agents,), dtype=np.int32)
+
+    def reset_all_envs(self):
+        # Populate reset_indices with all agents
+        all_indices = np.arange(self.num_agents, dtype=np.int32)
+        self.data_dictionary["reset_indices"][:] = all_indices
+
+        # Resolve args
+        kwargs = self.get_reset_function_kwargs()
+        args = {}
+        for k, v in kwargs.items():
+            if v in self.data_dictionary:
+                args[k] = self.data_dictionary[v]
+            elif k == "num_agents":
+                args[k] = self.num_agents
+            elif k == "episode_length":
+                args[k] = self.episode_length
+            else:
+                # Should not happen for arrays, but maybe for constants passed as args?
+                # Cython signature expects int for num_agents, episode_length
+                pass
+
+        self.reset_function(**args)
 
     def get_environment_info(self):
         return {
@@ -507,7 +584,11 @@ class DroneEnv(CUDAEnvironmentState):
              "step_counts": {"shape": (self.num_agents,), "dtype": np.int32},
              "done_flags": {"shape": (self.num_agents,), "dtype": np.float32},
              "rewards": {"shape": (self.num_agents,), "dtype": np.float32},
+             "reward_components": {"shape": (self.num_agents, 8), "dtype": np.float32}, # New
              "observations": {"shape": (self.num_agents, 608), "dtype": np.float32},
+             "reset_indices": {"shape": (self.num_agents,), "dtype": np.int32}, # Added for safety
+             "actions": {"shape": (self.num_agents * 4,), "dtype": np.float32}, # Also needed for step
+             "env_ids": {"shape": (self.num_agents,), "dtype": np.int32},
         }
 
     def get_action_space(self):
@@ -530,7 +611,7 @@ class DroneEnv(CUDAEnvironmentState):
                 "traj_params",
                 "pos_history",
                 "rng_states",
-                "observations", "rewards", "done_flags",
+                "observations", "rewards", "reward_components", "done_flags",
                 "step_counts"
         ]
 
@@ -555,6 +636,7 @@ class DroneEnv(CUDAEnvironmentState):
             "pos_history": "pos_history",
             "observations": "observations",
             "rewards": "rewards",
+            "reward_components": "reward_components", # New
             "done_flags": "done_flags",
             "step_counts": "step_counts",
             "actions": "actions",

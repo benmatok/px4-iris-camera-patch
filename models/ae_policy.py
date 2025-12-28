@@ -278,15 +278,21 @@ class Autoencoder1D(nn.Module):
         return latent, recon_flat
 
 class DronePolicy(nn.Module):
-    def __init__(self, env, hidden_dims=[128, 128]):
+    def __init__(self, observation_dim=608, action_dim=4, hidden_dim=256, env=None, hidden_dims=None):
         super(DronePolicy, self).__init__()
         # Observation space is 608 (600 history + 4 target + 4 tracker)
+
+        self.observation_dim = observation_dim
+        self.action_dim = action_dim
 
         self.history_dim = 600
         self.target_dim = 4 # Target Commands
         self.tracker_dim = 4 # New Tracker Features
         self.latent_dim = 20
-        self.action_dim = 4
+
+        # Compatibility with different init styles
+        if hidden_dims is None:
+            hidden_dims = [hidden_dim, hidden_dim]
 
         self.ae = Autoencoder1D(input_dim=3, seq_len=200, latent_dim=self.latent_dim)
 
@@ -312,6 +318,10 @@ class DronePolicy(nn.Module):
         # Value Head
         self.value_head = nn.Linear(in_dim, 1)
 
+        # Learnable Action Variance
+        # Initialize log_std to -0.69 (approx exp(-0.69) = 0.5)
+        self.action_log_std = nn.Parameter(torch.ones(1, self.action_dim) * -0.69)
+
     def forward(self, obs):
         # Obs: (Batch, 608)
 
@@ -333,4 +343,4 @@ class DronePolicy(nn.Module):
         action_logits = self.action_head(features)
         value = self.value_head(features)
 
-        return action_logits, value, recon, history
+        return action_logits, value

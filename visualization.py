@@ -9,6 +9,7 @@ class Visualizer:
         os.makedirs(output_dir, exist_ok=True)
         self.rewards_history = []
         self.trajectory_snapshots = [] # List of tuples: (iteration, trajectories)
+        self.video_snapshots = [] # (iteration, images_list)
 
     def log_reward(self, iteration, reward):
         self.rewards_history.append((iteration, reward))
@@ -26,6 +27,117 @@ class Visualizer:
         single_target = targets[0].copy() if targets is not None else None
         single_tracker = tracker_data[0].copy() if tracker_data is not None else None
         self.trajectory_snapshots.append((iteration, single_traj, single_target, single_tracker))
+
+    def save_episode_gif(self, iteration, trajectories, targets=None, tracker_data=None, filename_suffix=""):
+        """
+        Generates a GIF video of the episode for a single agent (agent 0).
+        trajectories: (episode_length, 3)
+        targets: (episode_length, 3)
+        tracker_data: (episode_length, 4)
+        """
+        traj = trajectories
+        target = targets
+        tracker = tracker_data
+        episode_length = traj.shape[0]
+
+        # Subsample if too long (max 100 frames)
+        step_size = max(1, episode_length // 100)
+        indices = range(0, episode_length, step_size)
+
+        images = []
+        temp_dir = os.path.join(self.output_dir, "temp_frames")
+        os.makedirs(temp_dir, exist_ok=True)
+
+        # Determine fixed bounds for the entire episode
+        pad = 2.0
+        x_min, x_max = min(traj[:,0].min(), target[:,0].min()), max(traj[:,0].max(), target[:,0].max())
+        y_min, y_max = min(traj[:,1].min(), target[:,1].min()), max(traj[:,1].max(), target[:,1].max())
+        z_min, z_max = min(traj[:,2].min(), target[:,2].min()), max(traj[:,2].max(), target[:,2].max())
+
+        x_lim = (x_min - pad, x_max + pad)
+        y_lim = (y_min - pad, y_max + pad)
+        z_lim = (z_min - pad, z_max + pad)
+
+        for t in indices:
+            fig = plt.figure(figsize=(18, 6))
+
+            # Top-down view (X vs Y)
+            ax1 = fig.add_subplot(131)
+            # Plot path up to t
+            ax1.plot(traj[:t+1, 0], traj[:t+1, 1], 'b-', label="Drone Path")
+            ax1.plot(traj[t, 0], traj[t, 1], 'bo', label="Drone") # Current pos
+
+            if target is not None:
+                ax1.plot(target[:t+1, 0], target[:t+1, 1], 'r--', alpha=0.5, label="Target Path")
+                ax1.plot(target[t, 0], target[t, 1], 'r*', markersize=10, label="Target")
+
+            ax1.set_xlim(x_lim)
+            ax1.set_ylim(y_lim)
+            ax1.set_title(f"Top-Down (t={t})")
+            ax1.set_xlabel("X")
+            ax1.set_ylabel("Y")
+            ax1.grid(True)
+            ax1.legend(loc='upper right')
+
+            # Side view (X vs Z)
+            ax2 = fig.add_subplot(132)
+            ax2.plot(traj[:t+1, 0], traj[:t+1, 2], 'b-', label="Drone Path")
+            ax2.plot(traj[t, 0], traj[t, 2], 'bo', label="Drone")
+
+            if target is not None:
+                ax2.plot(target[:t+1, 0], target[:t+1, 2], 'r--', alpha=0.5, label="Target Path")
+                ax2.plot(target[t, 0], target[t, 2], 'r*', markersize=10, label="Target")
+
+            ax2.set_xlim(x_lim)
+            ax2.set_ylim(z_lim)
+            ax2.set_title(f"Side View (t={t})")
+            ax2.set_xlabel("X")
+            ax2.set_ylabel("Z")
+            ax2.grid(True)
+
+            # Drone POV (u vs v)
+            ax3 = fig.add_subplot(133)
+            if tracker is not None:
+                # Plot trace
+                ax3.plot(tracker[:t+1, 0], tracker[:t+1, 1], 'm-', alpha=0.5)
+                # Current target pos
+                ax3.plot(tracker[t, 0], tracker[t, 1], 'm*', markersize=12, label="Target")
+
+                # Crosshair
+                ax3.axhline(0, color='k', linestyle=':', alpha=0.5)
+                ax3.axvline(0, color='k', linestyle=':', alpha=0.5)
+
+                # Confidence indicator
+                conf = tracker[t, 3]
+                ax3.text(0.05, 0.95, f"Conf: {conf:.2f}", transform=ax3.transAxes)
+
+                ax3.set_xlim(-2.0, 2.0)
+                ax3.set_ylim(-2.0, 2.0)
+                ax3.set_aspect('equal')
+                ax3.set_title("Drone POV")
+                ax3.set_xlabel("U")
+                ax3.set_ylabel("V")
+                ax3.grid(True)
+            else:
+                ax3.text(0.5, 0.5, "No Tracker Data", ha='center', va='center')
+
+            fname = os.path.join(temp_dir, f"frame_{t:04d}.png")
+            plt.savefig(fname)
+            plt.close()
+            images.append(imageio.imread(fname))
+
+        # Save video
+        gif_name = f"episode_video_{iteration}{filename_suffix}.gif"
+        gif_path = os.path.join(self.output_dir, gif_name)
+        imageio.mimsave(gif_path, images, fps=10)
+
+        # Cleanup
+        for f in os.listdir(temp_dir):
+            os.remove(os.path.join(temp_dir, f))
+        os.rmdir(temp_dir)
+
+        print(f"Saved episode video: {gif_path}")
+
 
     def plot_rewards(self):
         iterations, rewards = zip(*self.rewards_history)

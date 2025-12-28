@@ -35,6 +35,7 @@ cdef extern from "physics_avx.hpp":
         float* pos_history,
         float* observations,
         float* rewards,
+        float* reward_components, # New
         float* done_flags,
         float* actions,
         int episode_length,
@@ -61,6 +62,7 @@ cdef void _step_agent_scalar(
     float[:, :, :] pos_history, # Shape (episode_length, num_agents, 3)
     float[:, :] observations,
     float[:] rewards,
+    float[:, :] reward_components, # New: Shape (num_agents, 8)
     float[:] done_flags,
     float[:] actions,
     int episode_length,
@@ -306,7 +308,12 @@ cdef void _step_agent_scalar(
     # 1. Guidance (PN)
     cdef float rvel_sq = rvx*rvx + rvy*rvy + rvz*rvz
     cdef float r_dot_v = dx_w*rvx + dy_w*rvy + dz_w*rvz
-    cdef float omega_sq = (rvel_sq / dist_sq) - ((r_dot_v*r_dot_v) / (dist_sq*dist_sq))
+
+    # Safe division
+    cdef float dist_sq_safe = dist_sq
+    if dist_sq_safe < 0.01: dist_sq_safe = 0.01
+
+    cdef float omega_sq = (rvel_sq / dist_sq_safe) - ((r_dot_v*r_dot_v) / (dist_sq_safe*dist_sq_safe))
     if omega_sq < 0: omega_sq = 0.0
 
     cdef float rew_pn = -1.0 * omega_sq
@@ -355,6 +362,17 @@ cdef void _step_agent_scalar(
     rew -= penalty
 
     rewards[i] = rew
+
+    # Store Components
+    # 0:pn, 1:closing, 2:gaze, 3:rate, 4:upright, 5:eff, 6:penalty, 7:bonus
+    reward_components[i, 0] = rew_pn
+    reward_components[i, 1] = rew_closing
+    reward_components[i, 2] = rew_gaze
+    reward_components[i, 3] = rew_rate
+    reward_components[i, 4] = rew_upright
+    reward_components[i, 5] = rew_eff
+    reward_components[i, 6] = -penalty
+    reward_components[i, 7] = bonus
 
     cdef float d_flag = 0.0
     if t >= episode_length:
@@ -522,6 +540,7 @@ def step_cython(
     float[:, :, :] pos_history, # Shape (episode_length, num_agents, 3)
     float[:, :] observations,
     float[:] rewards,
+    float[:, :] reward_components, # New
     float[:] done_flags,
     int[:] step_counts,
     float[:] actions,
@@ -551,6 +570,7 @@ def step_cython(
                 &pos_history[0,0,0], # Correct start
                 &observations[0,0],
                 &rewards[0],
+                &reward_components[0,0], # New
                 &done_flags[0],
                 &actions[0],
                 episode_length,
@@ -572,6 +592,7 @@ def step_cython(
                 pos_history,
                 observations,
                 rewards,
+                reward_components,
                 done_flags,
                 actions,
                 episode_length,
