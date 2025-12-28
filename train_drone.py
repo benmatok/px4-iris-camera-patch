@@ -198,12 +198,16 @@ class CPUTrainer:
 
             # Temp buffer for target history for visualization
             target_history_buffer = np.zeros((ep_len, num_agents, 3), dtype=np.float32)
+            tracker_history_buffer = np.zeros((ep_len, num_agents, 4), dtype=np.float32)
 
             for t in range(self.episode_length):
                 if t % 20 == 0:
                     print(f"  Step {t}/{self.episode_length}")
                 # IMPORTANT: Use .float() for model input
                 current_obs_np = self.data["observations"]
+
+                # Capture tracker features (604-608)
+                tracker_history_buffer[t] = current_obs_np[:, 604:608]
                 current_obs = torch.from_numpy(current_obs_np).float()
 
                 # Forward Pass
@@ -344,7 +348,7 @@ class CPUTrainer:
                 torch.save(self.policy.state_dict(), "final_policy.pth")
                 print("Saved checkpoint to final_policy.pth")
 
-            if itr == 0 or itr == num_iters - 1:
+            if itr == 0 or itr == num_iters - 1 or itr % 50 == 0:
                 # Get pos_history from self.data (T, N, 3)
                 # Reshape/Transpose to (N, T, 3) for visualizer
                 ph = self.data["pos_history"]
@@ -353,7 +357,10 @@ class CPUTrainer:
                 # Get target history (T, N, 3) -> (N, T, 3)
                 th = target_history_buffer.transpose(1, 0, 2)
 
-                self.visualizer.log_trajectory(itr, ph, targets=th)
+                # Get tracker history (T, N, 4) -> (N, T, 4)
+                trh = tracker_history_buffer.transpose(1, 0, 2)
+
+                self.visualizer.log_trajectory(itr, ph, targets=th, tracker_data=trh)
 
             # Generate Plots periodically
             if itr % 50 == 0 or itr == num_iters - 1:
