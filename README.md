@@ -37,21 +37,24 @@ To run the project locally (without Docker), follow these steps to set up the en
 - **C++ Compiler**: `g++` or `clang++` with OpenMP support.
 - **Python Packages**: Listed in `requirements.txt`.
 
-### 2. Installation & Compilation
-First, install the required Python dependencies:
+### 2. Installation & Compilation & Running
+To set up the environment, install dependencies, compile extensions, and start training, simply run:
 ```bash
+./run_training.sh
+```
+
+This script will:
+1. Create a virtual environment (`venv`).
+2. Install dependencies from `requirements.txt`.
+3. Compile the optimized Cython extensions.
+4. Start the PPO training script (`train_drone.py`).
+
+Alternatively, you can run these steps manually:
+```bash
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
-```
-
-Next, compile the optimized Cython extensions (required for the CPU backend):
-```bash
 python3 setup.py build_ext --inplace
-```
-This builds the high-performance physics engine and texture feature extractor.
-
-### 3. Running RL Training
-To train the drone agent using PPO:
-```bash
 python3 train_drone.py
 ```
 
