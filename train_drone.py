@@ -123,6 +123,10 @@ class CPUTrainer:
                     print(f"NaN/Inf detected in action_mean at step {t}")
                     action_mean = torch.nan_to_num(action_mean)
 
+                if torch.isnan(value).any() or torch.isinf(value).any():
+                    print(f"NaN/Inf detected in value at step {t}")
+                    value = torch.nan_to_num(value)
+
                 # Sample Action - use current std
                 std = self.policy.action_log_std.exp()
                 dist = Normal(action_mean, std)
@@ -175,17 +179,29 @@ class CPUTrainer:
              _, next_value = self.policy(obs)
              next_value = next_value.squeeze()
 
+             # Check next_value for NaN
+             if torch.isnan(next_value).any() or torch.isinf(next_value).any():
+                  print(f"NaN/Inf detected in next_value.")
+                  print(f"Obs Min: {obs.min()}, Max: {obs.max()}, Mean: {obs.mean()}")
+                  next_value = torch.nan_to_num(next_value)
+
              advantages = torch.zeros_like(self.rewards_buffer)
              lastgaelam = 0
              for t in reversed(range(self.episode_length)):
                  if t == self.episode_length - 1:
-                     nextnonterminal = 1.0 - self.dones_buffer[t] # Simplified. Actually if done, next is 0.
+                     nextnonterminal = 1.0 - self.dones_buffer[t]
                      nextvalues = next_value
                  else:
                      nextnonterminal = 1.0 - self.dones_buffer[t]
                      nextvalues = self.values_buffer[t+1]
 
-                 delta = self.rewards_buffer[t] + self.gamma * nextvalues * nextnonterminal - self.values_buffer[t]
+                 # Safe GAE calc to avoid NaN * 0
+                 # If nextnonterminal is 0, we don't care about nextvalues (even if it's NaN)
+                 term_next = self.gamma * nextvalues * nextnonterminal
+                 # Force term_next to 0 where nextnonterminal is 0, to handle NaN * 0 = NaN
+                 term_next = torch.where(nextnonterminal == 0, torch.tensor(0.0, device=self.device), term_next)
+
+                 delta = self.rewards_buffer[t] + term_next - self.values_buffer[t]
                  advantages[t] = lastgaelam = delta + self.gamma * self.lam * nextnonterminal * lastgaelam
 
              returns = advantages + self.values_buffer

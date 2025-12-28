@@ -267,6 +267,13 @@ cdef void _step_agent_scalar(
         zc = 0.1
     u = xc / zc
     v = yc / zc
+
+    # Clamp u and v to [-10, 10]
+    if u > 10.0: u = 10.0
+    if u < -10.0: u = -10.0
+    if v > 10.0: v = 10.0
+    if v < -10.0: v = -10.0
+
     size = 10.0 / (zc*zc + 1.0)
 
     cdef float w2 = roll_rate_cmd*roll_rate_cmd + pitch_rate_cmd*pitch_rate_cmd + yaw_rate_cmd*yaw_rate_cmd
@@ -520,6 +527,13 @@ cdef void _reset_agent_scalar(
     if zc < 0.1: zc = 0.1
     u = xc / zc
     v = yc / zc
+
+    # Clamp u and v to [-10, 10]
+    if u > 10.0: u = 10.0
+    if u < -10.0: u = -10.0
+    if v > 10.0: v = 10.0
+    if v < -10.0: v = -10.0
+
     size = 10.0 / (zc*zc + 1.0)
     conf = 1.0
     if (c30 * xb - s30 * zb) < 0: conf = 0.0

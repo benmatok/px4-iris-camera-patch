@@ -234,6 +234,11 @@ def step_cpu(
     zc_safe = np.maximum(zc, 0.1)
     u = xc / zc_safe
     v = yc / zc_safe
+
+    # Clamp u and v to [-10, 10]
+    u = np.clip(u, -10.0, 10.0)
+    v = np.clip(v, -10.0, 10.0)
+
     size = 10.0 / (zc*zc + 1.0)
 
     w2 = roll_rate**2 + pitch_rate**2 + yaw_rate**2
@@ -456,6 +461,11 @@ def reset_cpu(
     zc_safe = np.maximum(zc, 0.1)
     u = xc / zc_safe
     v = yc / zc_safe
+
+    # Clamp u and v to [-10, 10]
+    u = np.clip(u, -10.0, 10.0)
+    v = np.clip(v, -10.0, 10.0)
+
     size = 10.0 / (zc*zc + 1.0)
 
     conf = np.ones(num_agents, dtype=np.float32)
