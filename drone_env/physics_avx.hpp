@@ -316,6 +316,11 @@ inline void step_agents_avx2(
     __m256 u = _mm256_div_ps(xc, zc_safe);
     __m256 v = _mm256_div_ps(yc, zc_safe);
 
+    // Clamp u and v to [-10, 10]
+    __m256 c10_neg = _mm256_set1_ps(-10.0f);
+    u = _mm256_max_ps(c10_neg, _mm256_min_ps(u, c10));
+    v = _mm256_max_ps(c10_neg, _mm256_min_ps(v, c10));
+
     __m256 rel_size = _mm256_div_ps(c10, _mm256_add_ps(_mm256_mul_ps(zc, zc), c1));
 
     __m256 w2 = _mm256_add_ps(
@@ -493,7 +498,9 @@ inline void step_agents_avx2(
     if (t >= episode_length) mask_timeout = c1;
     mask_done = _mm256_or_ps(mask_done, mask_timeout);
 
-    _mm256_storeu_ps(&done_flags[i], mask_done);
+    // Convert mask to 1.0f or 0.0f
+    __m256 done_val = _mm256_and_ps(mask_done, c1);
+    _mm256_storeu_ps(&done_flags[i], done_val);
 }
 
 #endif
