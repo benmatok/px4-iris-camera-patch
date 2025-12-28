@@ -133,6 +133,11 @@ class Visualizer:
             filename = os.path.join(self.output_dir, f"traj_{itr}.png")
             plt.savefig(filename)
             filenames.append(filename)
+
+            # Save separate POV image for the user
+            extent = ax3.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
+            fig.savefig(os.path.join(self.output_dir, f"drone_pov_{itr}.png"), bbox_inches=extent.expanded(1.2, 1.2))
+
             plt.close()
 
             images.append(imageio.imread(filename))
@@ -141,8 +146,10 @@ class Visualizer:
         gif_path = os.path.join(self.output_dir, "training_evolution.gif")
         imageio.mimsave(gif_path, images, fps=5)
 
-        # Cleanup intermediate images
-        for f in filenames:
+        # Cleanup intermediate images, but keep the last one for inspection
+        for f in filenames[:-1]:
             os.remove(f)
+
+        print(f"Saved static trajectory image: {filenames[-1]}")
 
         return gif_path
