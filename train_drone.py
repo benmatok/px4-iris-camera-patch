@@ -1,415 +1,397 @@
-import argparse
 import os
-import yaml
-import torch
-import torch.nn as nn
-import logging
+import argparse
 import numpy as np
-import sys
-
-sys.path.append(os.getcwd())
-
-# Import WarpDrive components
-try:
-    from warp_drive.env_wrapper import EnvWrapper
-    from warp_drive.training.trainer import Trainer
-    HAS_WARPDRIVE = True
-except ImportError:
-    HAS_WARPDRIVE = False
-    print("WarpDrive not installed or not fully importable (likely missing pycuda). Using custom CPU trainer.")
+import torch
+import logging
+import time
+import shutil
+from tqdm import tqdm
+from collections import deque
 
 from drone_env.drone import DroneEnv
-from models.ae_policy import DronePolicy, KFACOptimizerPlaceholder
+from models.ae_policy import DronePolicy
 from visualization import Visualizer
 
-# -----------------------------------------------------------------------------
-# Custom Trainer inheriting from WarpDrive Trainer (for GPU)
-# -----------------------------------------------------------------------------
-if HAS_WARPDRIVE:
-    class CustomTrainer(Trainer):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, **kwargs)
+# For PPO
+from torch.distributions import Normal
 
-            # Override the model with our Custom Policy
-            new_model = DronePolicy(self.env_wrapper.env).cuda()
-            self.models['drone_policy'] = new_model
+# Configure Logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-            # Re-initialize the RL optimizer
-            lr = self.config['algorithm']['lr']
-            self.optimizers['drone_policy'] = torch.optim.Adam(new_model.parameters(), lr=lr)
-
-            # Initialize KFAC for AE (Auxiliary)
-            self.ae_optimizer = KFACOptimizerPlaceholder(new_model.ae.parameters(), lr=0.001)
-            self.ae_criterion = nn.L1Loss()
-
-            # Initialize Visualizer
-            self.visualizer = Visualizer()
-
-        def train(self):
-            """
-            Custom training loop that interleaves AE training with RL updates.
-            """
-            logging.info("Starting Custom Training Loop with Autoencoder...")
-
-            num_iters = self.config['trainer']['training_iterations']
-            data_manager = self.env_wrapper.cuda_data_manager
-
-            self.env_wrapper.reset_all_envs()
-
-            # Check if we can use a step-based approach.
-            has_step = hasattr(self, 'step')
-            if not has_step and hasattr(self, 'trainer_step'): has_step = True
-
-            if has_step:
-                step_fn = self.step if hasattr(self, 'step') else self.trainer_step
-
-                for itr in range(num_iters):
-                    # Run standard RL step (Rollout + Update)
-                    step_fn()
-
-                    # Interleaved AE Training
-                    # 1. Fetch current observations (fresh from rollout or update)
-                    obs_data = data_manager.pull_data("observations") # Shape (num_envs, 608)
-                    obs_tensor = torch.from_numpy(obs_data).cuda()
-
-                    # 2. Update AE
-                    self.ae_optimizer.zero_grad()
-                    _, _, recon, history = self.models['drone_policy'](obs_tensor)
-
-                    loss = self.ae_criterion(recon, history)
-                    loss.backward()
-                    self.ae_optimizer.step()
-
-                    if itr % 10 == 0:
-                        print(f"Iter {itr}: AE Loss {loss.item()}")
-
-                    # Visualization Hooks
-                    # Log Rewards
-                    rewards = data_manager.pull_data("rewards")
-                    mean_reward = np.mean(rewards)
-                    self.visualizer.log_reward(itr, mean_reward)
-
-                    # Capture Trajectory every 50 iterations (or 10% of total)
-                    if itr % 50 == 0 or itr == num_iters - 1:
-                        # Reshape: (num_envs, episode_length, 3)
-                        # NOTE: This part in CUDA trainer might need update if CUDA backend was used,
-                        # but we are in CPU mode primarily.
-                        pos_history = data_manager.pull_data("pos_history")
-                        episode_length = self.env_wrapper.env.episode_length
-                        # Assuming legacy shape for CUDA if not updated
-                        pos_history = pos_history.reshape(self.config['trainer']['num_envs'], episode_length, 3)
-                        self.visualizer.log_trajectory(itr, pos_history)
-
-                # Generate Plots and GIF
-                self.visualizer.plot_rewards()
-                gif_path = self.visualizer.generate_trajectory_gif()
-                print(f"Visualization complete. GIF saved at {gif_path}")
-
-            else:
-                print("WARNING: Trainer.step() not found. Falling back to standard train loop.")
-                print("Autoencoder optimization loop cannot be interleaved without modifying WarpDrive source.")
-                super().train()
-
-# -----------------------------------------------------------------------------
-# CPU Fallback Trainer
-# -----------------------------------------------------------------------------
 class CPUTrainer:
-    def __init__(self, env, config):
+    def __init__(self, env, policy, num_agents, episode_length, batch_size=4096, mini_batch_size=1024, ppo_epochs=4, clip_param=0.2):
         self.env = env
-        self.config = config
-        self.visualizer = Visualizer()
+        self.policy = policy
+        self.num_agents = num_agents
+        self.episode_length = episode_length
+        self.batch_size = batch_size
+        self.mini_batch_size = mini_batch_size
+        self.ppo_epochs = ppo_epochs
+        self.clip_param = clip_param
+        self.gamma = 0.99
+        self.lam = 0.95
+        self.value_loss_coeff = 0.5
+        self.entropy_coeff = 0.01
+        self.max_grad_norm = 1.0 # Gradient clipping
 
-        # Initialize Model (CPU)
-        # We wrap the policy to handle torch tensors
-        self.policy = DronePolicy(env).to("cpu")
+        # Include action_log_std in parameters to optimize
+        self.optimizer_policy = torch.optim.Adam(
+            list(self.policy.action_head.parameters()) + [self.policy.action_log_std],
+            lr=3e-4
+        )
+        self.optimizer_value = torch.optim.Adam(self.policy.value_head.parameters(), lr=1e-3)
+        self.optimizer_encoder = torch.optim.Adam(self.policy.feature_extractor.parameters(), lr=3e-4)
 
-        # Separate optimizers:
-        # 1. RL Optimizer: Policy Head + Value Head
-        # 2. AE Optimizer: Autoencoder (Encoder + Decoder)
-        rl_params = list(self.policy.feature_extractor.parameters()) + list(self.policy.action_head.parameters()) + list(self.policy.value_head.parameters())
-        ae_params = list(self.policy.ae.parameters())
+        self.device = torch.device("cpu") # Force CPU
 
-        self.optimizer = torch.optim.Adam(rl_params, lr=config['algorithm']['lr'])
-        self.ae_optimizer = torch.optim.Adam(ae_params, lr=0.001)
+        # Buffers (Pre-allocate)
+        self.obs_buffer = torch.zeros((episode_length, num_agents, 608), dtype=torch.float32)
+        self.actions_buffer = torch.zeros((episode_length, num_agents, 4), dtype=torch.float32)
+        self.logprobs_buffer = torch.zeros((episode_length, num_agents), dtype=torch.float32)
+        self.rewards_buffer = torch.zeros((episode_length, num_agents), dtype=torch.float32)
+        self.dones_buffer = torch.zeros((episode_length, num_agents), dtype=torch.float32)
+        self.values_buffer = torch.zeros((episode_length, num_agents), dtype=torch.float32)
 
-        self.ae_criterion = nn.L1Loss()
+        # New: Buffer for reward components (debug)
+        self.reward_components_buffer = torch.zeros((episode_length, num_agents, 8), dtype=torch.float32)
 
-        # State Containers
-        self.num_envs = env.num_agents # In our setup env.num_agents is total agents across parallel envs if parallelized
-        # Actually DroneEnv logic: num_agents is agents PER env if using WarpDriveEnvWrapper,
-        # but here we use DroneEnv directly.
-        # DroneEnv.num_agents passed in config is usually 1 agent per env, but many envs.
-        # But DroneEnv implementation treats num_agents as total entities if we run it directly?
-        # Let's check reset_cpu logic. reset_cpu iterates `range(num_agents)`.
-        # So `DroneEnv` as written represents ONE environment block with `num_agents`.
-        # But `train_drone` config says `num_envs: 1024`.
-        # In WarpDrive, `EnvWrapper` manages `num_envs` blocks of `DroneEnv`.
-        # For CPU Trainer, we need to manage the data arrays ourselves.
+        # Buffers for visualization
+        self.target_history_buffer = np.zeros((episode_length, num_agents, 3), dtype=np.float32)
+        self.tracker_history_buffer = np.zeros((episode_length, num_agents, 4), dtype=np.float32)
 
-        # We will initialize the data dictionary arrays manually since we don't have CUDA data manager
-        self.data = {}
-        data_dict = self.env.get_data_dictionary()
-        for name, info in data_dict.items():
-            shape = info["shape"]
-            self.data[name] = np.zeros(shape, dtype=info["dtype"])
 
-        self.episode_length = self.env.episode_length
+    def collect_rollout(self):
+        # Reset Environment
+        self.env.reset_all_envs()
 
-    def train(self):
-        num_iters = self.config['trainer']['training_iterations']
-        logging.info(f"Starting CPU Training Loop for {num_iters} iterations...")
+        # Get Data Dictionary from Env (NumPy arrays)
+        data = self.env.cuda_data_manager.data_dictionary
 
-        # PPO Hyperparams
-        gamma = self.config['algorithm']['gamma']
-        clip_param = self.config['algorithm']['clip_param']
-        vf_loss_coeff = self.config['algorithm']['vf_loss_coeff']
-        entropy_coeff = self.config['algorithm']['entropy_coeff']
+        # We need to manually manage the step loop
+        # The env.step() is designed for WarpDrive CUDA, but we use step_function directly or via helper
+        # Actually, WarpDrive's step() just calls the CUDA kernel.
+        # We need to call our CPU/Cython step function.
 
-        for itr in range(num_iters):
-            print(f"Starting Iteration {itr}")
-            # 1. Collect Rollouts
-            # Reset
-            # We need to define reset indices (all)
-            reset_indices = np.array([0], dtype=np.int32)
+        step_func = self.env.get_step_function()
+        step_kwargs = self.env.get_step_function_kwargs()
 
-            # Reset all
-            self.env.reset_function(
-                pos_x=self.data["pos_x"], pos_y=self.data["pos_y"], pos_z=self.data["pos_z"],
-                vel_x=self.data["vel_x"], vel_y=self.data["vel_y"], vel_z=self.data["vel_z"],
-                roll=self.data["roll"], pitch=self.data["pitch"], yaw=self.data["yaw"],
-                masses=self.data["masses"], drag_coeffs=self.data["drag_coeffs"], thrust_coeffs=self.data["thrust_coeffs"],
-                target_vx=self.data["target_vx"], target_vy=self.data["target_vy"], target_vz=self.data["target_vz"], target_yaw_rate=self.data["target_yaw_rate"],
-                traj_params=self.data["traj_params"],
-                pos_history=self.data["pos_history"], observations=self.data["observations"],
-                rng_states=self.data["rng_states"], step_counts=self.data["step_counts"],
-                num_agents=self.env.num_agents, reset_indices=np.array([0], dtype=np.int32)
-            )
+        # Map kwarg names to actual data arrays
+        # Note: data[name] is a numpy array.
 
-            # Pre-allocate Rollout Buffers (Tensors) to avoid list duplication/stack overhead
-            # obs: float16, others: float32
-            num_agents = self.env.num_agents
-            ep_len = self.episode_length
+        # Initial Observation
+        obs_np = data["observations"]
+        # NaN check
+        if np.isnan(obs_np).any() or np.isinf(obs_np).any():
+            print("Warning: Initial observations contain NaN or Inf!")
+            obs_np = np.nan_to_num(obs_np)
 
-            obs_buffer = torch.zeros((ep_len, num_agents, 608), dtype=torch.float16)
-            action_buffer = torch.zeros((ep_len, num_agents, 4), dtype=torch.float32)
-            reward_buffer = torch.zeros((ep_len, num_agents), dtype=torch.float32)
-            value_buffer = torch.zeros((ep_len, num_agents), dtype=torch.float32)
-            log_prob_buffer = torch.zeros((ep_len, num_agents), dtype=torch.float32)
+        obs = torch.from_numpy(obs_np).float()
 
-            # Temp buffer for target history for visualization
-            target_history_buffer = np.zeros((ep_len, num_agents, 3), dtype=np.float32)
-            tracker_history_buffer = np.zeros((ep_len, num_agents, 4), dtype=np.float32)
+        total_reward = 0
 
-            for t in range(self.episode_length):
-                if t % 20 == 0:
-                    print(f"  Step {t}/{self.episode_length}")
-                # IMPORTANT: Use .float() for model input
-                current_obs_np = self.data["observations"]
+        # Local refs for speed
+        d_obs = data["observations"]
+        d_rew = data["rewards"]
+        d_done = data["done_flags"]
+        d_act = data["actions"]
+        d_vt_x = data["vt_x"]
+        d_vt_y = data["vt_y"]
+        d_vt_z = data["vt_z"]
+        d_rew_comp = data["reward_components"] # New
 
-                # Capture tracker features (604-608)
-                tracker_history_buffer[t] = current_obs_np[:, 604:608]
-                current_obs = torch.from_numpy(current_obs_np).float()
+        # Map arguments for step function
+        # We construct the args dict once
+        args = {}
+        for k, v in step_kwargs.items():
+            if v in data:
+                args[k] = data[v]
+            elif k == "num_agents":
+                args[k] = self.num_agents
+            elif k == "episode_length":
+                args[k] = self.episode_length
+            else:
+                pass
 
-                # Forward Pass
-                mu, v, recon, hist = self.policy(current_obs)
+        for t in range(self.episode_length):
+            # 1. Policy Forward
+            with torch.no_grad():
+                # obs is (num_agents, 608)
+                action_mean, value = self.policy(obs)
 
-                # Sample actions
-                dist = torch.distributions.Normal(mu, torch.ones_like(mu)*0.5)
+                # Check for NaNs in network output
+                if torch.isnan(action_mean).any() or torch.isinf(action_mean).any():
+                    print(f"NaN/Inf detected in action_mean at step {t}")
+                    action_mean = torch.nan_to_num(action_mean)
+
+                # Sample Action - use current std
+                std = self.policy.action_log_std.exp()
+                dist = Normal(action_mean, std)
+
                 action = dist.sample()
+                action = torch.clamp(action, -1.0, 1.0)
                 log_prob = dist.log_prob(action).sum(dim=-1)
 
-                # Store in pre-allocated buffers
-                obs_buffer[t] = current_obs.half() # implicit copy
-                action_buffer[t] = action.detach()
-                value_buffer[t] = v.squeeze().detach()
-                log_prob_buffer[t] = log_prob.detach()
+            # 2. Step Environment
+            # Write action to data dict
+            d_act[:] = action.numpy().flatten() # Expects flat array? Check step_cpu
+            # step_cpu expects "actions" as flat or reshaped inside.
+            # In drone.py: actions_reshaped = actions.reshape(num_agents, 4). So flat is fine.
 
-                # Execute Step
-                actions_np = action.detach().numpy().flatten()
-                env_ids_to_step = np.array([0], dtype=np.int32)
+            # Execute Step
+            step_func(**args)
 
-                self.env.step_function(
-                    pos_x=self.data["pos_x"], pos_y=self.data["pos_y"], pos_z=self.data["pos_z"],
-                    vel_x=self.data["vel_x"], vel_y=self.data["vel_y"], vel_z=self.data["vel_z"],
-                    roll=self.data["roll"], pitch=self.data["pitch"], yaw=self.data["yaw"],
-                    masses=self.data["masses"], drag_coeffs=self.data["drag_coeffs"], thrust_coeffs=self.data["thrust_coeffs"],
-                    target_vx=self.data["target_vx"], target_vy=self.data["target_vy"], target_vz=self.data["target_vz"], target_yaw_rate=self.data["target_yaw_rate"],
-                    vt_x=self.data["vt_x"], vt_y=self.data["vt_y"], vt_z=self.data["vt_z"],
-                    traj_params=self.data["traj_params"],
-                    pos_history=self.data["pos_history"],
-                    observations=self.data["observations"], rewards=self.data["rewards"],
-                    done_flags=self.data["done_flags"], step_counts=self.data["step_counts"],
-                    actions=actions_np,
-                    num_agents=self.env.num_agents, episode_length=self.episode_length,
-                    env_ids=env_ids_to_step
-                )
+            # 3. Store Data
+            self.obs_buffer[t] = obs
+            self.actions_buffer[t] = action
+            self.logprobs_buffer[t] = log_prob
+            self.values_buffer[t] = value.squeeze()
 
-                # Capture target position for visualization
-                # vt_x, vt_y, vt_z are updated in step_function
-                target_history_buffer[t, :, 0] = self.data["vt_x"]
-                target_history_buffer[t, :, 1] = self.data["vt_y"]
-                target_history_buffer[t, :, 2] = self.data["vt_z"]
+            # Check for NaNs in rewards
+            if np.isnan(d_rew).any() or np.isinf(d_rew).any():
+                print(f"NaN/Inf detected in rewards at step {t}")
+                print(f"Rewards Min: {d_rew.min()}, Max: {d_rew.max()}")
+                d_rew = np.nan_to_num(d_rew)
 
-                # Store reward
-                reward_buffer[t] = torch.from_numpy(self.data["rewards"]).float()
+            self.rewards_buffer[t] = torch.from_numpy(d_rew).float()
+            self.dones_buffer[t] = torch.from_numpy(d_done).float()
+            self.reward_components_buffer[t] = torch.from_numpy(d_rew_comp).float() # New
 
-            print("  Computing Advantages...")
-            # 2. Compute Advantages (GAE)
-            returns = torch.zeros_like(reward_buffer)
-            R = torch.zeros(self.env.num_agents)
-            for t in reversed(range(self.episode_length)):
-                R = reward_buffer[t] + gamma * R
-                returns[t] = R
+            # Next Obs
+            if np.isnan(d_obs).any() or np.isinf(d_obs).any():
+                print(f"NaN/Inf detected in next observations from env at step {t}")
+                print(f"Obs Min: {d_obs.min()}, Max: {d_obs.max()}")
+                d_obs = np.nan_to_num(d_obs)
 
-            advantages = returns - value_buffer
-            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+            obs = torch.from_numpy(d_obs).float()
 
-            print("  Updating Policy...")
-            # 3. Update Policy (PPO Step) with Mini-batches
-            # Flatten batch
-            b_obs_half = obs_buffer.reshape(-1, 608)
-            b_actions = action_buffer.reshape(-1, 4)
-            b_log_probs = log_prob_buffer.reshape(-1)
-            b_returns = returns.reshape(-1)
-            b_advantages = advantages.reshape(-1)
-            b_returns = returns.reshape(-1)
-            b_advantages = advantages.reshape(-1)
+            # Visualization Data
+            self.target_history_buffer[t, :, 0] = d_vt_x
+            self.target_history_buffer[t, :, 1] = d_vt_y
+            self.target_history_buffer[t, :, 2] = d_vt_z
+            self.tracker_history_buffer[t] = d_obs[:, 604:608] # u, v, size, conf
 
-            # Mini-batch settings
-            batch_size = b_obs_half.shape[0]
-            minibatch_size = 4096
+        # Calculate Advantages (GAE)
+        with torch.no_grad():
+             _, next_value = self.policy(obs)
+             next_value = next_value.squeeze()
 
-            # Accumulated metrics for logging
-            total_loss = 0
-            total_ae_loss = 0
-            num_updates = 0
+             advantages = torch.zeros_like(self.rewards_buffer)
+             lastgaelam = 0
+             for t in reversed(range(self.episode_length)):
+                 if t == self.episode_length - 1:
+                     nextnonterminal = 1.0 - self.dones_buffer[t] # Simplified. Actually if done, next is 0.
+                     nextvalues = next_value
+                 else:
+                     nextnonterminal = 1.0 - self.dones_buffer[t]
+                     nextvalues = self.values_buffer[t+1]
 
-            indices = torch.randperm(batch_size)
+                 delta = self.rewards_buffer[t] + self.gamma * nextvalues * nextnonterminal - self.values_buffer[t]
+                 advantages[t] = lastgaelam = delta + self.gamma * self.lam * nextnonterminal * lastgaelam
 
-            for start_idx in range(0, batch_size, minibatch_size):
-                end_idx = min(start_idx + minibatch_size, batch_size)
-                mb_indices = indices[start_idx:end_idx]
+             returns = advantages + self.values_buffer
 
-                # Fetch mini-batch and cast to float
-                mb_obs = b_obs_half[mb_indices].float()
-                mb_actions = b_actions[mb_indices]
-                mb_log_probs = b_log_probs[mb_indices]
-                mb_returns = b_returns[mb_indices]
-                mb_advantages = b_advantages[mb_indices]
+        return self.obs_buffer, self.actions_buffer, self.logprobs_buffer, returns, advantages
 
-                # Re-evaluate
-                new_mu, new_v, new_recon, new_hist = self.policy(mb_obs)
-                dist = torch.distributions.Normal(new_mu, torch.ones_like(new_mu)*0.5)
-                new_log_probs = dist.log_prob(mb_actions).sum(dim=-1)
-                entropy = dist.entropy().mean()
+    def update(self, rollouts):
+        obs, actions, old_logprobs, returns, advantages = rollouts
 
-                ratio = torch.exp(new_log_probs - mb_log_probs)
+        # Check inputs for NaNs
+        if torch.isnan(obs).any(): print("NaN in obs buffer")
+        if torch.isnan(actions).any(): print("NaN in actions buffer")
+        if torch.isnan(old_logprobs).any(): print("NaN in old_logprobs buffer")
+        if torch.isnan(returns).any(): print("NaN in returns buffer")
+        if torch.isnan(advantages).any(): print("NaN in advantages buffer")
+
+        if torch.isinf(returns).any(): print("Inf in returns buffer")
+        if torch.isinf(advantages).any(): print("Inf in advantages buffer")
+
+        # Replace NaNs/Infs
+        obs = torch.nan_to_num(obs)
+        returns = torch.nan_to_num(returns, nan=0.0, posinf=100.0, neginf=-100.0)
+        advantages = torch.nan_to_num(advantages, nan=0.0, posinf=100.0, neginf=-100.0)
+
+        # Flatten
+        # (T, N, ...) -> (T*N, ...)
+        obs = obs.reshape(-1, 608)
+        actions = actions.reshape(-1, 4)
+        old_logprobs = old_logprobs.reshape(-1)
+        returns = returns.reshape(-1)
+        advantages = advantages.reshape(-1)
+
+        # Normalize Advantages
+        adv_std = advantages.std()
+        if adv_std < 1e-5:
+             # If std is 0 (all same reward), normalization leads to NaN or Inf.
+             # Just center it?
+             advantages = advantages - advantages.mean()
+        else:
+             advantages = (advantages - advantages.mean()) / (adv_std + 1e-8)
+
+        dataset_size = obs.size(0)
+        indices = np.arange(dataset_size)
+
+        for _ in range(self.ppo_epochs):
+            np.random.shuffle(indices)
+            for start in range(0, dataset_size, self.mini_batch_size):
+                end = start + self.mini_batch_size
+                idx = indices[start:end]
+
+                mb_obs = obs[idx]
+                mb_actions = actions[idx]
+                mb_old_logprobs = old_logprobs[idx]
+                mb_returns = returns[idx]
+                mb_advantages = advantages[idx]
+
+                # Forward
+                action_mean, value = self.policy(mb_obs)
+
+                # Recompute std inside loop to keep graph connected
+                std = self.policy.action_log_std.exp()
+
+                # Distribution using current std
+                dist = Normal(action_mean, std)
+                new_logprobs = dist.log_prob(mb_actions).sum(dim=-1)
+                entropy = dist.entropy().sum(dim=-1).mean()
+
+                # Ratio
+                ratio = torch.exp(new_logprobs - mb_old_logprobs)
+
+                # Surrogate Loss
                 surr1 = ratio * mb_advantages
-                surr2 = torch.clamp(ratio, 1.0 - clip_param, 1.0 + clip_param) * mb_advantages
+                surr2 = torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param) * mb_advantages
                 policy_loss = -torch.min(surr1, surr2).mean()
 
-                value_loss = (mb_returns - new_v.squeeze()).pow(2).mean()
+                # Value Loss
+                value = value.squeeze()
+                value_loss = 0.5 * ((value - mb_returns) ** 2).mean()
 
-                loss = policy_loss + vf_loss_coeff * value_loss - entropy_coeff * entropy
+                # Total Loss
+                loss = policy_loss + self.value_loss_coeff * value_loss - self.entropy_coeff * entropy
 
-                # AE Update
-                ae_loss = self.ae_criterion(new_recon, new_hist)
+                # Update
+                self.optimizer_policy.zero_grad()
+                self.optimizer_value.zero_grad()
+                self.optimizer_encoder.zero_grad()
 
-                # Separate Updates
-                self.optimizer.zero_grad()
-                self.ae_optimizer.zero_grad()
+                loss.backward()
 
-                loss.backward(retain_graph=True)
-                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 1.0)
-                self.optimizer.step()
+                # Clip Gradients
+                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
 
-                ae_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.policy.ae.parameters(), 1.0)
-                self.ae_optimizer.step()
+                self.optimizer_policy.step()
+                self.optimizer_value.step()
+                self.optimizer_encoder.step()
 
-                total_loss += loss.item()
-                total_ae_loss += ae_loss.item()
-                num_updates += 1
+        return policy_loss.item(), value_loss.item()
 
-            # Logging (Average over minibatches)
-            mean_reward = reward_buffer.mean().item()
-            avg_loss = total_loss / num_updates
-            avg_ae_loss = total_ae_loss / num_updates
-
-            print(f"Iter {itr}: Reward {mean_reward:.3f} Loss {avg_loss:.3f} AE {avg_ae_loss:.3f}")
-            self.visualizer.log_reward(itr, mean_reward)
-
-            # Save Checkpoint (Overwrite latest)
-            if itr % 50 == 0:
-                torch.save(self.policy.state_dict(), "latest_checkpoint.pth")
-                print("Saved checkpoint to latest_checkpoint.pth")
-
-            if itr == num_iters - 1:
-                torch.save(self.policy.state_dict(), "final_policy.pth")
-                print("Saved checkpoint to final_policy.pth")
-
-            if itr == 0 or itr == num_iters - 1 or itr % 50 == 0:
-                # Get pos_history from self.data (T, N, 3)
-                # Reshape/Transpose to (N, T, 3) for visualizer
-                ph = self.data["pos_history"]
-                ph = ph.transpose(1, 0, 2)
-
-                # Get target history (T, N, 3) -> (N, T, 3)
-                th = target_history_buffer.transpose(1, 0, 2)
-
-                # Get tracker history (T, N, 4) -> (N, T, 4)
-                trh = tracker_history_buffer.transpose(1, 0, 2)
-
-                self.visualizer.log_trajectory(itr, ph, targets=th, tracker_data=trh)
-
-            # Generate Plots periodically
-            if itr % 50 == 0 or itr == num_iters - 1:
-                self.visualizer.plot_rewards()
-                gif_path = self.visualizer.generate_trajectory_gif()
-                print(f"Visualization updated. GIF saved at {gif_path}")
-
-
-def setup_and_train(run_config, device_id=0, load_path=None):
-    use_cuda = torch.cuda.is_available() and HAS_WARPDRIVE
-    if use_cuda:
-        # CUDA path not updated for new obs space, fail gracefully or fallback
-        print("WARNING: CUDA logic not updated for new observation space. Falling back to CPU.")
-        # Override to CPU path
-        use_cuda = False
-
-    print("WARNING: CUDA or WarpDrive not available. Falling back to Custom CPU Training.")
-
-    # Override config for lightweight CPU run
-    total_agents = 200
-    run_config["trainer"]["training_iterations"] = 5000
-    run_config["trainer"]["episode_length"] = 20
-
-    print(f"CPU Mode: Reduced agents to {total_agents} and iterations to {run_config['trainer']['training_iterations']}")
-
-    env = DroneEnv(num_agents=total_agents, episode_length=run_config["trainer"]["episode_length"], use_cuda=False)
-
-    trainer = CPUTrainer(env, run_config)
-
-    if load_path:
-        print(f"Loading checkpoint from {load_path}")
-        try:
-            trainer.policy.load_state_dict(torch.load(load_path))
-            print("Checkpoint loaded successfully.")
-        except Exception as e:
-            print(f"Failed to load checkpoint: {e}")
-
-    trainer.train()
-
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", "-c", type=str, default="configs/drone.yaml")
-    parser.add_argument("--load", "-l", type=str, default=None, help="Path to checkpoint to load")
+    parser.add_argument("--num_agents", type=int, default=200)
+    parser.add_argument("--iterations", type=int, default=5000)
+    parser.add_argument("--episode_length", type=int, default=20) # Short episodes for dynamics
+    parser.add_argument("--load", type=str, default=None)
     args = parser.parse_args()
 
-    if not os.path.exists(args.config):
-        raise FileNotFoundError(f"Config file not found: {args.config}")
+    # Enable Anomaly Detection
+    torch.autograd.set_detect_anomaly(True)
 
-    with open(args.config, "r") as f:
-        config = yaml.safe_load(f)
+    # Environment
+    env = DroneEnv(num_agents=args.num_agents, episode_length=args.episode_length, use_cuda=False)
 
-    setup_and_train(config, load_path=args.load)
+    # Model
+    policy = DronePolicy(observation_dim=608, action_dim=4, hidden_dim=256).cpu()
+
+    if args.load:
+        if os.path.exists(args.load):
+            print(f"Loading checkpoint from {args.load}")
+            checkpoint = torch.load(args.load)
+            policy.load_state_dict(checkpoint)
+        else:
+            print(f"Checkpoint {args.load} not found, starting fresh.")
+
+    trainer = CPUTrainer(env, policy, args.num_agents, args.episode_length)
+    visualizer = Visualizer()
+
+    print(f"Starting Training: {args.num_agents} Agents, {args.iterations} Iterations")
+
+    start_time = time.time()
+
+    for itr in range(1, args.iterations + 1):
+        # Rollout
+        obs, _, _, _, _ = trainer.collect_rollout()
+
+        # PPO Update
+        try:
+            p_loss, v_loss = trainer.update((obs, trainer.actions_buffer, trainer.logprobs_buffer, _, _))
+        except ValueError as e:
+            print(f"Update failed at itr {itr}: {e}")
+            break
+        except RuntimeError as e:
+             print(f"RuntimeError at itr {itr}: {e}")
+             break
+
+        # Logging
+        mean_reward = trainer.rewards_buffer.sum(dim=0).mean().item() # Sum over time, mean over agents
+        visualizer.log_reward(itr, mean_reward)
+
+        if itr % 10 == 0:
+            elapsed = time.time() - start_time
+            print(f"Iter {itr} | Reward: {mean_reward:.2f} | P_Loss: {p_loss:.4f} | V_Loss: {v_loss:.4f} | Time: {elapsed:.2f}s")
+
+            # Log Reward Components
+            # (episode_length, num_agents, 8) -> sum time -> mean agents
+            comp_sums = trainer.reward_components_buffer.sum(dim=0).mean(dim=0)
+            # 0:pn, 1:closing, 2:gaze, 3:rate, 4:upright, 5:eff, 6:penalty, 7:bonus
+            print(f"   Breakdown -> PN: {comp_sums[0]:.2f}, Close: {comp_sums[1]:.2f}, Gaze: {comp_sums[2]:.2f}")
+            print(f"                Rate: {comp_sums[3]:.2f}, Upright: {comp_sums[4]:.2f}, Eff: {comp_sums[5]:.2f}")
+            print(f"                Penalty: {comp_sums[6]:.2f}, Bonus: {comp_sums[7]:.2f}")
+
+            # Log current exploration std
+            curr_std = trainer.policy.action_log_std.exp().mean().item()
+            print(f"                Exploration Std: {curr_std:.4f}")
+
+        # Visualization
+        if itr % 50 == 0:
+            # Save checkpoint
+            torch.save(policy.state_dict(), "latest_checkpoint.pth")
+
+            # Get Trajectory from Env Data (pos_history)
+            # pos_history shape: (episode_length, num_agents, 3)
+            # Note: We need to get it from the environment's data dictionary,
+            # because trainer.obs_buffer stores observations, not raw positions (obs has history but scrambled/local)
+
+            pos_hist = env.cuda_data_manager.data_dictionary["pos_history"]
+            # Important: Env resets pos_history at start of episode.
+            # But wait, trainer.collect_rollout calls reset_all_envs() at START.
+            # So pos_history contains data from the JUST COMPLETED rollout.
+            # pos_history is filled up to episode_length.
+
+            # Use data from the Trainer buffers for targets/trackers
+            targets = trainer.target_history_buffer
+            tracker_data = trainer.tracker_history_buffer
+
+            # Log for graph
+            visualizer.log_trajectory(itr, pos_hist, targets, tracker_data)
+            visualizer.plot_rewards()
+            visualizer.generate_trajectory_gif()
+
+        if itr % 100 == 0:
+            # Generate Video of specific episode (first agent)
+            pos_hist = env.cuda_data_manager.data_dictionary["pos_history"]
+            targets = trainer.target_history_buffer
+            tracker_data = trainer.tracker_history_buffer
+
+            # Agent 0
+            traj_0 = pos_hist[:, 0, :]
+            targ_0 = targets[:, 0, :]
+            track_0 = tracker_data[:, 0, :]
+
+            visualizer.save_episode_gif(itr, traj_0, targ_0, track_0, filename_suffix="_best" if mean_reward > 0 else "")
+
+
+    # Save Final
+    torch.save(policy.state_dict(), "final_policy.pth")
+    print("Training Complete.")
+
+if __name__ == "__main__":
+    main()
