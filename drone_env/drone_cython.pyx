@@ -116,7 +116,6 @@ cdef void _step_agent_scalar(
     cdef float t_f = <float>t
 
     # 0:Ax, 1:Fx, 2:Px, 3:Ay, 4:Fy, 5:Py, 6:Az, 7:Fz, 8:Pz, 9:Oz
-    # New Layout: (10, num_agents) -> traj_params[param_idx, agent_idx]
     cdef float ax_p = traj_params[0, i]
     cdef float fx_p = traj_params[1, i]
     cdef float px_p = traj_params[2, i]
@@ -128,9 +127,20 @@ cdef void _step_agent_scalar(
     cdef float pz_p = traj_params[8, i]
     cdef float oz_p = traj_params[9, i]
 
-    cdef float vtx_val = ax_p * sin(fx_p * t_f + px_p)
-    cdef float vty_val = ay_p * sin(fy_p * t_f + py_p)
-    cdef float vtz_val = oz_p + az_p * sin(fz_p * t_f + pz_p)
+    cdef float sx, cx
+    sincosf(fx_p * t_f + px_p, &sx, &cx)
+    cdef float vtx_val = ax_p * sx
+    cdef float vtvx_val = ax_p * fx_p * cx
+
+    cdef float sy_t, cy_t
+    sincosf(fy_p * t_f + py_p, &sy_t, &cy_t)
+    cdef float vty_val = ay_p * sy_t
+    cdef float vtvy_val = ay_p * fy_p * cy_t
+
+    cdef float sz, cz
+    sincosf(fz_p * t_f + pz_p, &sz, &cz)
+    cdef float vtz_val = oz_p + az_p * sz
+    cdef float vtvz_val = az_p * fz_p * cz
 
     vt_x[i] = vtx_val
     vt_y[i] = vty_val
@@ -263,62 +273,100 @@ cdef void _step_agent_scalar(
         if (c30 * xb - s30 * zb) < 0:
             conf = 0.0
 
-    # Targets
-    tvx = target_vx[i]
-    tvy = target_vy[i]
-    tvz = target_vz[i]
-    tyr = target_yaw_rate[i]
+    # Rel Vel and Distance
+    cdef float rvx, rvy, rvz
+    rvx = vtvx_val - vx
+    rvy = vtvy_val - vy
+    rvz = vtvz_val - vz
 
-    observations[i, 600] = tvx
-    observations[i, 601] = tvy
-    observations[i, 602] = tvz
-    observations[i, 603] = tyr
+    # Body Frame Rel Vel
+    cdef float rvx_b, rvy_b, rvz_b
+    rvx_b = r11 * rvx + r12 * rvy + r13 * rvz
+    rvy_b = r21 * rvx + r22 * rvy + r23 * rvz
+    rvz_b = r31 * rvx + r32 * rvy + r33 * rvz
+
+    cdef float dist_sq = dx_w*dx_w + dy_w*dy_w + dz_w*dz_w
+    cdef float dist = sqrt(dist_sq)
+    cdef float dist_safe = dist
+    if dist_safe < 0.1: dist_safe = 0.1
+
+    observations[i, 600] = rvx_b
+    observations[i, 601] = rvy_b
+    observations[i, 602] = rvz_b
+    observations[i, 603] = dist
 
     observations[i, 604] = u
     observations[i, 605] = v
     observations[i, 606] = size
     observations[i, 607] = conf
 
-    # Rewards
+    # -------------------------------------------------------------------------
+    # Homing Reward (Master Equation)
+    # -------------------------------------------------------------------------
+    # 1. Guidance (PN)
+    cdef float rvel_sq = rvx*rvx + rvy*rvy + rvz*rvz
+    cdef float r_dot_v = dx_w*rvx + dy_w*rvy + dz_w*rvz
+    cdef float omega_sq = (rvel_sq / dist_sq) - ((r_dot_v*r_dot_v) / (dist_sq*dist_sq))
+    if omega_sq < 0: omega_sq = 0.0
+
+    cdef float rew_pn = -1.0 * omega_sq
+
+    # 2. Closing Speed (V_drone . r_hat)
+    cdef float vd_dot_r = vx*dx_w + vy*dy_w + vz*dz_w
+    cdef float closing = vd_dot_r / dist_safe
+    cdef float rew_closing = 0.5 * closing
+
+    # 3. Vision (Gaze)
     vx_b = r11 * vx + r12 * vy + r13 * vz
-    vy_b = r21 * vx + r22 * vy + r23 * vz
-    vz_b = r31 * vx + r32 * vy + r33 * vz
+    cdef float v_ideal = 0.1 * vx_b
+    cdef float v_err = v - v_ideal
+    cdef float gaze_err = u*u + v_err*v_err
+    cdef float rew_gaze = -1.0 * gaze_err
 
-    v_err_sq = (vx_b - tvx)*(vx_b - tvx) + (vy_b - tvy)*(vy_b - tvy) + (vz_b - tvz)*(vz_b - tvz)
-    yaw_rate_err_sq = (yaw_rate_cmd - tyr)*(yaw_rate_cmd - tyr)
+    # Funnel
+    cdef float funnel = 1.0 / (dist + 1.0)
 
-    # 1. Base
-    rew = 1.0 * exp(-2.0 * v_err_sq)
-    rew += 0.5 * exp(-2.0 * yaw_rate_err_sq)
+    cdef float rew_guidance = (rew_pn + rew_gaze + rew_closing) * funnel
 
-    # 2. Visual Servoing
-    rew_vis = exp(-2.0 * (u*u + v*v))
-    rew += 0.5 * rew_vis
+    # 4. Stability
+    cdef float rew_rate = -0.1 * w2
+    # Upright (r33 = cp*cr)
+    cdef float upright_err = 1.0 - r33
+    cdef float rew_upright = -1.0 * upright_err * upright_err
+    cdef float rew_eff = -0.01 * thrust_cmd * thrust_cmd
 
-    # 3. Range
-    rew_range = exp(-2.0 * (size - 1.0)*(size - 1.0))
-    rew += 0.5 * rew_range
+    rew = rew_guidance + rew_rate + rew_upright + rew_eff
 
-    # 4. Smoothness
-    rew_smooth = exp(-0.1 * w2)
-    rew += 0.2 * rew_smooth
+    # Terminations
+    cdef float bonus = 0.0
+    if dist < 0.2:
+        bonus = 10.0
 
-    # Penalties
-    rew -= 0.01 * (r*r + p*p)
+    rew += bonus
 
-    if fabs(r) > 1.0 or fabs(p) > 1.0:
-        rew -= 0.1
+    # Fail: Tilt > 60 deg (r33 < 0.5)
+    cdef float penalty = 0.0
+    if r33 < 0.5:
+        penalty += 10.0
 
     if collision == 1:
-        rew -= 10.0
+        penalty += 10.0
 
-    rew += 0.1
+    rew -= penalty
+
     rewards[i] = rew
 
+    cdef float d_flag = 0.0
     if t >= episode_length:
-        done_flags[i] = 1.0
-    else:
-        done_flags[i] = 0.0
+        d_flag = 1.0
+    if dist < 0.2:
+        d_flag = 1.0
+    if r33 < 0.5:
+        d_flag = 1.0
+    if collision == 1:
+        d_flag = 1.0
+
+    done_flags[i] = d_flag
 
 # Helper function for single agent reset
 cdef void _reset_agent_scalar(
@@ -385,21 +433,83 @@ cdef void _reset_agent_scalar(
     # Reset Observations (Size 608)
     memset(&observations[i, 0], 0, 608 * 4)
 
-    observations[i, 600] = tvx
-    observations[i, 601] = tvy
-    observations[i, 602] = tvz
-    observations[i, 603] = tyr
-
+    # Initial Position
     pos_x[i] = 0.0
     pos_y[i] = 0.0
     pos_z[i] = 10.0
-
     vel_x[i] = 0.0
     vel_y[i] = 0.0
     vel_z[i] = 0.0
     roll[i] = 0.0
     pitch[i] = 0.0
     yaw[i] = 0.0
+
+    # Calculate Initial Target State (t=0)
+    cdef float t_f = 0.0
+    cdef float ax_p = traj_params[0, i]
+    cdef float fx_p = traj_params[1, i]
+    cdef float px_p = traj_params[2, i]
+    cdef float ay_p = traj_params[3, i]
+    cdef float fy_p = traj_params[4, i]
+    cdef float py_p = traj_params[5, i]
+    cdef float az_p = traj_params[6, i]
+    cdef float fz_p = traj_params[7, i]
+    cdef float pz_p = traj_params[8, i]
+    cdef float oz_p = traj_params[9, i]
+
+    cdef float sx, cx
+    sincosf(px_p, &sx, &cx) # t=0
+    cdef float vtx_val = ax_p * sx
+    cdef float vtvx_val = ax_p * fx_p * cx
+
+    cdef float sy_t, cy_t
+    sincosf(py_p, &sy_t, &cy_t)
+    cdef float vty_val = ay_p * sy_t
+    cdef float vtvy_val = ay_p * fy_p * cy_t
+
+    cdef float sz, cz
+    sincosf(pz_p, &sz, &cz)
+    cdef float vtz_val = oz_p + az_p * sz
+    cdef float vtvz_val = az_p * fz_p * cz
+
+    # Populate Obs
+    cdef float rvx = vtvx_val - vel_x[i]
+    cdef float rvy = vtvy_val - vel_y[i]
+    cdef float rvz = vtvz_val - vel_z[i]
+
+    # Body Frame Rel Vel (R=Identity at t=0)
+    observations[i, 600] = rvx
+    observations[i, 601] = rvy
+    observations[i, 602] = rvz
+
+    cdef float dx = vtx_val - pos_x[i]
+    cdef float dy = vty_val - pos_y[i]
+    cdef float dz = vtz_val - pos_z[i]
+    cdef float dist = sqrt(dx*dx + dy*dy + dz*dz)
+    observations[i, 603] = dist
+
+    # Initial Tracker Features
+    # R=I
+    cdef float xb = dx
+    cdef float yb = dy
+    cdef float zb = dz
+    cdef float s30 = 0.5
+    cdef float c30 = 0.866025
+    cdef float xc = yb
+    cdef float yc = s30 * xb + c30 * zb
+    cdef float zc = c30 * xb - s30 * zb
+    cdef float u, v, size, conf
+    if zc < 0.1: zc = 0.1
+    u = xc / zc
+    v = yc / zc
+    size = 10.0 / (zc*zc + 1.0)
+    conf = 1.0
+    if (c30 * xb - s30 * zb) < 0: conf = 0.0
+
+    observations[i, 604] = u
+    observations[i, 605] = v
+    observations[i, 606] = size
+    observations[i, 607] = conf
 
 def step_cython(
     float[:] pos_x, float[:] pos_y, float[:] pos_z,
