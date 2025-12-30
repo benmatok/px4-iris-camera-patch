@@ -8,9 +8,26 @@
 #include "avx_mathfun_lut.h"
 
 // Constants
-static const float DT = 0.01f;
+static const float DT = 0.05f;
 static const float GRAVITY = 9.81f;
-static const int SUBSTEPS = 10;
+static const int SUBSTEPS = 2;
+
+// Helper: Custom Memmove using AVX
+inline void shift_observations_avx(float* observations, int i) {
+    for (int k = 0; k < 8; k++) {
+        float* ptr = &observations[(i + k) * 608];
+        float* src = ptr + 6;
+        float* dst = ptr;
+
+        // Unrolled AVX copy
+        for (int j = 0; j < 74; j++) {
+            __m256 v = _mm256_loadu_ps(src + j * 8);
+            _mm256_storeu_ps(dst + j * 8, v);
+        }
+        dst[592] = src[592];
+        dst[593] = src[593];
+    }
+}
 
 // AVX2 Implementation for a block of 8 agents
 inline void step_agents_avx2(
@@ -20,8 +37,8 @@ inline void step_agents_avx2(
     float* roll, float* pitch, float* yaw,
     float* masses, float* drag_coeffs, float* thrust_coeffs,
     float* target_vx, float* target_vy, float* target_vz, float* target_yaw_rate,
-    float* vt_x, float* vt_y, float* vt_z, // Virtual Target Position
-    float* traj_params, // Trajectory Parameters. Shape (10, num_agents).
+    float* vt_x, float* vt_y, float* vt_z, // Virtual Target Position (Output)
+    float* target_trajectory, // Precomputed Trajectory: Shape (episode_length+1, num_agents, 3)
     float* pos_history, // Shape (episode_length, num_agents, 3)
     float* observations, // stride 608
     float* rewards,
@@ -35,7 +52,7 @@ inline void step_agents_avx2(
     // Check if we can process 8 agents
     if (i + 8 > num_agents) return;
 
-    // Load State into Registers (Structure of Arrays)
+    // Load State
     __m256 px = _mm256_loadu_ps(&pos_x[i]);
     __m256 py = _mm256_loadu_ps(&pos_y[i]);
     __m256 pz = _mm256_loadu_ps(&pos_z[i]);
@@ -72,76 +89,67 @@ inline void step_agents_avx2(
     __m256 c01 = _mm256_set1_ps(0.1f);
     __m256 c10 = _mm256_set1_ps(10.0f);
     __m256 c05 = _mm256_set1_ps(0.5f);
-    // Noise scaling: 0.04 (range +/- 0.02)
-    // __m256 c_noise_scale = _mm256_set1_ps(0.04f);
-    // __m256 c_noise_offset = _mm256_set1_ps(0.5f);
 
     // ------------------------------------------------------------------------
-    // Update Virtual Target Position (Complex Trajectory)
+    // Lookup Virtual Target Position from Precomputed Trajectory
     // ------------------------------------------------------------------------
-    // traj_params: (10, num_agents).
-    // Row 0: Ax, Row 1: Fx, ...
-    // To access parameter X for agents i..i+7, we access traj_params[row * num_agents + i]
-    // This is contiguous!
+    // target_trajectory layout: (episode_length+1, num_agents, 3)
+    // Offset for time t: t * num_agents * 3
+    // We need indices for agents i..i+7.
+    // Base ptr for time t:
+    int step_idx = t;
+    if (step_idx > episode_length) step_idx = episode_length; // Clamp
 
-    int offset_i = i;
-    int stride = num_agents;
+    float* traj_base = &target_trajectory[step_idx * num_agents * 3];
 
-    // Ax (0)
-    __m256 ax = _mm256_loadu_ps(&traj_params[0 * stride + offset_i]);
-    // Fx (1)
-    __m256 fx = _mm256_loadu_ps(&traj_params[1 * stride + offset_i]);
-    // Px (2)
-    __m256 px_ph = _mm256_loadu_ps(&traj_params[2 * stride + offset_i]);
+    // Load interleaved data: x0, y0, z0, x1, y1, z1 ...
+    // We need to deinterleave into vtx, vty, vtz registers.
+    // Since we are loading 8 agents = 24 floats.
+    // 3 AVX loads.
+    __m256 m0 = _mm256_loadu_ps(&traj_base[i*3 + 0]);  // x0 y0 z0 x1 y1 z1 x2 y2
+    __m256 m1 = _mm256_loadu_ps(&traj_base[i*3 + 8]);  // z2 x3 y3 z3 x4 y4 z4 x5
+    __m256 m2 = _mm256_loadu_ps(&traj_base[i*3 + 16]); // y5 z5 x6 y6 z6 x7 y7 z7
 
-    // Ay (3)
-    __m256 ay = _mm256_loadu_ps(&traj_params[3 * stride + offset_i]);
-    // Fy (4)
-    __m256 fy = _mm256_loadu_ps(&traj_params[4 * stride + offset_i]);
-    // Py (5)
-    __m256 py_ph = _mm256_loadu_ps(&traj_params[5 * stride + offset_i]);
+    // Shuffle to extract planes. This is tedious in AVX.
+    // Alternative: Gather.
+    // vtx = gather(0, 3, 6, ...)
+    __m256i idx_x = _mm256_set_epi32(7*3, 6*3, 5*3, 4*3, 3*3, 2*3, 1*3, 0);
+    __m256i idx_y = _mm256_add_epi32(idx_x, _mm256_set1_epi32(1));
+    __m256i idx_z = _mm256_add_epi32(idx_x, _mm256_set1_epi32(2));
 
-    // Az (6)
-    __m256 az = _mm256_loadu_ps(&traj_params[6 * stride + offset_i]);
-    // Fz (7)
-    __m256 fz = _mm256_loadu_ps(&traj_params[7 * stride + offset_i]);
-    // Pz (8)
-    __m256 pz_ph = _mm256_loadu_ps(&traj_params[8 * stride + offset_i]);
-    // Oz (9)
-    __m256 oz = _mm256_loadu_ps(&traj_params[9 * stride + offset_i]);
+    __m256 vtx = _mm256_i32gather_ps(&traj_base[i*3], idx_x, 4);
+    __m256 vty = _mm256_i32gather_ps(&traj_base[i*3], idx_y, 4);
+    __m256 vtz = _mm256_i32gather_ps(&traj_base[i*3], idx_z, 4);
 
-    float t_f = (float)t;
-    __m256 t_v = _mm256_set1_ps(t_f);
+    // Calculate Target Velocity (Finite Difference or Analytic?)
+    // If we want 10x, finite difference from precomputed trajectory is fastest (already in cache maybe?)
+    // But we need t+1.
+    // Let's use scalar finite diff since we don't have vtvx buffer.
+    // Or simpler: Assume vtvx = (vt[t+1] - vt[t]) / DT?
+    // Yes.
+    int next_step = step_idx + 1;
+    if (next_step > episode_length) next_step = episode_length;
+    float* traj_next = &target_trajectory[next_step * num_agents * 3];
 
-    // x = Ax * sin(Fx * t + Px)
-    __m256 arg_x = _mm256_add_ps(_mm256_mul_ps(fx, t_v), px_ph);
-    __m256 sx, cx; sincos256_ps(arg_x, &sx, &cx);
-    __m256 vtx = _mm256_mul_ps(ax, sx);
-    __m256 vtvx = _mm256_mul_ps(ax, _mm256_mul_ps(fx, cx));
+    __m256 vtx_n = _mm256_i32gather_ps(&traj_next[i*3], idx_x, 4);
+    __m256 vty_n = _mm256_i32gather_ps(&traj_next[i*3], idx_y, 4);
+    __m256 vtz_n = _mm256_i32gather_ps(&traj_next[i*3], idx_z, 4);
 
-    // y = Ay * sin(Fy * t + Py)
-    __m256 arg_y = _mm256_add_ps(_mm256_mul_ps(fy, t_v), py_ph);
-    __m256 sy_t, cy_t; sincos256_ps(arg_y, &sy_t, &cy_t);
-    __m256 vty = _mm256_mul_ps(ay, sy_t);
-    __m256 vtvy = _mm256_mul_ps(ay, _mm256_mul_ps(fy, cy_t));
+    __m256 inv_dt = _mm256_set1_ps(1.0f / DT);
+    // Since environment step is DT, and t increments by 1.
+    // Actually, step() calls `t = step_counts[0]`.
+    // So pos[t] and pos[t+1] are separated by DT.
 
-    // z = Oz + Az * sin(Fz * t + Pz)
-    __m256 arg_z = _mm256_add_ps(_mm256_mul_ps(fz, t_v), pz_ph);
-    __m256 sz, cz; sincos256_ps(arg_z, &sz, &cz);
-    __m256 vtz = _mm256_add_ps(oz, _mm256_mul_ps(az, sz));
-    __m256 vtvz = _mm256_mul_ps(az, _mm256_mul_ps(fz, cz));
+    __m256 vtvx = _mm256_mul_ps(_mm256_sub_ps(vtx_n, vtx), inv_dt);
+    __m256 vtvy = _mm256_mul_ps(_mm256_sub_ps(vty_n, vty), inv_dt);
+    __m256 vtvz = _mm256_mul_ps(_mm256_sub_ps(vtz_n, vtz), inv_dt);
 
     _mm256_storeu_ps(&vt_x[i], vtx);
     _mm256_storeu_ps(&vt_y[i], vty);
     _mm256_storeu_ps(&vt_z[i], vtz);
 
     // Shift Observations
-    // New Size 608. Shift 6..600 to 0..594
-    // 6 floats = 2 samples * 3 floats
-    for (int k = 0; k < 8; k++) {
-        int agent_idx = i + k;
-        memmove(&observations[agent_idx * 608], &observations[agent_idx * 608 + 6], 594 * sizeof(float));
-    }
+    shift_observations_avx(observations, i);
 
     // Substeps
     for (int s = 0; s < SUBSTEPS; s++) {
@@ -153,14 +161,13 @@ inline void step_agents_avx2(
         __m256 max_thrust = _mm256_mul_ps(c20, t_coeff);
         __m256 thrust_force = _mm256_mul_ps(thrust_cmd, max_thrust);
 
-        __m256 sr, cr, sp, cp, sy, cy;
-        sincos256_ps(r, &sr, &cr);
-        sincos256_ps(p, &sp, &cp);
-        sincos256_ps(y, &sy, &cy);
-
-        // Optimization: Use rcp for division where possible.
-        // Force calculation needs reasonable precision, but maybe rcp is fine.
-        // Keep div for now for stability.
+        // Dynamics Sincos (LUT)
+        __m256 sr = lut_sin256_ps(r);
+        __m256 cr = lut_cos256_ps(r);
+        __m256 sp = lut_sin256_ps(p);
+        __m256 cp = lut_cos256_ps(p);
+        __m256 sy = lut_sin256_ps(y);
+        __m256 cy = lut_cos256_ps(y);
 
         __m256 term1_x = _mm256_mul_ps(_mm256_mul_ps(cy, sp), cr);
         __m256 term2_x = _mm256_mul_ps(sy, sr);
@@ -189,11 +196,9 @@ inline void step_agents_avx2(
         py = _mm256_add_ps(py, _mm256_mul_ps(vy, dt_v));
         pz = _mm256_add_ps(pz, _mm256_mul_ps(vz, dt_v));
 
-        // Use LUT for Terrain
-        // terr_z = 5.0 * sin(0.1 * px) * cos(0.1 * py)
+        // Terrain Sincos (LUT)
         __m256 sin_px = lut_sin256_ps(_mm256_mul_ps(c01, px));
         __m256 cos_py = lut_cos256_ps(_mm256_mul_ps(c01, py));
-
         __m256 terr_z = _mm256_mul_ps(c5, _mm256_mul_ps(sin_px, cos_py));
 
         __m256 mask_under = _mm256_cmp_ps(pz, terr_z, _CMP_LT_OQ);
@@ -202,12 +207,9 @@ inline void step_agents_avx2(
         vy = _mm256_blendv_ps(vy, c0, mask_under);
         vz = _mm256_blendv_ps(vz, c0, mask_under);
 
-        // Capture Samples at s=4 and s=9
-        if (s == 4 || s == 9) {
-            int buffer_slot = (s == 4) ? 0 : 1;
-
-            // Noise (scalar loop approx or implement AVX rand)
-            // Scalar for simplicity (performance hit is minor compared to logic)
+        if (s == 0 || s == 1) {
+            int buffer_slot = (s == 0) ? 0 : 1;
+            // Noise
             float nr[8], np[8], ny[8];
             for (int k=0; k<8; k++) {
                 nr[k] = (((float)rand() / (float)RAND_MAX) - 0.5f) * 0.04f;
@@ -255,22 +257,7 @@ inline void step_agents_avx2(
     __m256 mask_coll = _mm256_cmp_ps(pz, terr_z_final, _CMP_LT_OQ);
 
     if (t <= episode_length) {
-        // Optimized History Write: pos_history[t, i, 0..2]
-        // This is a contiguous block for all agents at time t.
-        // Wait, pos_history layout: (episode_length, num_agents, 3).
-        // Memory offset: (t-1) * num_agents * 3 + i * 3
-        // So for agents i..i+7, the writes are:
-        // [i*3, i*3+1, i*3+2], [(i+1)*3...], ...
-        // This is contiguous block of 8*3 = 24 floats.
-
         int base_idx = (t-1) * num_agents * 3 + i * 3;
-
-        // We have px, py, pz registers.
-        // We need to interleave them: x0, y0, z0, x1, y1, z1...
-        // AVX doesn't have easy interleave for 3 streams.
-        // So we just store to temp and memcpy or scalar assign.
-        // Scalar assign is fine because it's writing to L1 cache (contiguous block).
-
         float tmp_px[8], tmp_py[8], tmp_pz[8];
         _mm256_storeu_ps(tmp_px, px);
         _mm256_storeu_ps(tmp_py, py);
@@ -284,17 +271,19 @@ inline void step_agents_avx2(
     }
 
     // ------------------------------------------------------------------------
-    // Calculate Augmented Features (Tracker Simulation)
+    // Calculate Augmented Features
     // ------------------------------------------------------------------------
     __m256 dx_w = _mm256_sub_ps(vtx, px);
     __m256 dy_w = _mm256_sub_ps(vty, py);
     __m256 dz_w = _mm256_sub_ps(vtz, pz);
 
-    // Recompute R matrix elements (r,p,y are updated)
-    __m256 sr, cr, sp, cp, sy, cy;
-    sincos256_ps(r, &sr, &cr);
-    sincos256_ps(p, &sp, &cp);
-    sincos256_ps(y, &sy, &cy);
+    // Rotation Matrix (LUT)
+    __m256 sr = lut_sin256_ps(r);
+    __m256 cr = lut_cos256_ps(r);
+    __m256 sp = lut_sin256_ps(p);
+    __m256 cp = lut_cos256_ps(p);
+    __m256 sy = lut_sin256_ps(y);
+    __m256 cy = lut_cos256_ps(y);
 
     __m256 r11 = _mm256_mul_ps(cy, cp);
     __m256 r12 = _mm256_mul_ps(sy, cp);
@@ -306,12 +295,10 @@ inline void step_agents_avx2(
     __m256 r32 = _mm256_sub_ps(_mm256_mul_ps(_mm256_mul_ps(sy, sp), cr), _mm256_mul_ps(cy, sr));
     __m256 r33 = _mm256_mul_ps(cp, cr);
 
-    // Transform to Body Frame: P_b = R^T * P_w
     __m256 xb = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r11, dx_w), _mm256_mul_ps(r12, dy_w)), _mm256_mul_ps(r13, dz_w));
     __m256 yb = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r21, dx_w), _mm256_mul_ps(r22, dy_w)), _mm256_mul_ps(r23, dz_w));
     __m256 zb = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r31, dx_w), _mm256_mul_ps(r32, dy_w)), _mm256_mul_ps(r33, dz_w));
 
-    // Transform to Camera Frame (Pitch Up 30 deg)
     __m256 s30 = c05;
     __m256 c30 = _mm256_set1_ps(0.866025f);
 
@@ -319,15 +306,10 @@ inline void step_agents_avx2(
     __m256 yc = _mm256_add_ps(_mm256_mul_ps(s30, xb), _mm256_mul_ps(c30, zb));
     __m256 zc = _mm256_sub_ps(_mm256_mul_ps(c30, xb), _mm256_mul_ps(s30, zb));
 
-    // Project (u = xc/zc, v = yc/zc)
-    __m256 zc_safe = _mm256_max_ps(zc, c01); // min distance 0.1
-    // Use rcp for division? u/v calculation is not super critical for physics stability, but important for agent.
-    // _mm256_rcp_ps has 12-bit precision. Newton-Raphson doubles it.
-    // Let's stick to div for now for accuracy of observations.
+    __m256 zc_safe = _mm256_max_ps(zc, c01);
     __m256 u = _mm256_div_ps(xc, zc_safe);
     __m256 v = _mm256_div_ps(yc, zc_safe);
 
-    // Clamp u and v to [-10, 10]
     __m256 c10_neg = _mm256_set1_ps(-10.0f);
     u = _mm256_max_ps(c10_neg, _mm256_min_ps(u, c10));
     v = _mm256_max_ps(c10_neg, _mm256_min_ps(v, c10));
@@ -342,39 +324,30 @@ inline void step_agents_avx2(
         )
     );
     __m256 conf = exp256_ps(_mm256_mul_ps(_mm256_set1_ps(-0.1f), w2));
-
     __m256 mask_behind = _mm256_cmp_ps(zc, c0, _CMP_LT_OQ);
     conf = _mm256_blendv_ps(conf, c0, mask_behind);
 
-    // Store Obs
     float tmp_u[8], tmp_v[8], tmp_size[8], tmp_conf[8];
     _mm256_storeu_ps(tmp_u, u);
     _mm256_storeu_ps(tmp_v, v);
     _mm256_storeu_ps(tmp_size, rel_size);
     _mm256_storeu_ps(tmp_conf, conf);
 
-    // Calculate Relative Velocity (World)
     __m256 rvx = _mm256_sub_ps(vtvx, vx);
     __m256 rvy = _mm256_sub_ps(vtvy, vy);
     __m256 rvz = _mm256_sub_ps(vtvz, vz);
 
-    // Body Frame Relative Velocity
     __m256 rvx_b = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r11, rvx), _mm256_mul_ps(r12, rvy)), _mm256_mul_ps(r13, rvz));
     __m256 rvy_b = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r21, rvx), _mm256_mul_ps(r22, rvy)), _mm256_mul_ps(r23, rvz));
     __m256 rvz_b = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r31, rvx), _mm256_mul_ps(r32, rvy)), _mm256_mul_ps(r33, rvz));
 
-    // Distance
     __m256 rx = _mm256_sub_ps(vtx, px);
     __m256 ry = _mm256_sub_ps(vty, py);
     __m256 rz = _mm256_sub_ps(vtz, pz);
     __m256 dist_sq = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(rx, rx), _mm256_mul_ps(ry, ry)), _mm256_mul_ps(rz, rz));
-
-    // Optim: rsqrt for distance if precision allows, but we need distance itself not just 1/d.
-    // sqrt is fine.
     __m256 dist = _mm256_sqrt_ps(dist_sq);
     __m256 dist_safe = _mm256_max_ps(dist, c01);
 
-    // Store State: Replace TargetCmds (600-603) with RelVel (600-602) and Distance (603)
     float tmp_rvx[8], tmp_rvy[8], tmp_rvz[8], tmp_dist[8];
     _mm256_storeu_ps(tmp_rvx, rvx_b);
     _mm256_storeu_ps(tmp_rvy, rvy_b);
@@ -388,105 +361,63 @@ inline void step_agents_avx2(
         observations[off+1] = tmp_rvy[k];
         observations[off+2] = tmp_rvz[k];
         observations[off+3] = tmp_dist[k];
-
-        // 604-607 are tracker features
         observations[off+4] = tmp_u[k];
         observations[off+5] = tmp_v[k];
         observations[off+6] = tmp_size[k];
         observations[off+7] = tmp_conf[k];
     }
 
-    // ------------------------------------------------------------------------
-    // Homing Reward Logic (Master Equation)
-    // ------------------------------------------------------------------------
-
-    // 1. Guidance (PN)
-    // |Omega|^2 = (v_rel^2 / d^2) - ((r . v_rel)^2 / d^4)
+    // Rewards
     __m256 rvel_sq = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(rvx, rvx), _mm256_mul_ps(rvy, rvy)), _mm256_mul_ps(rvz, rvz));
     __m256 r_dot_v = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(rx, rvx), _mm256_mul_ps(ry, rvy)), _mm256_mul_ps(rz, rvz));
-
-    // Fix: Safe division for PN calculation
     __m256 dist_sq_safe = _mm256_max_ps(dist_sq, _mm256_set1_ps(0.01f));
-
     __m256 term1 = _mm256_div_ps(rvel_sq, dist_sq_safe);
     __m256 term2_num = _mm256_mul_ps(r_dot_v, r_dot_v);
     __m256 term2_den = _mm256_mul_ps(dist_sq_safe, dist_sq_safe);
     __m256 term2 = _mm256_div_ps(term2_num, term2_den);
-
     __m256 omega_sq = _mm256_sub_ps(term1, term2);
-    omega_sq = _mm256_max_ps(omega_sq, c0); // Clip
+    omega_sq = _mm256_max_ps(omega_sq, c0);
+    __m256 rew_pn = _mm256_mul_ps(_mm256_set1_ps(-2.0f), omega_sq);
 
-    __m256 rew_pn = _mm256_mul_ps(_mm256_set1_ps(-2.0f), omega_sq); // k1=2.0 (was 1.0)
-
-    // 2. Closing Speed
-    // V_drone . r_hat.
-    // r_hat = r / d.
     __m256 vd_dot_r = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(vx, rx), _mm256_mul_ps(vy, ry)), _mm256_mul_ps(vz, rz));
-    // Use rcp here? rew = 0.5 * (vd_dot_r * rcp(d)).
-    // Yes, this is just a reward, approximations are fine.
     __m256 rcp_dist = _mm256_rcp_ps(dist_safe);
-    // Refine rcp: r = r * (2 - x*r)
     rcp_dist = _mm256_mul_ps(rcp_dist, _mm256_sub_ps(_mm256_set1_ps(2.0f), _mm256_mul_ps(dist_safe, rcp_dist)));
-
     __m256 closing = _mm256_mul_ps(vd_dot_r, rcp_dist);
-    __m256 rew_closing = _mm256_mul_ps(_mm256_set1_ps(0.5f), closing); // k2=0.5 (Keep)
+    __m256 rew_closing = _mm256_mul_ps(_mm256_set1_ps(0.5f), closing);
 
-    // 3. Vision (Gaze)
     __m256 vx_b = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r11, vx), _mm256_mul_ps(r12, vy)), _mm256_mul_ps(r13, vz));
-    __m256 v_ideal = _mm256_mul_ps(_mm256_set1_ps(0.1f), vx_b); // Tuning direction
+    __m256 v_ideal = _mm256_mul_ps(_mm256_set1_ps(0.1f), vx_b);
     __m256 v_err = _mm256_sub_ps(v, v_ideal);
     __m256 gaze_err = _mm256_add_ps(_mm256_mul_ps(u, u), _mm256_mul_ps(v_err, v_err));
-    __m256 rew_gaze = _mm256_mul_ps(_mm256_set1_ps(-0.01f), gaze_err); // k3=0.01 (was 1.0)
+    __m256 rew_gaze = _mm256_mul_ps(_mm256_set1_ps(-0.01f), gaze_err);
 
-    // Funnel Scaling: 1 / (d + 1.0)
-    // Use rcp
     __m256 d_plus_1 = _mm256_add_ps(dist, c1);
     __m256 funnel = _mm256_rcp_ps(d_plus_1);
     funnel = _mm256_mul_ps(funnel, _mm256_sub_ps(_mm256_set1_ps(2.0f), _mm256_mul_ps(d_plus_1, funnel)));
-
-    // Total Guidance + Gaze
     __m256 rew_guidance = _mm256_mul_ps(_mm256_add_ps(_mm256_add_ps(rew_pn, rew_gaze), rew_closing), funnel);
 
-    // 4. Stability
-    // Rate damping
-    __m256 rew_rate = _mm256_mul_ps(_mm256_set1_ps(-1.0f), w2); // k4=1.0 (was 0.1)
-    // Upright: (1 - r33)^2. r33 = cp*cr
+    __m256 rew_rate = _mm256_mul_ps(_mm256_set1_ps(-1.0f), w2);
     __m256 upright_err = _mm256_sub_ps(c1, r33);
-    __m256 rew_upright = _mm256_mul_ps(_mm256_set1_ps(-5.0f), _mm256_mul_ps(upright_err, upright_err)); // k5=5.0 (was 1.0)
+    __m256 rew_upright = _mm256_mul_ps(_mm256_set1_ps(-5.0f), _mm256_mul_ps(upright_err, upright_err));
 
-    // Thrust Penalty: penalty if thrust < 0.4.
-    // rew_thrust = -10.0 * max(0, 0.4 - thrust).
     __m256 diff_thrust = _mm256_sub_ps(_mm256_set1_ps(0.4f), thrust_cmd);
     diff_thrust = _mm256_max_ps(diff_thrust, c0);
     __m256 rew_eff = _mm256_mul_ps(_mm256_set1_ps(-10.0f), diff_thrust);
 
     __m256 rew = _mm256_add_ps(rew_guidance, _mm256_add_ps(rew_rate, _mm256_add_ps(rew_upright, rew_eff)));
 
-    // Terminations
-    // Success: dist < 0.2
     __m256 bonus_val = _mm256_set1_ps(10.0f);
     __m256 mask_success = _mm256_cmp_ps(dist, _mm256_set1_ps(0.2f), _CMP_LT_OQ);
     __m256 bonus = _mm256_and_ps(mask_success, bonus_val);
     rew = _mm256_add_ps(rew, bonus);
 
-    // Fail: Tilt > 60 deg (r33 < 0.5)
     __m256 mask_tilt = _mm256_cmp_ps(r33, c05, _CMP_LT_OQ);
-
-    // Penalties
     __m256 penalty = c0;
     penalty = _mm256_add_ps(penalty, _mm256_and_ps(mask_tilt, _mm256_set1_ps(10.0f)));
     penalty = _mm256_add_ps(penalty, _mm256_and_ps(mask_coll, _mm256_set1_ps(10.0f)));
-
     rew = _mm256_sub_ps(rew, penalty);
 
     _mm256_storeu_ps(&rewards[i], rew);
-
-    // Store Components
-    // 0:pn, 1:closing, 2:gaze, 3:rate, 4:upright, 5:eff, 6:penalty, 7:bonus
-    // We need to transpose 8x8 matrix to store effectively.
-    // Or just store scalar for simplicity since it's debug info (will not be bottleneck?)
-    // Actually, storing 8 floats for 8 agents is 64 stores.
-    // Let's do scalar store for components to avoid complexity of register transpose.
 
     float t_pn[8], t_cl[8], t_gz[8], t_rt[8], t_up[8], t_ef[8], t_pe[8], t_bo[8];
     _mm256_storeu_ps(t_pn, rew_pn);
@@ -495,7 +426,7 @@ inline void step_agents_avx2(
     _mm256_storeu_ps(t_rt, rew_rate);
     _mm256_storeu_ps(t_up, rew_upright);
     _mm256_storeu_ps(t_ef, rew_eff);
-    _mm256_storeu_ps(t_pe, penalty); // Store positive penalty
+    _mm256_storeu_ps(t_pe, penalty);
     _mm256_storeu_ps(t_bo, bonus);
 
     for(int k=0; k<8; k++) {
@@ -507,18 +438,14 @@ inline void step_agents_avx2(
         reward_components[off+3] = t_rt[k];
         reward_components[off+4] = t_up[k];
         reward_components[off+5] = t_ef[k];
-        reward_components[off+6] = -t_pe[k]; // Store as negative impact
+        reward_components[off+6] = -t_pe[k];
         reward_components[off+7] = t_bo[k];
     }
 
     __m256 mask_done = _mm256_or_ps(mask_success, _mm256_or_ps(mask_tilt, mask_coll));
-
-    // Handle episode length done
     __m256 mask_timeout = c0;
     if (t >= episode_length) mask_timeout = c1;
     mask_done = _mm256_or_ps(mask_done, mask_timeout);
-
-    // Convert mask to 1.0f or 0.0f
     __m256 done_val = _mm256_and_ps(mask_done, c1);
     _mm256_storeu_ps(&done_flags[i], done_val);
 }
