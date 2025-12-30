@@ -10,7 +10,7 @@ except ImportError:
 def benchmark():
     num_agents = 5000
     episode_length = 100
-    env_ids = np.array([0], dtype=np.int32)
+    env_ids = np.zeros(num_agents, dtype=np.int32)
 
     # Initialize data
     pos_x = np.zeros(num_agents, dtype=np.float32)
@@ -43,6 +43,7 @@ def benchmark():
 
     observations = np.zeros((num_agents, 608), dtype=np.float32)
     rewards = np.zeros(num_agents, dtype=np.float32)
+    reward_components = np.zeros((num_agents, 8), dtype=np.float32)
     done_flags = np.zeros(num_agents, dtype=np.float32)
     step_counts = np.zeros(1, dtype=np.int32)
     actions = np.zeros(num_agents * 4, dtype=np.float32)
@@ -56,7 +57,7 @@ def benchmark():
         pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, roll, pitch, yaw,
         masses, drag_coeffs, thrust_coeffs, target_vx, target_vy, target_vz, target_yaw_rate,
         vt_x, vt_y, vt_z, traj_params,
-        pos_history, observations, rewards, done_flags, step_counts, actions,
+        pos_history, observations, rewards, reward_components, done_flags, step_counts, actions,
         num_agents, episode_length, env_ids
     )
 
@@ -65,7 +66,7 @@ def benchmark():
             pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, roll, pitch, yaw,
             masses, drag_coeffs, thrust_coeffs, target_vx, target_vy, target_vz, target_yaw_rate,
             vt_x, vt_y, vt_z, traj_params,
-            pos_history, observations, rewards, done_flags, step_counts, actions,
+            pos_history, observations, rewards, reward_components, done_flags, step_counts, actions,
             num_agents, episode_length, env_ids
         )
 
@@ -76,7 +77,7 @@ def benchmark():
             pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, roll, pitch, yaw,
             masses, drag_coeffs, thrust_coeffs, target_vx, target_vy, target_vz, target_yaw_rate,
             vt_x, vt_y, vt_z, traj_params,
-            pos_history, observations, rewards, done_flags, step_counts, actions,
+            pos_history, observations, rewards, reward_components, done_flags, step_counts, actions,
             num_agents, episode_length, env_ids
         )
     cpu_time = time.time() - start
@@ -89,7 +90,7 @@ def benchmark():
                 pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, roll, pitch, yaw,
                 masses, drag_coeffs, thrust_coeffs, target_vx, target_vy, target_vz, target_yaw_rate,
                 vt_x, vt_y, vt_z, traj_params,
-                pos_history, observations, rewards, done_flags, step_counts, actions,
+                pos_history, observations, rewards, reward_components, done_flags, step_counts, actions,
                 num_agents, episode_length, env_ids
             )
         cython_time = time.time() - start
