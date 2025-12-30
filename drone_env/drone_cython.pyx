@@ -278,14 +278,9 @@ cdef void _step_agent_scalar(
 
     cdef float w2 = roll_rate_cmd*roll_rate_cmd + pitch_rate_cmd*pitch_rate_cmd + yaw_rate_cmd*yaw_rate_cmd
     conf = exp(-0.1 * w2)
-
-    # Check if behind (zc < 0)
-    # We clamped zc above, so we need to check the original expression or a flag
-    # zc = c30 * xb - s30 * zb
-    cdef int is_behind = 0
-    if (c30 * xb - s30 * zb) < 0:
-        is_behind = 1
-        conf = 0.0
+    if zc <= 0.1: # Actually checked < 0.1 above
+        if (c30 * xb - s30 * zb) < 0:
+            conf = 0.0
 
     # Rel Vel and Distance
     cdef float rvx, rvy, rvz
@@ -341,9 +336,6 @@ cdef void _step_agent_scalar(
     cdef float v_err = v - v_ideal
     cdef float gaze_err = u*u + v_err*v_err
     cdef float rew_gaze = -1.0 * gaze_err
-
-    if is_behind == 1:
-        rew_gaze = -10.0
 
     # Funnel
     cdef float funnel = 1.0 / (dist + 1.0)
@@ -564,10 +556,7 @@ cdef void _reset_agent_scalar(
 
     size = 10.0 / (zc*zc + 1.0)
     conf = 1.0
-    # Check unclamped zc (recomputed) or just use the logic
-    # Original zc was: zc = c30 * xb - s30 * zb
-    if (c30 * xb - s30 * zb) < 0:
-        conf = 0.0
+    if (c30 * xb - s30 * zb) < 0: conf = 0.0
 
     observations[i, 604] = u
     observations[i, 605] = v

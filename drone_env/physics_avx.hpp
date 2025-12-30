@@ -426,10 +426,6 @@ inline void step_agents_avx2(
     __m256 gaze_err = _mm256_add_ps(_mm256_mul_ps(u, u), _mm256_mul_ps(v_err, v_err));
     __m256 rew_gaze = _mm256_mul_ps(_mm256_set1_ps(-1.0f), gaze_err); // k3=1.0
 
-    // Apply penalty if behind (zc < 0)
-    // mask_behind was computed above
-    rew_gaze = _mm256_blendv_ps(rew_gaze, _mm256_set1_ps(-10.0f), mask_behind);
-
     // Funnel Scaling: 1 / (d + 1.0)
     __m256 funnel = _mm256_div_ps(c1, _mm256_add_ps(dist, c1));
 
