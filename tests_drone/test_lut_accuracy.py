@@ -55,20 +55,28 @@ class TestLUTAccuracy(unittest.TestCase):
         self.actions = np.zeros(self.num_agents * 4, dtype=np.float32)
         self.env_ids = np.zeros(self.num_agents, dtype=np.int32)
 
-        # Set initial positions to exercise terrain LUT
-        # Terrain is 5 * sin(0.1*x) * cos(0.1*y)
+        # Precomputed Trajectory Buffer
+        self.target_trajectory = np.zeros((self.episode_length + 1, self.num_agents, 3), dtype=np.float32)
+        # Populate it using NumPy logic (Standard Math) to serve as truth for Cython precompute simulation
+        # Note: Cython `reset` populates this. But `step_cython` consumes it.
+        # To test `step_cython` vs `step_cpu`, we must ensure `target_trajectory` matches what `step_cpu` calculates on the fly.
+
+        t_vals = np.arange(self.episode_length + 1, dtype=np.float32)
+        for i in range(self.num_agents):
+            self.target_trajectory[:, i, 0] = self.traj_params[0, i] * np.sin(self.traj_params[1, i] * t_vals + self.traj_params[2, i])
+            self.target_trajectory[:, i, 1] = self.traj_params[3, i] * np.sin(self.traj_params[4, i] * t_vals + self.traj_params[5, i])
+            self.target_trajectory[:, i, 2] = self.traj_params[9, i] + self.traj_params[6, i] * np.sin(self.traj_params[7, i] * t_vals + self.traj_params[8, i])
+
+        # Set initial positions
         self.pos_x[:] = np.linspace(0, 20, self.num_agents, dtype=np.float32)
         self.pos_y[:] = np.linspace(0, 20, self.num_agents, dtype=np.float32)
         self.pos_z[:] = 10.0 # Above terrain
 
-        # Actions: Zero rotation to prevent tumbling and diverging state
-        # Thrust 0.5 (approx hover/climb depending on gravity/mass)
-        # Mass=1.0, G=9.8. MaxThrust=20.0. 0.5*20 = 10.0 > 9.8. Slow climb.
+        # Actions: Hover
         self.actions[:] = 0.0
-        self.actions[0::4] = 0.5 # Set thrust to 0.5 for all agents
+        self.actions[0::4] = 0.5
 
     def test_lut_vs_numpy_accuracy(self):
-        # Deep copy state for numpy and cython to ensure they start identical
         args_cpu = {
             'pos_x': self.pos_x.copy(), 'pos_y': self.pos_y.copy(), 'pos_z': self.pos_z.copy(),
             'vel_x': self.vel_x.copy(), 'vel_y': self.vel_y.copy(), 'vel_z': self.vel_z.copy(),
@@ -99,6 +107,7 @@ class TestLUTAccuracy(unittest.TestCase):
             'target_yaw_rate': self.target_yaw_rate.copy(),
             'vt_x': self.vt_x.copy(), 'vt_y': self.vt_y.copy(), 'vt_z': self.vt_z.copy(),
             'traj_params': self.traj_params.copy(),
+            'target_trajectory': self.target_trajectory.copy(), # New
             'pos_history': self.pos_history.copy(),
             'observations': self.observations.copy(),
             'rewards': self.rewards.copy(),
@@ -116,13 +125,12 @@ class TestLUTAccuracy(unittest.TestCase):
             step_cpu(**args_cpu)
             step_cython(**args_cy)
 
-        # Verify Positions (Terrain interaction check)
+        # Verify Positions
         np.testing.assert_allclose(args_cpu['pos_x'], args_cy['pos_x'], rtol=1e-2, atol=1e-2, err_msg="PosX mismatch")
         np.testing.assert_allclose(args_cpu['pos_y'], args_cy['pos_y'], rtol=1e-2, atol=1e-2, err_msg="PosY mismatch")
         np.testing.assert_allclose(args_cpu['pos_z'], args_cy['pos_z'], rtol=1e-2, atol=1e-2, err_msg="PosZ mismatch")
 
-        # Verify Rewards (Check rcp approximation accuracy)
-        # Note: We use slightly loose tolerance due to rcp approximations in AVX
+        # Verify Rewards
         np.testing.assert_allclose(args_cpu['rewards'], args_cy['rewards'], rtol=1e-1, atol=1e-1, err_msg="Reward mismatch")
 
 if __name__ == '__main__':

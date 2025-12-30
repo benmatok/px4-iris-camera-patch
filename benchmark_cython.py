@@ -33,6 +33,9 @@ def benchmark():
     # New Trajectory Params Shape: (10, num_agents)
     traj_params = np.zeros((10, num_agents), dtype=np.float32)
 
+    # Precomputed Trajectory
+    target_trajectory = np.zeros((episode_length + 1, num_agents, 3), dtype=np.float32)
+
     # Virtual Targets
     vt_x = np.zeros(num_agents, dtype=np.float32)
     vt_y = np.zeros(num_agents, dtype=np.float32)
@@ -65,7 +68,7 @@ def benchmark():
         step_cython(
             pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, roll, pitch, yaw,
             masses, drag_coeffs, thrust_coeffs, target_vx, target_vy, target_vz, target_yaw_rate,
-            vt_x, vt_y, vt_z, traj_params,
+            vt_x, vt_y, vt_z, traj_params, target_trajectory,
             pos_history, observations, rewards, reward_components, done_flags, step_counts, actions,
             num_agents, episode_length, env_ids
         )
@@ -89,7 +92,7 @@ def benchmark():
             step_cython(
                 pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, roll, pitch, yaw,
                 masses, drag_coeffs, thrust_coeffs, target_vx, target_vy, target_vz, target_yaw_rate,
-                vt_x, vt_y, vt_z, traj_params,
+                vt_x, vt_y, vt_z, traj_params, target_trajectory,
                 pos_history, observations, rewards, reward_components, done_flags, step_counts, actions,
                 num_agents, episode_length, env_ids
             )

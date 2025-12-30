@@ -75,9 +75,9 @@ def step_cpu(
     pitch_rate = actions_reshaped[:, 2]
     yaw_rate = actions_reshaped[:, 3]
 
-    dt = 0.01
+    dt = 0.05 # Increased step size
     g = 9.81
-    substeps = 10
+    substeps = 2 # Reduced substeps
 
     # Local copies of state (NumPy arrays)
     px, py, pz = pos_x, pos_y, pos_z
@@ -103,7 +103,7 @@ def step_cpu(
     vt_z[:] = vtz_val
 
     # History Update
-    # We capture samples at substep 4 (0.05s) and 9 (0.10s)
+    # We capture samples at substep 0 and 1
     # 2 samples * 3 channels = 6 floats
     captured_samples = np.zeros((num_agents, 2, 3), dtype=np.float32)
 
@@ -153,8 +153,8 @@ def step_cpu(
         vz = np.where(underground, 0.0, vz)
 
         # Capture History Samples
-        if s == 4 or s == 9:
-            idx = 0 if s == 4 else 1
+        if s == 0 or s == 1:
+            idx = 0 if s == 0 else 1
             # Add noise (Uniform +/- 0.02 rad ~ 1 deg)
             noise = (np.random.rand(num_agents, 3) - 0.5) * 0.04
             captured_samples[:, idx, 0] = r + noise[:, 0]
@@ -404,6 +404,11 @@ def reset_cpu(
     mask = (rnd_cmd >= 0.7) & (rnd_cmd < 0.8); tvz[mask] = -1.0
     mask = (rnd_cmd >= 0.8) & (rnd_cmd < 0.9); tyr[mask] = 1.0
     mask = (rnd_cmd >= 0.9); tyr[mask] = -1.0
+
+    target_vx[:] = tvx
+    target_vy[:] = tvy
+    target_vz[:] = tvz
+    target_yaw_rate[:] = tyr
 
     # Reset Observations (Size 608)
     observations[:, :600] = 0.0
