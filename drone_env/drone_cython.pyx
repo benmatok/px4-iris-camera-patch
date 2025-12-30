@@ -344,8 +344,15 @@ cdef void _step_agent_scalar(
     cdef float rew_guidance = (rew_pn + rew_gaze + rew_closing) * funnel
 
     # Scaling Guidance by Stability (r33)
-    cdef float alpha = 2.0 * r33 - 1.0
-    if alpha < 0.0: alpha = 0.0
+    cdef float alpha_upright = 2.0 * r33 - 1.0
+    if alpha_upright < 0.0: alpha_upright = 0.0
+
+    # Scaling Guidance by Thrust
+    cdef float alpha_thrust = thrust_cmd * 5.0
+    if alpha_thrust < 0.0: alpha_thrust = 0.0
+    if alpha_thrust > 1.0: alpha_thrust = 1.0
+
+    cdef float alpha = alpha_upright * alpha_thrust
     rew_guidance = rew_guidance * alpha
 
     # 4. Stability

@@ -432,10 +432,19 @@ inline void step_agents_avx2(
     __m256 rew_guidance = _mm256_mul_ps(_mm256_add_ps(_mm256_add_ps(rew_pn, rew_gaze), rew_closing), funnel);
 
     // Scaling Guidance by Stability (r33)
-    // alpha = max(0, 2 * r33 - 1). Matches r33=0.5 (60 deg) -> alpha=0.
+    // alpha_upright = max(0, 2 * r33 - 1). Matches r33=0.5 (60 deg) -> alpha=0.
     __m256 r33_x2 = _mm256_add_ps(r33, r33);
-    __m256 alpha = _mm256_sub_ps(r33_x2, c1);
-    alpha = _mm256_max_ps(alpha, c0);
+    __m256 alpha_upright = _mm256_sub_ps(r33_x2, c1);
+    alpha_upright = _mm256_max_ps(alpha_upright, c0);
+
+    // Scaling Guidance by Thrust (thrust_cmd)
+    // Must have enough thrust to not be free falling.
+    // alpha_thrust = clamp(thrust_cmd * 5, 0, 1). Ramp 0->0.2.
+    __m256 alpha_thrust = _mm256_mul_ps(thrust_cmd, c5);
+    alpha_thrust = _mm256_max_ps(alpha_thrust, c0);
+    alpha_thrust = _mm256_min_ps(alpha_thrust, c1);
+
+    __m256 alpha = _mm256_mul_ps(alpha_upright, alpha_thrust);
 
     rew_guidance = _mm256_mul_ps(rew_guidance, alpha);
 
