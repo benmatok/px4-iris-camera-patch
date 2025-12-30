@@ -8,7 +8,7 @@
 
 import numpy as np
 cimport numpy as np
-from libc.math cimport sin, cos, exp, fabs, sqrt, M_PI, atan2
+from libc.math cimport sin, cos, exp, fabs, sqrt, M_PI
 # sincosf is not in standard libc.math pxd, need extern
 cdef extern from "math.h" nogil:
     void sincosf(float x, float *sin, float *cos)
@@ -268,11 +268,11 @@ cdef void _step_agent_scalar(
     u = xc / zc
     v = yc / zc
 
-    # Clamp u and v to [-1.733, 1.733] (120 deg FOV)
-    if u > 1.733: u = 1.733
-    if u < -1.733: u = -1.733
-    if v > 1.733: v = 1.733
-    if v < -1.733: v = -1.733
+    # Clamp u and v to [-10, 10]
+    if u > 10.0: u = 10.0
+    if u < -10.0: u = -10.0
+    if v > 10.0: v = 10.0
+    if v < -10.0: v = -10.0
 
     size = 10.0 / (zc*zc + 1.0)
 
@@ -466,6 +466,8 @@ cdef void _reset_agent_scalar(
     vel_y[i] = 0.0
     vel_z[i] = 0.0
     roll[i] = 0.0
+    pitch[i] = 0.0
+    yaw[i] = 0.0
 
     # Calculate Initial Target State (t=0)
     cdef float t_f = 0.0
@@ -495,49 +497,27 @@ cdef void _reset_agent_scalar(
     cdef float vtz_val = oz_p + az_p * sz
     cdef float vtvz_val = az_p * fz_p * cz
 
-    # Calculate Orientation
-    cdef float dx = vtx_val - pos_x[i]
-    cdef float dy = vty_val - pos_y[i]
-    cdef float dz = vtz_val - pos_z[i]
-    cdef float d_xy = sqrt(dx*dx + dy*dy)
-
-    yaw[i] = atan2(dy, dx)
-    # Pitch: align with target in Z (accounting for camera tilt of 30 deg ~ pi/6)
-    pitch[i] = atan2(-dz, d_xy) - (M_PI / 6.0)
-
     # Populate Obs
     cdef float rvx = vtvx_val - vel_x[i]
     cdef float rvy = vtvy_val - vel_y[i]
     cdef float rvz = vtvz_val - vel_z[i]
 
-    # Calculate Rotation Matrix
-    cdef float sr, cr, sp, cp, sy, cy
-    sincosf(roll[i], &sr, &cr)
-    sincosf(pitch[i], &sp, &cp)
-    sincosf(yaw[i], &sy, &cy)
+    # Body Frame Rel Vel (R=Identity at t=0)
+    observations[i, 600] = rvx
+    observations[i, 601] = rvy
+    observations[i, 602] = rvz
 
-    cdef float r11 = cy * cp
-    cdef float r12 = sy * cp
-    cdef float r13 = -sp
-    cdef float r21 = cy * sp * sr - sy * cr
-    cdef float r22 = sy * sp * sr + cy * cr
-    cdef float r23 = cp * sr
-    cdef float r31 = cy * sp * cr + sy * sr
-    cdef float r32 = sy * sp * cr - cy * sr
-    cdef float r33 = cp * cr
-
-    # Body Frame Rel Vel
-    observations[i, 600] = r11 * rvx + r12 * rvy + r13 * rvz
-    observations[i, 601] = r21 * rvx + r22 * rvy + r23 * rvz
-    observations[i, 602] = r31 * rvx + r32 * rvy + r33 * rvz
-
+    cdef float dx = vtx_val - pos_x[i]
+    cdef float dy = vty_val - pos_y[i]
+    cdef float dz = vtz_val - pos_z[i]
     cdef float dist = sqrt(dx*dx + dy*dy + dz*dz)
     observations[i, 603] = dist
 
     # Initial Tracker Features
-    cdef float xb = r11 * dx + r12 * dy + r13 * dz
-    cdef float yb = r21 * dx + r22 * dy + r23 * dz
-    cdef float zb = r31 * dx + r32 * dy + r33 * dz
+    # R=I
+    cdef float xb = dx
+    cdef float yb = dy
+    cdef float zb = dz
     cdef float s30 = 0.5
     cdef float c30 = 0.866025
     cdef float xc = yb
@@ -548,11 +528,11 @@ cdef void _reset_agent_scalar(
     u = xc / zc
     v = yc / zc
 
-    # Clamp u and v to [-1.733, 1.733] (120 deg FOV)
-    if u > 1.733: u = 1.733
-    if u < -1.733: u = -1.733
-    if v > 1.733: v = 1.733
-    if v < -1.733: v = -1.733
+    # Clamp u and v to [-10, 10]
+    if u > 10.0: u = 10.0
+    if u < -10.0: u = -10.0
+    if v > 10.0: v = 10.0
+    if v < -10.0: v = -10.0
 
     size = 10.0 / (zc*zc + 1.0)
     conf = 1.0
