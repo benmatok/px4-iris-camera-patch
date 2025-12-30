@@ -235,9 +235,10 @@ def step_cpu(
     u = xc / zc_safe
     v = yc / zc_safe
 
-    # Clamp u and v to [-10, 10]
-    u = np.clip(u, -10.0, 10.0)
-    v = np.clip(v, -10.0, 10.0)
+    # Clamp u and v to +/- tan(60) = 1.732 (120 deg FOV)
+    # Using 1.733 to be safe
+    u = np.clip(u, -1.733, 1.733)
+    v = np.clip(v, -1.733, 1.733)
 
     size = 10.0 / (zc*zc + 1.0)
 
@@ -413,8 +414,6 @@ def reset_cpu(
     vel_y[:] = 0.0
     vel_z[:] = 0.0
     roll[:] = 0.0
-    pitch[:] = 0.0
-    yaw[:] = 0.0
 
     # Calculate Initial Target State (t=0)
     # traj_params: (10, num_agents)
@@ -431,27 +430,49 @@ def reset_cpu(
     vtz_val = traj_params[9] + traj_params[6] * np.sin(traj_params[8])
     vtvz_val = traj_params[6] * traj_params[7] * np.cos(traj_params[8])
 
+    # Calculate Initial Orientation
+    dx = vtx_val - pos_x
+    dy = vty_val - pos_y
+    dz = vtz_val - pos_z
+    d_xy = np.sqrt(dx*dx + dy*dy)
+
+    # Yaw: align with target in XY plane
+    yaw[:] = np.arctan2(dy, dx)
+    # Pitch: align with target in Z (accounting for camera tilt of 30 deg ~ pi/6)
+    pitch[:] = np.arctan2(-dz, d_xy) - (np.pi / 6.0)
+
     # Populate Obs
     rvx = vtvx_val - vel_x
     rvy = vtvy_val - vel_y
     rvz = vtvz_val - vel_z
 
-    # Body Frame Rel Vel (R=Identity at t=0)
-    observations[:, 600] = rvx
-    observations[:, 601] = rvy
-    observations[:, 602] = rvz
+    # Calculate Rotation Matrix
+    sr, cr = np.sin(roll), np.cos(roll)
+    sp, cp = np.sin(pitch), np.cos(pitch)
+    sy, cy = np.sin(yaw), np.cos(yaw)
 
-    dx = vtx_val - pos_x
-    dy = vty_val - pos_y
-    dz = vtz_val - pos_z
+    r11 = cy * cp
+    r12 = sy * cp
+    r13 = -sp
+    r21 = cy * sp * sr - sy * cr
+    r22 = sy * sp * sr + cy * cr
+    r23 = cp * sr
+    r31 = cy * sp * cr + sy * sr
+    r32 = sy * sp * cr - cy * sr
+    r33 = cp * cr
+
+    # Body Frame Rel Vel
+    observations[:, 600] = r11 * rvx + r12 * rvy + r13 * rvz
+    observations[:, 601] = r21 * rvx + r22 * rvy + r23 * rvz
+    observations[:, 602] = r31 * rvx + r32 * rvy + r33 * rvz
+
     dist = np.sqrt(dx*dx + dy*dy + dz*dz)
     observations[:, 603] = dist
 
     # Initial Tracker Features
-    # R=I
-    xb = dx
-    yb = dy
-    zb = dz
+    xb = r11 * dx + r12 * dy + r13 * dz
+    yb = r21 * dx + r22 * dy + r23 * dz
+    zb = r31 * dx + r32 * dy + r33 * dz
     s30 = 0.5
     c30 = 0.866025
     xc = yb
@@ -462,9 +483,9 @@ def reset_cpu(
     u = xc / zc_safe
     v = yc / zc_safe
 
-    # Clamp u and v to [-10, 10]
-    u = np.clip(u, -10.0, 10.0)
-    v = np.clip(v, -10.0, 10.0)
+    # Clamp u and v to +/- tan(60) = 1.732 (120 deg FOV)
+    u = np.clip(u, -1.733, 1.733)
+    v = np.clip(v, -1.733, 1.733)
 
     size = 10.0 / (zc*zc + 1.0)
 
