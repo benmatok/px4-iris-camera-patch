@@ -324,43 +324,35 @@ cdef void _step_agent_scalar(
     cdef float omega_sq = (rvel_sq / dist_sq_safe) - ((r_dot_v*r_dot_v) / (dist_sq_safe*dist_sq_safe))
     if omega_sq < 0: omega_sq = 0.0
 
-    cdef float rew_pn = -1.0 * omega_sq
+    cdef float rew_pn = -2.0 * omega_sq # k1=2.0
 
     # 2. Closing Speed (V_drone . r_hat)
     cdef float vd_dot_r = vx*dx_w + vy*dy_w + vz*dz_w
     cdef float closing = vd_dot_r / dist_safe
-    cdef float rew_closing = 0.5 * closing
+    cdef float rew_closing = 0.5 * closing # k2=0.5
 
     # 3. Vision (Gaze)
     vx_b = r11 * vx + r12 * vy + r13 * vz
     cdef float v_ideal = 0.1 * vx_b
     cdef float v_err = v - v_ideal
     cdef float gaze_err = u*u + v_err*v_err
-    cdef float rew_gaze = -1.0 * gaze_err
+    cdef float rew_gaze = -0.01 * gaze_err # k3=0.01
 
     # Funnel
     cdef float funnel = 1.0 / (dist + 1.0)
 
     cdef float rew_guidance = (rew_pn + rew_gaze + rew_closing) * funnel
 
-    # Scaling Guidance by Stability (r33)
-    cdef float alpha_upright = 2.0 * r33 - 1.0
-    if alpha_upright < 0.0: alpha_upright = 0.0
-
-    # Scaling Guidance by Thrust
-    cdef float alpha_thrust = thrust_cmd * 5.0
-    if alpha_thrust < 0.0: alpha_thrust = 0.0
-    if alpha_thrust > 1.0: alpha_thrust = 1.0
-
-    cdef float alpha = alpha_upright * alpha_thrust
-    rew_guidance = rew_guidance * alpha
-
     # 4. Stability
-    cdef float rew_rate = -0.1 * w2
+    cdef float rew_rate = -1.0 * w2 # k4=1.0
     # Upright (r33 = cp*cr)
     cdef float upright_err = 1.0 - r33
-    cdef float rew_upright = -1.0 * upright_err * upright_err
-    cdef float rew_eff = -0.01 * thrust_cmd * thrust_cmd
+    cdef float rew_upright = -5.0 * upright_err * upright_err # k5=5.0
+
+    # Thrust Penalty
+    cdef float diff_thrust = 0.4 - thrust_cmd
+    if diff_thrust < 0.0: diff_thrust = 0.0
+    cdef float rew_eff = -10.0 * diff_thrust
 
     rew = rew_guidance + rew_rate + rew_upright + rew_eff
 

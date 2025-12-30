@@ -402,14 +402,14 @@ inline void step_agents_avx2(
     __m256 omega_sq = _mm256_sub_ps(term1, term2);
     omega_sq = _mm256_max_ps(omega_sq, c0); // Clip
 
-    __m256 rew_pn = _mm256_mul_ps(_mm256_set1_ps(-1.0f), omega_sq); // k1=1.0
+    __m256 rew_pn = _mm256_mul_ps(_mm256_set1_ps(-2.0f), omega_sq); // k1=2.0 (was 1.0)
 
     // 2. Closing Speed
     // V_drone . r_hat.
     // r_hat = r / d.
     __m256 vd_dot_r = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(vx, rx), _mm256_mul_ps(vy, ry)), _mm256_mul_ps(vz, rz));
     __m256 closing = _mm256_div_ps(vd_dot_r, dist_safe);
-    __m256 rew_closing = _mm256_mul_ps(_mm256_set1_ps(0.5f), closing); // k2=0.5
+    __m256 rew_closing = _mm256_mul_ps(_mm256_set1_ps(0.5f), closing); // k2=0.5 (Keep)
 
     // 3. Vision (Gaze)
     // v_ideal = -0.1 * vx_b (heuristic: pitch forward -> vx_b > 0 -> target moves up -> v decreases?)
@@ -423,7 +423,7 @@ inline void step_agents_avx2(
     __m256 v_ideal = _mm256_mul_ps(_mm256_set1_ps(0.1f), vx_b); // Tuning direction
     __m256 v_err = _mm256_sub_ps(v, v_ideal);
     __m256 gaze_err = _mm256_add_ps(_mm256_mul_ps(u, u), _mm256_mul_ps(v_err, v_err));
-    __m256 rew_gaze = _mm256_mul_ps(_mm256_set1_ps(-1.0f), gaze_err); // k3=1.0
+    __m256 rew_gaze = _mm256_mul_ps(_mm256_set1_ps(-0.01f), gaze_err); // k3=0.01 (was 1.0)
 
     // Funnel Scaling: 1 / (d + 1.0)
     __m256 funnel = _mm256_div_ps(c1, _mm256_add_ps(dist, c1));
@@ -431,31 +431,18 @@ inline void step_agents_avx2(
     // Total Guidance + Gaze
     __m256 rew_guidance = _mm256_mul_ps(_mm256_add_ps(_mm256_add_ps(rew_pn, rew_gaze), rew_closing), funnel);
 
-    // Scaling Guidance by Stability (r33)
-    // alpha_upright = max(0, 2 * r33 - 1). Matches r33=0.5 (60 deg) -> alpha=0.
-    __m256 r33_x2 = _mm256_add_ps(r33, r33);
-    __m256 alpha_upright = _mm256_sub_ps(r33_x2, c1);
-    alpha_upright = _mm256_max_ps(alpha_upright, c0);
-
-    // Scaling Guidance by Thrust (thrust_cmd)
-    // Must have enough thrust to not be free falling.
-    // alpha_thrust = clamp(thrust_cmd * 5, 0, 1). Ramp 0->0.2.
-    __m256 alpha_thrust = _mm256_mul_ps(thrust_cmd, c5);
-    alpha_thrust = _mm256_max_ps(alpha_thrust, c0);
-    alpha_thrust = _mm256_min_ps(alpha_thrust, c1);
-
-    __m256 alpha = _mm256_mul_ps(alpha_upright, alpha_thrust);
-
-    rew_guidance = _mm256_mul_ps(rew_guidance, alpha);
-
     // 4. Stability
     // Rate damping
-    __m256 rew_rate = _mm256_mul_ps(_mm256_set1_ps(-0.1f), w2);
+    __m256 rew_rate = _mm256_mul_ps(_mm256_set1_ps(-1.0f), w2); // k4=1.0 (was 0.1)
     // Upright: (1 - r33)^2. r33 = cp*cr
     __m256 upright_err = _mm256_sub_ps(c1, r33);
-    __m256 rew_upright = _mm256_mul_ps(_mm256_set1_ps(-1.0f), _mm256_mul_ps(upright_err, upright_err));
-    // Efficiency
-    __m256 rew_eff = _mm256_mul_ps(_mm256_set1_ps(-0.01f), _mm256_mul_ps(thrust_cmd, thrust_cmd));
+    __m256 rew_upright = _mm256_mul_ps(_mm256_set1_ps(-5.0f), _mm256_mul_ps(upright_err, upright_err)); // k5=5.0 (was 1.0)
+
+    // Thrust Penalty: penalty if thrust < 0.4.
+    // rew_thrust = -10.0 * max(0, 0.4 - thrust).
+    __m256 diff_thrust = _mm256_sub_ps(_mm256_set1_ps(0.4f), thrust_cmd);
+    diff_thrust = _mm256_max_ps(diff_thrust, c0);
+    __m256 rew_eff = _mm256_mul_ps(_mm256_set1_ps(-10.0f), diff_thrust);
 
     __m256 rew = _mm256_add_ps(rew_guidance, _mm256_add_ps(rew_rate, _mm256_add_ps(rew_upright, rew_eff)));
 
