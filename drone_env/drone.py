@@ -308,6 +308,10 @@ def step_cpu(
     funnel = 1.0 / (dist + 1.0)
     rew_guidance = (rew_pn + rew_gaze + rew_closing) * funnel
 
+    # Scaling Guidance by Stability (r33)
+    alpha = np.maximum(2.0 * r33 - 1.0, 0.0)
+    rew_guidance = rew_guidance * alpha
+
     # 4. Stability
     rew_rate = -0.1 * w2
     # Upright r33

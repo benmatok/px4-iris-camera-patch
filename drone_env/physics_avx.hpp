@@ -431,6 +431,14 @@ inline void step_agents_avx2(
     // Total Guidance + Gaze
     __m256 rew_guidance = _mm256_mul_ps(_mm256_add_ps(_mm256_add_ps(rew_pn, rew_gaze), rew_closing), funnel);
 
+    // Scaling Guidance by Stability (r33)
+    // alpha = max(0, 2 * r33 - 1). Matches r33=0.5 (60 deg) -> alpha=0.
+    __m256 r33_x2 = _mm256_add_ps(r33, r33);
+    __m256 alpha = _mm256_sub_ps(r33_x2, c1);
+    alpha = _mm256_max_ps(alpha, c0);
+
+    rew_guidance = _mm256_mul_ps(rew_guidance, alpha);
+
     // 4. Stability
     // Rate damping
     __m256 rew_rate = _mm256_mul_ps(_mm256_set1_ps(-0.1f), w2);
