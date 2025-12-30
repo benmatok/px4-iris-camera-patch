@@ -244,10 +244,10 @@ def step_cpu(
 
     w2 = roll_rate**2 + pitch_rate**2 + yaw_rate**2
     conf = np.exp(-0.1 * w2)
-    # Behind camera check (zc < 0)
-    # zc was computed above as: zc = c30 * xb - s30 * zb
-    is_behind = zc < 0.0
-    conf = np.where(is_behind, 0.0, conf)
+    # Behind camera check
+    conf = np.where((c30 * xb - s30 * zb) < 0.0, 0.0, conf)
+    # Strictly behind check
+    conf = np.where(xb < 0.0, 0.0, conf)
 
     observations[:, 604] = u
     observations[:, 605] = v
@@ -303,8 +303,7 @@ def step_cpu(
     v_ideal = 0.1 * vx_b
     v_err = v - v_ideal
     gaze_err = u**2 + v_err**2
-    # Apply penalty if behind
-    rew_gaze = np.where(is_behind, -10.0, -1.0 * gaze_err)
+    rew_gaze = -1.0 * gaze_err
 
     # Funnel
     funnel = 1.0 / (dist + 1.0)
