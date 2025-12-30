@@ -413,8 +413,7 @@ def reset_cpu(
     vel_y[:] = 0.0
     vel_z[:] = 0.0
     roll[:] = 0.0
-    pitch[:] = 0.0
-    yaw[:] = 0.0
+    # Pitch and Yaw will be set to look at target
 
     # Calculate Initial Target State (t=0)
     # traj_params: (10, num_agents)
@@ -430,6 +429,15 @@ def reset_cpu(
 
     vtz_val = traj_params[9] + traj_params[6] * np.sin(traj_params[8])
     vtvz_val = traj_params[6] * traj_params[7] * np.cos(traj_params[8])
+
+    # Point Drone at Target
+    dx = vtx_val - pos_x
+    dy = vty_val - pos_y
+    dz = vtz_val - pos_z
+    dist_xy = np.sqrt(dx*dx + dy*dy)
+    yaw[:] = np.arctan2(dy, dx)
+    # Pitch up by 30 deg (pi/6) to compensate for camera down-tilt
+    pitch[:] = np.arctan2(dz, dist_xy) + (np.pi / 6.0)
 
     # Populate Obs
     rvx = vtvx_val - vel_x

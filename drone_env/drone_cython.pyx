@@ -12,6 +12,7 @@ from libc.math cimport sin, cos, exp, fabs, sqrt, M_PI
 # sincosf is not in standard libc.math pxd, need extern
 cdef extern from "math.h" nogil:
     void sincosf(float x, float *sin, float *cos)
+    float atan2f(float y, float x)
 
 from libc.stdlib cimport rand, RAND_MAX
 from libc.string cimport memmove, memset
@@ -466,8 +467,7 @@ cdef void _reset_agent_scalar(
     vel_y[i] = 0.0
     vel_z[i] = 0.0
     roll[i] = 0.0
-    pitch[i] = 0.0
-    yaw[i] = 0.0
+    # Pitch and Yaw set below
 
     # Calculate Initial Target State (t=0)
     cdef float t_f = 0.0
@@ -497,32 +497,68 @@ cdef void _reset_agent_scalar(
     cdef float vtz_val = oz_p + az_p * sz
     cdef float vtvz_val = az_p * fz_p * cz
 
+    # Point Drone at Target
+    cdef float dx = vtx_val - pos_x[i]
+    cdef float dy = vty_val - pos_y[i]
+    cdef float dz = vtz_val - pos_z[i]
+    cdef float dist_xy = sqrt(dx*dx + dy*dy)
+
+    yaw[i] = atan2f(dy, dx)
+    # Pitch up by 30 deg (pi/6)
+    pitch[i] = atan2f(dz, dist_xy) + 0.5235987756 # pi/6
+
     # Populate Obs
     cdef float rvx = vtvx_val - vel_x[i]
     cdef float rvy = vtvy_val - vel_y[i]
     cdef float rvz = vtvz_val - vel_z[i]
 
-    # Body Frame Rel Vel (R=Identity at t=0)
-    observations[i, 600] = rvx
-    observations[i, 601] = rvy
-    observations[i, 602] = rvz
+    # Body Frame Rel Vel (R is NOT Identity anymore)
+    # We must calculate R from roll, pitch, yaw
+    # roll=0
+    cdef float r0 = roll[i]
+    cdef float p0 = pitch[i]
+    cdef float y0 = yaw[i]
 
-    cdef float dx = vtx_val - pos_x[i]
-    cdef float dy = vty_val - pos_y[i]
-    cdef float dz = vtz_val - pos_z[i]
+    cdef float sr, cr, sp, cp, sy, cy
+    sincosf(r0, &sr, &cr)
+    sincosf(p0, &sp, &cp)
+    sincosf(y0, &sy, &cy)
+
+    cdef float r11 = cy * cp
+    cdef float r12 = sy * cp
+    cdef float r13 = -sp
+    cdef float r21 = cy * sp * sr - sy * cr
+    cdef float r22 = sy * sp * sr + cy * cr
+    cdef float r23 = cp * sr
+    cdef float r31 = cy * sp * cr + sy * sr
+    cdef float r32 = sy * sp * cr - cy * sr
+    cdef float r33 = cp * cr
+
+    cdef float rvx_b = r11 * rvx + r12 * rvy + r13 * rvz
+    cdef float rvy_b = r21 * rvx + r22 * rvy + r23 * rvz
+    cdef float rrvz_b = r31 * rvx + r32 * rvy + r33 * rvz
+
+    observations[i, 600] = rvx_b
+    observations[i, 601] = rvy_b
+    observations[i, 602] = rrvz_b
+
+    # Distance doesn't change with rotation
     cdef float dist = sqrt(dx*dx + dy*dy + dz*dz)
     observations[i, 603] = dist
 
     # Initial Tracker Features
-    # R=I
-    cdef float xb = dx
-    cdef float yb = dy
-    cdef float zb = dz
+    # Use Rotation Matrix
+    cdef float xb = r11 * dx + r12 * dy + r13 * dz
+    cdef float yb = r21 * dx + r22 * dy + r23 * dz
+    cdef float zb = r31 * dx + r32 * dy + r33 * dz
+
+    cdef float xc, yc, zc
     cdef float s30 = 0.5
     cdef float c30 = 0.866025
-    cdef float xc = yb
-    cdef float yc = s30 * xb + c30 * zb
-    cdef float zc = c30 * xb - s30 * zb
+    xc = yb
+    yc = s30 * xb + c30 * zb
+    zc = c30 * xb - s30 * zb
+
     cdef float u, v, size, conf
     if zc < 0.1: zc = 0.1
     u = xc / zc

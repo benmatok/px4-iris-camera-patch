@@ -387,9 +387,10 @@ def main():
             tracker_data = trainer.tracker_history_buffer
 
             # Log for graph
-            visualizer.log_trajectory(itr, pos_hist, targets, tracker_data)
-            visualizer.plot_rewards()
-            visualizer.generate_trajectory_gif()
+            # visualizer.log_trajectory(itr, pos_hist, targets, tracker_data)
+            # visualizer.plot_rewards()
+            # visualizer.generate_trajectory_gif()
+            pass
 
         if itr % 100 == 0:
             # Generate Video of specific episode (first agent)
