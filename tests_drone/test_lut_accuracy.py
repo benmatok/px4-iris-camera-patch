@@ -86,6 +86,7 @@ class TestLUTAccuracy(unittest.TestCase):
             'target_yaw_rate': self.target_yaw_rate.copy(),
             'vt_x': self.vt_x.copy(), 'vt_y': self.vt_y.copy(), 'vt_z': self.vt_z.copy(),
             'traj_params': self.traj_params.copy(),
+            'target_trajectory': self.target_trajectory.copy(), # New
             'pos_history': self.pos_history.copy(),
             'observations': self.observations.copy(),
             'rewards': self.rewards.copy(),
