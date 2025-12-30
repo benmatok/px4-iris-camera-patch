@@ -19,7 +19,7 @@ from torch.distributions import Normal
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class CPUTrainer:
-    def __init__(self, env, policy, num_agents, episode_length, batch_size=4096, mini_batch_size=1024, ppo_epochs=4, clip_param=0.2):
+    def __init__(self, env, policy, num_agents, episode_length, batch_size=4096, mini_batch_size=1024, ppo_epochs=4, clip_param=0.2, debug=False):
         self.env = env
         self.policy = policy
         self.num_agents = num_agents
@@ -33,6 +33,7 @@ class CPUTrainer:
         self.value_loss_coeff = 0.5
         self.entropy_coeff = 0.01
         self.max_grad_norm = 1.0 # Gradient clipping
+        self.debug = debug
 
         # Include action_log_std in parameters to optimize
         self.optimizer_policy = torch.optim.Adam(
@@ -59,6 +60,34 @@ class CPUTrainer:
         self.target_history_buffer = np.zeros((episode_length, num_agents, 3), dtype=np.float32)
         self.tracker_history_buffer = np.zeros((episode_length, num_agents, 4), dtype=np.float32)
 
+        # Pre-resolve step arguments to avoid dict lookup in loop
+        # We need to grab the data arrays from env.data_dictionary
+        # Step Signature:
+        # pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, roll, pitch, yaw,
+        # masses, drag_coeffs, thrust_coeffs,
+        # target_vx, target_vy, target_vz, target_yaw_rate,
+        # vt_x, vt_y, vt_z,
+        # traj_params, target_trajectory,
+        # pos_history, observations,
+        # rewards, reward_components,
+        # done_flags, step_counts, actions,
+        # num_agents, episode_length, env_ids
+
+        d = self.env.data_dictionary
+        self.step_args_list = [
+            d["pos_x"], d["pos_y"], d["pos_z"],
+            d["vel_x"], d["vel_y"], d["vel_z"],
+            d["roll"], d["pitch"], d["yaw"],
+            d["masses"], d["drag_coeffs"], d["thrust_coeffs"],
+            d["target_vx"], d["target_vy"], d["target_vz"], d["target_yaw_rate"],
+            d["vt_x"], d["vt_y"], d["vt_z"],
+            d["traj_params"], d["target_trajectory"],
+            d["pos_history"], d["observations"],
+            d["rewards"], d["reward_components"],
+            d["done_flags"], d["step_counts"], d["actions"],
+            self.num_agents, self.episode_length, d["env_ids"]
+        ]
+
 
     def collect_rollout(self):
         # Reset Environment
@@ -67,27 +96,19 @@ class CPUTrainer:
         # Get Data Dictionary from Env (NumPy arrays)
         data = self.env.cuda_data_manager.data_dictionary
 
-        # We need to manually manage the step loop
-        # The env.step() is designed for WarpDrive CUDA, but we use step_function directly or via helper
-        # Actually, WarpDrive's step() just calls the CUDA kernel.
-        # We need to call our CPU/Cython step function.
-
+        # Get Step Function
         step_func = self.env.get_step_function()
-        step_kwargs = self.env.get_step_function_kwargs()
-
-        # Map kwarg names to actual data arrays
-        # Note: data[name] is a numpy array.
 
         # Initial Observation
         obs_np = data["observations"]
-        # NaN check
-        if np.isnan(obs_np).any() or np.isinf(obs_np).any():
-            print("Warning: Initial observations contain NaN or Inf!")
-            obs_np = np.nan_to_num(obs_np)
 
-        obs = torch.from_numpy(obs_np).float()
+        # NaN check (Conditional)
+        if self.debug:
+            if np.isnan(obs_np).any() or np.isinf(obs_np).any():
+                print("Warning: Initial observations contain NaN or Inf!")
+                obs_np = np.nan_to_num(obs_np)
 
-        total_reward = 0
+        obs = torch.from_numpy(obs_np) # Already float32
 
         # Local refs for speed
         d_obs = data["observations"]
@@ -97,20 +118,9 @@ class CPUTrainer:
         d_vt_x = data["vt_x"]
         d_vt_y = data["vt_y"]
         d_vt_z = data["vt_z"]
-        d_rew_comp = data["reward_components"] # New
+        d_rew_comp = data["reward_components"]
 
-        # Map arguments for step function
-        # We construct the args dict once
-        args = {}
-        for k, v in step_kwargs.items():
-            if v in data:
-                args[k] = data[v]
-            elif k == "num_agents":
-                args[k] = self.num_agents
-            elif k == "episode_length":
-                args[k] = self.episode_length
-            else:
-                pass
+        step_args = self.step_args_list
 
         for t in range(self.episode_length):
             # 1. Policy Forward
@@ -119,13 +129,14 @@ class CPUTrainer:
                 action_mean, value = self.policy(obs)
 
                 # Check for NaNs in network output
-                if torch.isnan(action_mean).any() or torch.isinf(action_mean).any():
-                    print(f"NaN/Inf detected in action_mean at step {t}")
-                    action_mean = torch.nan_to_num(action_mean)
+                if self.debug:
+                    if torch.isnan(action_mean).any() or torch.isinf(action_mean).any():
+                        print(f"NaN/Inf detected in action_mean at step {t}")
+                        action_mean = torch.nan_to_num(action_mean)
 
-                if torch.isnan(value).any() or torch.isinf(value).any():
-                    print(f"NaN/Inf detected in value at step {t}")
-                    value = torch.nan_to_num(value)
+                    if torch.isnan(value).any() or torch.isinf(value).any():
+                        print(f"NaN/Inf detected in value at step {t}")
+                        value = torch.nan_to_num(value)
 
                 # Sample Action - use current std
                 std = self.policy.action_log_std.exp()
@@ -137,12 +148,10 @@ class CPUTrainer:
 
             # 2. Step Environment
             # Write action to data dict
-            d_act[:] = action.numpy().flatten() # Expects flat array? Check step_cpu
-            # step_cpu expects "actions" as flat or reshaped inside.
-            # In drone.py: actions_reshaped = actions.reshape(num_agents, 4). So flat is fine.
+            d_act[:] = action.numpy().flatten() # Expects flat array
 
-            # Execute Step
-            step_func(**args)
+            # Execute Step (Positional Args)
+            step_func(*step_args)
 
             # 3. Store Data
             self.obs_buffer[t] = obs
@@ -151,22 +160,22 @@ class CPUTrainer:
             self.values_buffer[t] = value.squeeze()
 
             # Check for NaNs in rewards
-            if np.isnan(d_rew).any() or np.isinf(d_rew).any():
-                print(f"NaN/Inf detected in rewards at step {t}")
-                print(f"Rewards Min: {d_rew.min()}, Max: {d_rew.max()}")
-                d_rew = np.nan_to_num(d_rew)
+            if self.debug:
+                if np.isnan(d_rew).any() or np.isinf(d_rew).any():
+                    print(f"NaN/Inf detected in rewards at step {t}")
+                    d_rew = np.nan_to_num(d_rew)
 
-            self.rewards_buffer[t] = torch.from_numpy(d_rew).float()
-            self.dones_buffer[t] = torch.from_numpy(d_done).float()
-            self.reward_components_buffer[t] = torch.from_numpy(d_rew_comp).float() # New
+            self.rewards_buffer[t] = torch.from_numpy(d_rew)
+            self.dones_buffer[t] = torch.from_numpy(d_done)
+            self.reward_components_buffer[t] = torch.from_numpy(d_rew_comp)
 
             # Next Obs
-            if np.isnan(d_obs).any() or np.isinf(d_obs).any():
-                print(f"NaN/Inf detected in next observations from env at step {t}")
-                print(f"Obs Min: {d_obs.min()}, Max: {d_obs.max()}")
-                d_obs = np.nan_to_num(d_obs)
+            if self.debug:
+                if np.isnan(d_obs).any() or np.isinf(d_obs).any():
+                    print(f"NaN/Inf detected in next observations from env at step {t}")
+                    d_obs = np.nan_to_num(d_obs)
 
-            obs = torch.from_numpy(d_obs).float()
+            obs = torch.from_numpy(d_obs) # Already float32
 
             # Visualization Data
             self.target_history_buffer[t, :, 0] = d_vt_x
@@ -179,11 +188,10 @@ class CPUTrainer:
              _, next_value = self.policy(obs)
              next_value = next_value.squeeze()
 
-             # Check next_value for NaN
-             if torch.isnan(next_value).any() or torch.isinf(next_value).any():
-                  print(f"NaN/Inf detected in next_value.")
-                  print(f"Obs Min: {obs.min()}, Max: {obs.max()}, Mean: {obs.mean()}")
-                  next_value = torch.nan_to_num(next_value)
+             if self.debug:
+                 if torch.isnan(next_value).any() or torch.isinf(next_value).any():
+                      print(f"NaN/Inf detected in next_value.")
+                      next_value = torch.nan_to_num(next_value)
 
              advantages = torch.zeros_like(self.rewards_buffer)
              lastgaelam = 0
@@ -195,10 +203,8 @@ class CPUTrainer:
                      nextnonterminal = 1.0 - self.dones_buffer[t]
                      nextvalues = self.values_buffer[t+1]
 
-                 # Safe GAE calc to avoid NaN * 0
-                 # If nextnonterminal is 0, we don't care about nextvalues (even if it's NaN)
                  term_next = self.gamma * nextvalues * nextnonterminal
-                 # Force term_next to 0 where nextnonterminal is 0, to handle NaN * 0 = NaN
+                 # Force term_next to 0 where nextnonterminal is 0
                  term_next = torch.where(nextnonterminal == 0, torch.tensor(0.0, device=self.device), term_next)
 
                  delta = self.rewards_buffer[t] + term_next - self.values_buffer[t]
@@ -212,19 +218,17 @@ class CPUTrainer:
         obs, actions, old_logprobs, returns, advantages = rollouts
 
         # Check inputs for NaNs
-        if torch.isnan(obs).any(): print("NaN in obs buffer")
-        if torch.isnan(actions).any(): print("NaN in actions buffer")
-        if torch.isnan(old_logprobs).any(): print("NaN in old_logprobs buffer")
-        if torch.isnan(returns).any(): print("NaN in returns buffer")
-        if torch.isnan(advantages).any(): print("NaN in advantages buffer")
+        if self.debug:
+            if torch.isnan(obs).any(): print("NaN in obs buffer")
+            if torch.isnan(actions).any(): print("NaN in actions buffer")
+            if torch.isnan(old_logprobs).any(): print("NaN in old_logprobs buffer")
+            if torch.isnan(returns).any(): print("NaN in returns buffer")
+            if torch.isnan(advantages).any(): print("NaN in advantages buffer")
 
-        if torch.isinf(returns).any(): print("Inf in returns buffer")
-        if torch.isinf(advantages).any(): print("Inf in advantages buffer")
-
-        # Replace NaNs/Infs
-        obs = torch.nan_to_num(obs)
-        returns = torch.nan_to_num(returns, nan=0.0, posinf=100.0, neginf=-100.0)
-        advantages = torch.nan_to_num(advantages, nan=0.0, posinf=100.0, neginf=-100.0)
+            # Replace NaNs/Infs
+            obs = torch.nan_to_num(obs)
+            returns = torch.nan_to_num(returns, nan=0.0, posinf=100.0, neginf=-100.0)
+            advantages = torch.nan_to_num(advantages, nan=0.0, posinf=100.0, neginf=-100.0)
 
         # Flatten
         # (T, N, ...) -> (T*N, ...)
@@ -237,8 +241,6 @@ class CPUTrainer:
         # Normalize Advantages
         adv_std = advantages.std()
         if adv_std < 1e-5:
-             # If std is 0 (all same reward), normalization leads to NaN or Inf.
-             # Just center it?
              advantages = advantages - advantages.mean()
         else:
              advantages = (advantages - advantages.mean()) / (adv_std + 1e-8)
@@ -306,10 +308,13 @@ def main():
     parser.add_argument("--iterations", type=int, default=5000)
     parser.add_argument("--episode_length", type=int, default=20) # Short episodes for dynamics
     parser.add_argument("--load", type=str, default=None)
+    parser.add_argument("--debug", action="store_true", help="Enable anomaly detection and detailed checks")
     args = parser.parse_args()
 
     # Enable Anomaly Detection
-    torch.autograd.set_detect_anomaly(True)
+    if args.debug:
+        torch.autograd.set_detect_anomaly(True)
+        print("Debug mode enabled: Anomaly detection on.")
 
     # Environment
     env = DroneEnv(num_agents=args.num_agents, episode_length=args.episode_length, use_cuda=False)
@@ -325,7 +330,7 @@ def main():
         else:
             print(f"Checkpoint {args.load} not found, starting fresh.")
 
-    trainer = CPUTrainer(env, policy, args.num_agents, args.episode_length)
+    trainer = CPUTrainer(env, policy, args.num_agents, args.episode_length, debug=args.debug)
     visualizer = Visualizer()
 
     print(f"Starting Training: {args.num_agents} Agents, {args.iterations} Iterations")
@@ -370,26 +375,6 @@ def main():
         if itr % 50 == 0:
             # Save checkpoint
             torch.save(policy.state_dict(), "latest_checkpoint.pth")
-
-            # Get Trajectory from Env Data (pos_history)
-            # pos_history shape: (episode_length, num_agents, 3)
-            # Note: We need to get it from the environment's data dictionary,
-            # because trainer.obs_buffer stores observations, not raw positions (obs has history but scrambled/local)
-
-            pos_hist = env.cuda_data_manager.data_dictionary["pos_history"]
-            # Important: Env resets pos_history at start of episode.
-            # But wait, trainer.collect_rollout calls reset_all_envs() at START.
-            # So pos_history contains data from the JUST COMPLETED rollout.
-            # pos_history is filled up to episode_length.
-
-            # Use data from the Trainer buffers for targets/trackers
-            targets = trainer.target_history_buffer
-            tracker_data = trainer.tracker_history_buffer
-
-            # Log for graph
-            # visualizer.log_trajectory(itr, pos_hist, targets, tracker_data)
-            # visualizer.plot_rewards()
-            # visualizer.generate_trajectory_gif()
             pass
 
         if itr % 100 == 0:

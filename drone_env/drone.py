@@ -54,6 +54,7 @@ def step_cpu(
     target_vx, target_vy, target_vz, target_yaw_rate,
     vt_x, vt_y, vt_z,
     traj_params, # Shape: (10, num_agents)
+    target_trajectory,
     pos_history, # Shape: (episode_length, num_agents, 3)
     observations,
     rewards,
@@ -359,6 +360,7 @@ def reset_cpu(
     masses, drag_coeffs, thrust_coeffs,
     target_vx, target_vy, target_vz, target_yaw_rate,
     traj_params, # New shape (10, num_agents)
+    target_trajectory,
     pos_history,
     observations,
     rng_states,
@@ -576,6 +578,7 @@ class DroneEnv(CUDAEnvironmentState):
                 "target_vx", "target_vy", "target_vz", "target_yaw_rate",
                 "vt_x", "vt_y", "vt_z",
                 "traj_params", # New
+                "target_trajectory",
                 "pos_history",
                 "rng_states",
                 "step_counts"
@@ -596,6 +599,7 @@ class DroneEnv(CUDAEnvironmentState):
             "vt_y": {"shape": (self.num_agents,), "dtype": np.float32},
             "vt_z": {"shape": (self.num_agents,), "dtype": np.float32},
             "traj_params": {"shape": (10, self.num_agents), "dtype": np.float32}, # Optimized Shape
+            "target_trajectory": {"shape": (self.episode_length + 1, self.num_agents, 3), "dtype": np.float32},
             "pos_history": {"shape": (self.episode_length, self.num_agents, 3), "dtype": np.float32}, # Optimized Shape
             "rng_states": {"shape": (self.num_agents,), "dtype": np.int32},
              "pos_x": {"shape": (self.num_agents,), "dtype": np.float32},
@@ -635,6 +639,7 @@ class DroneEnv(CUDAEnvironmentState):
                 "target_vx", "target_vy", "target_vz", "target_yaw_rate",
                 "vt_x", "vt_y", "vt_z",
                 "traj_params",
+                "target_trajectory",
                 "pos_history",
                 "rng_states",
                 "observations", "rewards", "reward_components", "done_flags",
@@ -659,6 +664,7 @@ class DroneEnv(CUDAEnvironmentState):
             "target_vx": "target_vx", "target_vy": "target_vy", "target_vz": "target_vz", "target_yaw_rate": "target_yaw_rate",
             "vt_x": "vt_x", "vt_y": "vt_y", "vt_z": "vt_z",
             "traj_params": "traj_params", # New
+            "target_trajectory": "target_trajectory",
             "pos_history": "pos_history",
             "observations": "observations",
             "rewards": "rewards",
@@ -679,6 +685,7 @@ class DroneEnv(CUDAEnvironmentState):
             "masses": "masses", "drag_coeffs": "drag_coeffs", "thrust_coeffs": "thrust_coeffs",
             "target_vx": "target_vx", "target_vy": "target_vy", "target_vz": "target_vz", "target_yaw_rate": "target_yaw_rate",
             "traj_params": "traj_params", # New
+            "target_trajectory": "target_trajectory",
             "pos_history": "pos_history",
             "observations": "observations",
             "rng_states": "rng_states",

@@ -367,14 +367,23 @@ inline void step_agents_avx2(
         observations[off+7] = tmp_conf[k];
     }
 
-    // Rewards
+    // Rewards with Optimized Division (Newton-Raphson)
     __m256 rvel_sq = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(rvx, rvx), _mm256_mul_ps(rvy, rvy)), _mm256_mul_ps(rvz, rvz));
     __m256 r_dot_v = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(rx, rvx), _mm256_mul_ps(ry, rvy)), _mm256_mul_ps(rz, rvz));
     __m256 dist_sq_safe = _mm256_max_ps(dist_sq, _mm256_set1_ps(0.01f));
-    __m256 term1 = _mm256_div_ps(rvel_sq, dist_sq_safe);
-    __m256 term2_num = _mm256_mul_ps(r_dot_v, r_dot_v);
-    __m256 term2_den = _mm256_mul_ps(dist_sq_safe, dist_sq_safe);
-    __m256 term2 = _mm256_div_ps(term2_num, term2_den);
+
+    // rcp_dist_sq = 1.0 / dist_sq_safe (Approx)
+    __m256 rcp_dist_sq = _mm256_rcp_ps(dist_sq_safe);
+    // Refinement: y = y * (2 - x * y)
+    rcp_dist_sq = _mm256_mul_ps(rcp_dist_sq, _mm256_sub_ps(_mm256_set1_ps(2.0f), _mm256_mul_ps(dist_sq_safe, rcp_dist_sq)));
+
+    // term1 = rvel_sq / dist_sq_safe
+    __m256 term1 = _mm256_mul_ps(rvel_sq, rcp_dist_sq);
+
+    // term2 = (r_dot_v / dist_sq_safe)^2
+    __m256 r_dot_v_scaled = _mm256_mul_ps(r_dot_v, rcp_dist_sq);
+    __m256 term2 = _mm256_mul_ps(r_dot_v_scaled, r_dot_v_scaled); // Slightly different algebraic expansion, but equivalent: (r.v)^2 / d^4 = (r.v/d^2)^2. Correct.
+
     __m256 omega_sq = _mm256_sub_ps(term1, term2);
     omega_sq = _mm256_max_ps(omega_sq, c0);
     __m256 rew_pn = _mm256_mul_ps(_mm256_set1_ps(-2.0f), omega_sq);
