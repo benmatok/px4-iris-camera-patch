@@ -290,39 +290,33 @@ def step_cpu(
 
     omega_sq = (rvel_sq / dist_sq_safe) - (r_dot_v**2 / (dist_sq_safe**2))
     omega_sq = np.maximum(omega_sq, 0.0)
-    rew_pn = -1.0 * omega_sq
+    rew_pn = -2.0 * omega_sq # k1=2.0
 
     # 2. Closing Speed
     vd_dot_r = vx*dx_w + vy*dy_w + vz*dz_w
     closing = vd_dot_r / dist_safe
-    rew_closing = 0.5 * closing
+    rew_closing = 0.5 * closing # k2=0.5
 
     # 3. Vision (Gaze)
     vx_b = r11 * vx + r12 * vy + r13 * vz
     v_ideal = 0.1 * vx_b
     v_err = v - v_ideal
     gaze_err = u**2 + v_err**2
-    rew_gaze = -1.0 * gaze_err
+    rew_gaze = -0.01 * gaze_err # k3=0.01
 
     # Funnel
     funnel = 1.0 / (dist + 1.0)
     rew_guidance = (rew_pn + rew_gaze + rew_closing) * funnel
 
-    # Scaling Guidance by Stability (r33)
-    alpha_upright = np.maximum(2.0 * r33 - 1.0, 0.0)
-
-    # Scaling Guidance by Thrust
-    alpha_thrust = np.clip(thrust_cmd * 5.0, 0.0, 1.0)
-
-    alpha = alpha_upright * alpha_thrust
-    rew_guidance = rew_guidance * alpha
-
     # 4. Stability
-    rew_rate = -0.1 * w2
+    rew_rate = -1.0 * w2 # k4=1.0
     # Upright r33
     upright_err = 1.0 - r33
-    rew_upright = -1.0 * upright_err**2
-    rew_eff = -0.01 * thrust_cmd**2
+    rew_upright = -5.0 * upright_err**2 # k5=5.0
+
+    # Thrust Penalty
+    diff_thrust = np.maximum(0.4 - thrust_cmd, 0.0)
+    rew_eff = -10.0 * diff_thrust
 
     rew = rew_guidance + rew_rate + rew_upright + rew_eff
 
