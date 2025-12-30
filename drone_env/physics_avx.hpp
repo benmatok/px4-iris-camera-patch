@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include "avx_mathfun.h"
+#include "avx_mathfun_lut.h"
 
 // Constants
 static const float DT = 0.01f;
@@ -157,6 +158,10 @@ inline void step_agents_avx2(
         sincos256_ps(p, &sp, &cp);
         sincos256_ps(y, &sy, &cy);
 
+        // Optimization: Use rcp for division where possible.
+        // Force calculation needs reasonable precision, but maybe rcp is fine.
+        // Keep div for now for stability.
+
         __m256 term1_x = _mm256_mul_ps(_mm256_mul_ps(cy, sp), cr);
         __m256 term2_x = _mm256_mul_ps(sy, sr);
         __m256 ax_thrust = _mm256_div_ps(_mm256_mul_ps(thrust_force, _mm256_add_ps(term1_x, term2_x)), mass);
@@ -184,10 +189,12 @@ inline void step_agents_avx2(
         py = _mm256_add_ps(py, _mm256_mul_ps(vy, dt_v));
         pz = _mm256_add_ps(pz, _mm256_mul_ps(vz, dt_v));
 
-        __m256 terr_z = _mm256_mul_ps(c5, _mm256_mul_ps(
-            sin256_ps(_mm256_mul_ps(c01, px)),
-            cos256_ps(_mm256_mul_ps(c01, py))
-        ));
+        // Use LUT for Terrain
+        // terr_z = 5.0 * sin(0.1 * px) * cos(0.1 * py)
+        __m256 sin_px = lut_sin256_ps(_mm256_mul_ps(c01, px));
+        __m256 cos_py = lut_cos256_ps(_mm256_mul_ps(c01, py));
+
+        __m256 terr_z = _mm256_mul_ps(c5, _mm256_mul_ps(sin_px, cos_py));
 
         __m256 mask_under = _mm256_cmp_ps(pz, terr_z, _CMP_LT_OQ);
         pz = _mm256_blendv_ps(pz, terr_z, mask_under);
@@ -240,10 +247,11 @@ inline void step_agents_avx2(
     _mm256_storeu_ps(&pitch[i], p);
     _mm256_storeu_ps(&yaw[i], y);
 
-    __m256 terr_z_final = _mm256_mul_ps(c5, _mm256_mul_ps(
-            sin256_ps(_mm256_mul_ps(c01, px)),
-            cos256_ps(_mm256_mul_ps(c01, py))
-    ));
+    // Final terrain check with LUT
+    __m256 sin_px_f = lut_sin256_ps(_mm256_mul_ps(c01, px));
+    __m256 cos_py_f = lut_cos256_ps(_mm256_mul_ps(c01, py));
+    __m256 terr_z_final = _mm256_mul_ps(c5, _mm256_mul_ps(sin_px_f, cos_py_f));
+
     __m256 mask_coll = _mm256_cmp_ps(pz, terr_z_final, _CMP_LT_OQ);
 
     if (t <= episode_length) {
@@ -313,6 +321,9 @@ inline void step_agents_avx2(
 
     // Project (u = xc/zc, v = yc/zc)
     __m256 zc_safe = _mm256_max_ps(zc, c01); // min distance 0.1
+    // Use rcp for division? u/v calculation is not super critical for physics stability, but important for agent.
+    // _mm256_rcp_ps has 12-bit precision. Newton-Raphson doubles it.
+    // Let's stick to div for now for accuracy of observations.
     __m256 u = _mm256_div_ps(xc, zc_safe);
     __m256 v = _mm256_div_ps(yc, zc_safe);
 
@@ -357,6 +368,9 @@ inline void step_agents_avx2(
     __m256 ry = _mm256_sub_ps(vty, py);
     __m256 rz = _mm256_sub_ps(vtz, pz);
     __m256 dist_sq = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(rx, rx), _mm256_mul_ps(ry, ry)), _mm256_mul_ps(rz, rz));
+
+    // Optim: rsqrt for distance if precision allows, but we need distance itself not just 1/d.
+    // sqrt is fine.
     __m256 dist = _mm256_sqrt_ps(dist_sq);
     __m256 dist_safe = _mm256_max_ps(dist, c01);
 
@@ -408,17 +422,16 @@ inline void step_agents_avx2(
     // V_drone . r_hat.
     // r_hat = r / d.
     __m256 vd_dot_r = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(vx, rx), _mm256_mul_ps(vy, ry)), _mm256_mul_ps(vz, rz));
-    __m256 closing = _mm256_div_ps(vd_dot_r, dist_safe);
+    // Use rcp here? rew = 0.5 * (vd_dot_r * rcp(d)).
+    // Yes, this is just a reward, approximations are fine.
+    __m256 rcp_dist = _mm256_rcp_ps(dist_safe);
+    // Refine rcp: r = r * (2 - x*r)
+    rcp_dist = _mm256_mul_ps(rcp_dist, _mm256_sub_ps(_mm256_set1_ps(2.0f), _mm256_mul_ps(dist_safe, rcp_dist)));
+
+    __m256 closing = _mm256_mul_ps(vd_dot_r, rcp_dist);
     __m256 rew_closing = _mm256_mul_ps(_mm256_set1_ps(0.5f), closing); // k2=0.5 (Keep)
 
     // 3. Vision (Gaze)
-    // v_ideal = -0.1 * vx_b (heuristic: pitch forward -> vx_b > 0 -> target moves up -> v decreases?)
-    // Actually, if nose down (pitch positive in this specific physics?), ax > 0.
-    // Cam pitch up 30 deg.
-    // We want target in center.
-    // Velocity compensation: if flying fast, we are pitched down.
-    // Target appears higher in frame (negative v?).
-    // So ideal v is negative?
     __m256 vx_b = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r11, vx), _mm256_mul_ps(r12, vy)), _mm256_mul_ps(r13, vz));
     __m256 v_ideal = _mm256_mul_ps(_mm256_set1_ps(0.1f), vx_b); // Tuning direction
     __m256 v_err = _mm256_sub_ps(v, v_ideal);
@@ -426,7 +439,10 @@ inline void step_agents_avx2(
     __m256 rew_gaze = _mm256_mul_ps(_mm256_set1_ps(-0.01f), gaze_err); // k3=0.01 (was 1.0)
 
     // Funnel Scaling: 1 / (d + 1.0)
-    __m256 funnel = _mm256_div_ps(c1, _mm256_add_ps(dist, c1));
+    // Use rcp
+    __m256 d_plus_1 = _mm256_add_ps(dist, c1);
+    __m256 funnel = _mm256_rcp_ps(d_plus_1);
+    funnel = _mm256_mul_ps(funnel, _mm256_sub_ps(_mm256_set1_ps(2.0f), _mm256_mul_ps(d_plus_1, funnel)));
 
     // Total Guidance + Gaze
     __m256 rew_guidance = _mm256_mul_ps(_mm256_add_ps(_mm256_add_ps(rew_pn, rew_gaze), rew_closing), funnel);
