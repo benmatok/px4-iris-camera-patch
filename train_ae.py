@@ -26,8 +26,8 @@ class AETrainer:
             self.data[name] = np.zeros(info["shape"], dtype=info["dtype"])
 
         # Initialize Autoencoder
-        # Input dim 3, seq len 200
-        self.ae = Autoencoder1D(input_dim=3, seq_len=200, latent_dim=20).to(self.device)
+        # Input dim 10, seq len 30
+        self.ae = Autoencoder1D(input_dim=10, seq_len=30, latent_dim=20).to(self.device)
 
         if load_checkpoint and os.path.exists(load_checkpoint):
             print(f"Loading checkpoint from {load_checkpoint}...")
@@ -107,6 +107,8 @@ class AETrainer:
                 roll=self.data["roll"], pitch=self.data["pitch"], yaw=self.data["yaw"],
                 masses=self.data["masses"], drag_coeffs=self.data["drag_coeffs"], thrust_coeffs=self.data["thrust_coeffs"],
                 target_vx=self.data["target_vx"], target_vy=self.data["target_vy"], target_vz=self.data["target_vz"], target_yaw_rate=self.data["target_yaw_rate"],
+                traj_params=self.data["traj_params"],
+                target_trajectory=self.data["target_trajectory"],
                 pos_history=self.data["pos_history"], observations=self.data["observations"],
                 rng_states=self.data["rng_states"], step_counts=self.data["step_counts"],
                 num_agents=self.env.num_agents, reset_indices=np.array([0], dtype=np.int32)
@@ -128,8 +130,11 @@ class AETrainer:
                     masses=self.data["masses"], drag_coeffs=self.data["drag_coeffs"], thrust_coeffs=self.data["thrust_coeffs"],
                     target_vx=self.data["target_vx"], target_vy=self.data["target_vy"], target_vz=self.data["target_vz"], target_yaw_rate=self.data["target_yaw_rate"],
                     vt_x=self.data["vt_x"], vt_y=self.data["vt_y"], vt_z=self.data["vt_z"],
+                    traj_params=self.data["traj_params"], # New
+                    target_trajectory=self.data["target_trajectory"], # New
                     pos_history=self.data["pos_history"],
                     observations=self.data["observations"], rewards=self.data["rewards"],
+                    reward_components=self.data["reward_components"], # New
                     done_flags=self.data["done_flags"], step_counts=self.data["step_counts"],
                     actions=actions,
                     num_agents=self.env.num_agents, episode_length=self.episode_length,
@@ -137,8 +142,8 @@ class AETrainer:
                 )
 
                 # 3. Train AE
-                # Extract history (first 600)
-                obs_np = self.data["observations"][:, :600]
+                # Extract history (first 300)
+                obs_np = self.data["observations"][:, :300]
                 obs_tensor = torch.from_numpy(obs_np).float().to(self.device)
 
                 # Forward

@@ -46,7 +46,7 @@ class CPUTrainer:
         self.device = torch.device("cpu") # Force CPU
 
         # Buffers (Pre-allocate)
-        self.obs_buffer = torch.zeros((episode_length, num_agents, 608), dtype=torch.float32)
+        self.obs_buffer = torch.zeros((episode_length, num_agents, 308), dtype=torch.float32)
         self.actions_buffer = torch.zeros((episode_length, num_agents, 4), dtype=torch.float32)
         self.logprobs_buffer = torch.zeros((episode_length, num_agents), dtype=torch.float32)
         self.rewards_buffer = torch.zeros((episode_length, num_agents), dtype=torch.float32)
@@ -125,7 +125,7 @@ class CPUTrainer:
         for t in range(self.episode_length):
             # 1. Policy Forward
             with torch.no_grad():
-                # obs is (num_agents, 608)
+                # obs is (num_agents, 308)
                 action_mean, value = self.policy(obs)
 
                 # Check for NaNs in network output
@@ -181,7 +181,7 @@ class CPUTrainer:
             self.target_history_buffer[t, :, 0] = d_vt_x
             self.target_history_buffer[t, :, 1] = d_vt_y
             self.target_history_buffer[t, :, 2] = d_vt_z
-            self.tracker_history_buffer[t] = d_obs[:, 604:608] # u, v, size, conf
+            self.tracker_history_buffer[t] = d_obs[:, 304:308] # u, v, size, conf
 
         # Calculate Advantages (GAE)
         with torch.no_grad():
@@ -232,7 +232,7 @@ class CPUTrainer:
 
         # Flatten
         # (T, N, ...) -> (T*N, ...)
-        obs = obs.reshape(-1, 608)
+        obs = obs.reshape(-1, 308)
         actions = actions.reshape(-1, 4)
         old_logprobs = old_logprobs.reshape(-1)
         returns = returns.reshape(-1)
@@ -320,7 +320,7 @@ def main():
     env = DroneEnv(num_agents=args.num_agents, episode_length=args.episode_length, use_cuda=False)
 
     # Model
-    policy = DronePolicy(observation_dim=608, action_dim=4, hidden_dim=256).cpu()
+    policy = DronePolicy(observation_dim=308, action_dim=4, hidden_dim=256).cpu()
 
     if args.load:
         if os.path.exists(args.load):
