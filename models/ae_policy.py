@@ -231,46 +231,47 @@ class KFACOptimizerPlaceholder(KFACOptimizer):
 # --- End KFAC Implementation ---
 
 class Autoencoder1D(nn.Module):
-    def __init__(self, input_dim=3, seq_len=200, latent_dim=20):
+    def __init__(self, input_dim=10, seq_len=30, latent_dim=20):
         super(Autoencoder1D, self).__init__()
         self.seq_len = seq_len
         self.input_dim = input_dim
         self.latent_dim = latent_dim
 
-        # Encoder: 1D Conv for sequence length 200
-        # Input: (Batch, 3, 200)
+        # Improved Encoder: 1D Conv for sequence length 30
+        # Input: (Batch, 10, 30)
         self.encoder = nn.Sequential(
-            nn.Conv1d(input_dim, 16, kernel_size=5, stride=2, padding=2), # -> 100
-            nn.ReLU(),
-            nn.Conv1d(16, 32, kernel_size=5, stride=2, padding=2), # -> 50
-            nn.ReLU(),
-            nn.Conv1d(32, 64, kernel_size=5, stride=2, padding=2), # -> 25
-            nn.ReLU(),
-            nn.Flatten(), # 64*25 = 1600
-            nn.Linear(1600, latent_dim),
+            nn.Conv1d(input_dim, 32, kernel_size=3, stride=1, padding=1), # -> 30
+            nn.LeakyReLU(0.2),
+            nn.Conv1d(32, 64, kernel_size=3, stride=2, padding=1), # -> 15
+            nn.LeakyReLU(0.2),
+            nn.Conv1d(64, 128, kernel_size=3, stride=2, padding=1), # -> 8
+            nn.LeakyReLU(0.2),
+            nn.Flatten(), # 128*8 = 1024
+            nn.Linear(1024, latent_dim),
             nn.Tanh() # Latent vector
         )
 
         # Decoder
-        self.decoder_linear = nn.Linear(latent_dim, 1600)
+        self.decoder_linear = nn.Linear(latent_dim, 1024)
         self.decoder = nn.Sequential(
-            nn.ConvTranspose1d(64, 32, kernel_size=5, stride=2, padding=2, output_padding=1), # 25 -> 50
-            nn.ReLU(),
-            nn.ConvTranspose1d(32, 16, kernel_size=5, stride=2, padding=2, output_padding=1), # 50 -> 100
-            nn.ReLU(),
-            nn.ConvTranspose1d(16, input_dim, kernel_size=5, stride=2, padding=2, output_padding=1), # 100 -> 200
+            nn.ConvTranspose1d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=0), # 8 -> 15 (8-1)*2 - 2 + 3 + 0 = 15
+            nn.LeakyReLU(0.2),
+            nn.ConvTranspose1d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1), # 15 -> 30 (15-1)*2 - 2 + 3 + 1 = 30
+            nn.LeakyReLU(0.2),
+            nn.ConvTranspose1d(32, input_dim, kernel_size=3, stride=1, padding=1), # 30->30
         )
 
     def forward(self, x):
-        # x is (Batch, 600). Reshape to (Batch, 3, 200)
+        # x is (Batch, 300). Reshape to (Batch, 10, 30)
         batch_size = x.shape[0]
-        x_reshaped = x.view(batch_size, self.seq_len, self.input_dim).permute(0, 2, 1) # (N, 3, 200)
+        x_reshaped = x.view(batch_size, self.seq_len, self.input_dim).permute(0, 2, 1) # (N, 10, 30)
 
         latent = self.encoder(x_reshaped)
 
         recon_features = self.decoder_linear(latent)
-        recon_features = recon_features.view(batch_size, 64, 25)
-        recon = self.decoder(recon_features) # (N, 3, 200)
+        recon_features = recon_features.view(batch_size, 128, 8)
+
+        recon = self.decoder(recon_features) # (N, 10, 30)
 
         # Flatten recon to match input
         recon_flat = recon.permute(0, 2, 1).reshape(batch_size, -1)
@@ -278,23 +279,23 @@ class Autoencoder1D(nn.Module):
         return latent, recon_flat
 
 class DronePolicy(nn.Module):
-    def __init__(self, observation_dim=608, action_dim=4, hidden_dim=256, env=None, hidden_dims=None):
+    def __init__(self, observation_dim=308, action_dim=4, hidden_dim=256, env=None, hidden_dims=None):
         super(DronePolicy, self).__init__()
-        # Observation space is 608 (600 history + 4 target + 4 tracker)
+        # Observation space is 308 (300 history + 4 target + 4 tracker)
 
         self.observation_dim = observation_dim
         self.action_dim = action_dim
 
-        self.history_dim = 600
+        self.history_dim = 300
         self.target_dim = 4 # Target Commands
-        self.tracker_dim = 4 # New Tracker Features
+        self.tracker_dim = 4 # Tracker Features
         self.latent_dim = 20
 
         # Compatibility with different init styles
         if hidden_dims is None:
             hidden_dims = [hidden_dim, hidden_dim]
 
-        self.ae = Autoencoder1D(input_dim=3, seq_len=200, latent_dim=self.latent_dim)
+        self.ae = Autoencoder1D(input_dim=10, seq_len=30, latent_dim=self.latent_dim)
 
         # RL Agent Input: Latent(20) + Target(4) + Tracker(4) = 28
         input_dim = self.latent_dim + self.target_dim + self.tracker_dim
@@ -323,11 +324,11 @@ class DronePolicy(nn.Module):
         self.action_log_std = nn.Parameter(torch.ones(1, self.action_dim) * -0.69)
 
     def forward(self, obs):
-        # Obs: (Batch, 608)
+        # Obs: (Batch, 308)
 
         history = obs[:, :self.history_dim]
-        # targets = 600:604
-        # tracker = 604:608
+        # targets = 300:304
+        # tracker = 304:308
         aux_features = obs[:, self.history_dim:] # (Batch, 8)
 
         # Autoencode

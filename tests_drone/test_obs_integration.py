@@ -6,10 +6,10 @@ class TestObsIntegration(unittest.TestCase):
     def test_obs_shape(self):
         env = DroneEnv(num_agents=2, episode_length=100, use_cuda=False)
         obs_shape = env.get_observation_space()
-        self.assertEqual(obs_shape, (2, 608))
+        self.assertEqual(obs_shape, (2, 308))
 
         data = env.get_data_dictionary()
-        self.assertEqual(data["observations"]["shape"], (2, 608))
+        self.assertEqual(data["observations"]["shape"], (2, 308))
         self.assertEqual(data["vt_x"]["shape"], (2,))
 
     def test_step_updates_obs(self):
@@ -26,7 +26,7 @@ class TestObsIntegration(unittest.TestCase):
         env.reset_function(**kwargs)
 
         obs = data["observations"][0]
-        self.assertEqual(obs.shape, (608,))
+        self.assertEqual(obs.shape, (308,))
 
         # Run one step
         actions = np.zeros((1, 4), dtype=np.float32)
@@ -56,11 +56,11 @@ class TestObsIntegration(unittest.TestCase):
         expected_x = tp[0, 0] * np.sin(tp[1, 0] * 1.0 + tp[2, 0])
         self.assertAlmostEqual(vt_x, expected_x, places=5)
 
-        # Check tracker features in obs [604:608]
-        u = obs[604]
-        v = obs[605]
-        size = obs[606]
-        conf = obs[607]
+        # Check tracker features in obs [304:308]
+        u = obs[304]
+        v = obs[305]
+        size = obs[306]
+        conf = obs[307]
 
         print(f"Step 1: VT=({vt_x:.2f}, {vt_y:.2f}, {vt_z:.2f}) Obs=({u:.2f}, {v:.2f}, {size:.2f}, {conf:.2f})")
         self.assertNotEqual(size, 0.0)
@@ -70,7 +70,7 @@ class TestObsIntegration(unittest.TestCase):
         step_kwargs["actions"] = actions.flatten()
         env.step_function(**step_kwargs)
         obs = data["observations"][0]
-        conf_high_motion = obs[607]
+        conf_high_motion = obs[307]
 
         print(f"Step 2 (High Motion): Conf={conf_high_motion:.4f}")
         self.assertLess(conf_high_motion, 0.1)

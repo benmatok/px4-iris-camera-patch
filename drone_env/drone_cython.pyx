@@ -140,10 +140,10 @@ cdef void _step_agent_scalar(
     vt_z[i] = vtz_val
 
     # Shift Observations
-    # 608 total. 6..600 -> 0..594
-    memmove(&observations[i, 0], &observations[i, 6], 594 * 4)
+    # 308 total. 10..300 -> 0..290
+    memmove(&observations[i, 0], &observations[i, 10], 290 * 4)
 
-    # Substeps
+    # Substeps (Physics Update)
     for s in range(substeps):
         # 1. Dynamics
         r += roll_rate_cmd * dt
@@ -187,16 +187,6 @@ cdef void _step_agent_scalar(
             vy = 0.0
             vz = 0.0
 
-        # Capture Samples at s=0 and s=1
-        if s == 0 or s == 1:
-            k = 0 if s == 0 else 1 # 0 or 1 index
-            # Noise +/- 0.02
-            # 0.04 * (rand - 0.5)
-            # Offset = 594 + k*3
-            observations[i, 594 + k*3 + 0] = r + (rand_float() - 0.5) * 0.04
-            observations[i, 594 + k*3 + 1] = p + (rand_float() - 0.5) * 0.04
-            observations[i, 594 + k*3 + 2] = y_ang + (rand_float() - 0.5) * 0.04
-
     # Final terrain check
     terr_z = terrain_height(px, py)
     collision = 0
@@ -221,7 +211,10 @@ cdef void _step_agent_scalar(
         pos_history[t-1, i, 1] = py
         pos_history[t-1, i, 2] = pz
 
-    # Tracker Features
+    # -------------------------------------------------------------------------
+    # Update History with NEW state (Post-Dynamics)
+    # -------------------------------------------------------------------------
+    # Tracker / UV Calc (needed for history)
     cdef float dx_w, dy_w, dz_w
     dx_w = vtx_val - px
     dy_w = vty_val - py
@@ -253,27 +246,41 @@ cdef void _step_agent_scalar(
     yc = s30 * xb + c30 * zb
     zc = c30 * xb - s30 * zb
 
-    cdef float u, v, size, conf
-    if zc < 0.1:
-        zc = 0.1
+    cdef float u, v
+    if zc < 0.1: zc = 0.1
     u = xc / zc
     v = yc / zc
 
-    # Clamp u and v to [-10, 10]
     if u > 10.0: u = 10.0
     if u < -10.0: u = -10.0
     if v > 10.0: v = 10.0
     if v < -10.0: v = -10.0
 
+    # Add new history entry (10 features)
+    observations[i, 290] = r
+    observations[i, 291] = p
+    observations[i, 292] = y_ang
+    observations[i, 293] = pz
+    observations[i, 294] = thrust_cmd
+    observations[i, 295] = roll_rate_cmd
+    observations[i, 296] = pitch_rate_cmd
+    observations[i, 297] = yaw_rate_cmd
+    observations[i, 298] = u
+    observations[i, 299] = v
+
+    # Recompute Features for Aux Observation (Indices 300+)
+    # (Already computed above for u/v)
+
+    cdef float size, conf
     size = 10.0 / (zc*zc + 1.0)
 
     cdef float w2 = roll_rate_cmd*roll_rate_cmd + pitch_rate_cmd*pitch_rate_cmd + yaw_rate_cmd*yaw_rate_cmd
     conf = exp(-0.1 * w2)
-    if zc <= 0.1: # Actually checked < 0.1 above
+    if zc <= 0.1:
         if (c30 * xb - s30 * zb) < 0:
             conf = 0.0
 
-    # Rel Vel and Distance
+    # Rel Vel
     cdef float rvx, rvy, rvz
     rvx = vtvx_val - vx
     rvy = vtvy_val - vy
@@ -290,15 +297,15 @@ cdef void _step_agent_scalar(
     cdef float dist_safe = dist
     if dist_safe < 0.1: dist_safe = 0.1
 
-    observations[i, 600] = rvx_b
-    observations[i, 601] = rvy_b
-    observations[i, 602] = rvz_b
-    observations[i, 603] = dist
+    observations[i, 300] = rvx_b
+    observations[i, 301] = rvy_b
+    observations[i, 302] = rvz_b
+    observations[i, 303] = dist
 
-    observations[i, 604] = u
-    observations[i, 605] = v
-    observations[i, 606] = size
-    observations[i, 607] = conf
+    observations[i, 304] = u
+    observations[i, 305] = v
+    observations[i, 306] = size
+    observations[i, 307] = conf
 
     # -------------------------------------------------------------------------
     # Homing Reward (Master Equation)
@@ -510,8 +517,8 @@ cdef void _reset_agent_scalar_wrapper(
     target_vz[i] = tvz
     target_yaw_rate[i] = tyr
 
-    # Reset Observations
-    memset(&observations[i, 0], 0, 608 * 4)
+    # Reset Observations (Size 308)
+    memset(&observations[i, 0], 0, 308 * 4)
 
     # Initial Position
     pos_x[i] = 0.0
@@ -587,12 +594,12 @@ cdef void _reset_agent_scalar_wrapper(
     cdef float rvy_b = r21 * rvx + r22 * rvy + r23 * rvz
     cdef float rrvz_b = r31 * rvx + r32 * rvy + r33 * rvz
 
-    observations[i, 600] = rvx_b
-    observations[i, 601] = rvy_b
-    observations[i, 602] = rrvz_b
+    observations[i, 300] = rvx_b
+    observations[i, 301] = rvy_b
+    observations[i, 302] = rrvz_b
 
     cdef float dist = sqrt(dx*dx + dy*dy + dz*dz)
-    observations[i, 603] = dist
+    observations[i, 303] = dist
 
     cdef float xb = r11 * dx + r12 * dy + r13 * dz
     cdef float yb = r21 * dx + r22 * dy + r23 * dz
@@ -619,10 +626,10 @@ cdef void _reset_agent_scalar_wrapper(
     conf = 1.0
     if (c30 * xb - s30 * zb) < 0: conf = 0.0
 
-    observations[i, 604] = u
-    observations[i, 605] = v
-    observations[i, 606] = size
-    observations[i, 607] = conf
+    observations[i, 304] = u
+    observations[i, 305] = v
+    observations[i, 306] = size
+    observations[i, 307] = conf
 
 def reset_cython(
     float[:] pos_x, float[:] pos_y, float[:] pos_z,

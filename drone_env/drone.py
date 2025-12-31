@@ -103,10 +103,9 @@ def step_cpu(
     vt_y[:] = vty_val
     vt_z[:] = vtz_val
 
-    # History Update
-    # We capture samples at substep 0 and 1
-    # 2 samples * 3 channels = 6 floats
-    captured_samples = np.zeros((num_agents, 2, 3), dtype=np.float32)
+    # Shift History
+    # Total obs 308. History 0-300.
+    observations[:, 0:290] = observations[:, 10:300]
 
     for s in range(substeps):
         # 1. Dynamics Update
@@ -153,15 +152,6 @@ def step_cpu(
         vy = np.where(underground, 0.0, vy)
         vz = np.where(underground, 0.0, vz)
 
-        # Capture History Samples
-        if s == 0 or s == 1:
-            idx = 0 if s == 0 else 1
-            # Add noise (Uniform +/- 0.02 rad ~ 1 deg)
-            noise = (np.random.rand(num_agents, 3) - 0.5) * 0.04
-            captured_samples[:, idx, 0] = r + noise[:, 0]
-            captured_samples[:, idx, 1] = p + noise[:, 1]
-            captured_samples[:, idx, 2] = y_ang + noise[:, 2]
-
     # Terrain Collision (Final check)
     terr_z = terrain_height_cpu(px, py)
     underground = pz < terr_z
@@ -192,21 +182,12 @@ def step_cpu(
         ph_view[t-1, :, 1] = py
         ph_view[t-1, :, 2] = pz
 
-    # Update Observations
-    # observations: (num_agents, 608)
-    # History: 0 to 600.
-    # Shift: obs[:, 0:594] = obs[:, 6:600]
-    observations[:, 0:594] = observations[:, 6:600]
-
-    # Append new data
-    new_data = captured_samples.reshape(num_agents, 6)
-    observations[:, 594:600] = new_data
-
-    # Update Tracker Features (604:608)
+    # Re-calculate Tracker Features for current state (for display/next step obs 304-308)
     dx_w = vtx_val - px
     dy_w = vty_val - py
     dz_w = vtz_val - pz
 
+    # Recompute R for current state
     sr, cr = np.sin(r), np.cos(r)
     sp, cp = np.sin(p), np.cos(p)
     sy, cy = np.sin(y_ang), np.cos(y_ang)
@@ -235,8 +216,6 @@ def step_cpu(
     zc_safe = np.maximum(zc, 0.1)
     u = xc / zc_safe
     v = yc / zc_safe
-
-    # Clamp u and v to [-10, 10]
     u = np.clip(u, -10.0, 10.0)
     v = np.clip(v, -10.0, 10.0)
 
@@ -249,10 +228,28 @@ def step_cpu(
     # Strictly behind check
     conf = np.where(xb < 0.0, 0.0, conf)
 
-    observations[:, 604] = u
-    observations[:, 605] = v
-    observations[:, 606] = size
-    observations[:, 607] = conf
+    # Capture History Samples (1 per step, 10 features)
+    # Features: roll, pitch, yaw, z, thrust, roll_rate, pitch_rate, yaw_rate, u, v
+    # Updated AFTER dynamics to match AVX implementation
+    new_features = np.zeros((num_agents, 10), dtype=np.float32)
+    new_features[:, 0] = r
+    new_features[:, 1] = p
+    new_features[:, 2] = y_ang
+    new_features[:, 3] = pz
+    new_features[:, 4] = thrust_cmd
+    new_features[:, 5] = roll_rate
+    new_features[:, 6] = pitch_rate
+    new_features[:, 7] = yaw_rate
+    new_features[:, 8] = u
+    new_features[:, 9] = v
+
+    observations[:, 290:300] = new_features
+
+    # 304-308
+    observations[:, 304] = u
+    observations[:, 305] = v
+    observations[:, 306] = size
+    observations[:, 307] = conf
 
     # Calculate Relative Velocity
     # vtvx, vtvy, vtvz needed.
@@ -273,11 +270,11 @@ def step_cpu(
     dist = np.sqrt(dist_sq)
     dist_safe = np.maximum(dist, 0.1)
 
-    # Update Obs 600-603
-    observations[:, 600] = rvx_b
-    observations[:, 601] = rvy_b
-    observations[:, 602] = rvz_b
-    observations[:, 603] = dist
+    # Update Obs 300-304
+    observations[:, 300] = rvx_b
+    observations[:, 301] = rvy_b
+    observations[:, 302] = rvz_b
+    observations[:, 303] = dist
 
     # -------------------------------------------------------------------------
     # Homing Reward (Master Equation)
@@ -412,8 +409,8 @@ def reset_cpu(
     target_vz[:] = tvz
     target_yaw_rate[:] = tyr
 
-    # Reset Observations (Size 608)
-    observations[:, :600] = 0.0
+    # Reset Observations (Size 308)
+    observations[:] = 0.0
 
     # Initial Position
     pos_x[:] = 0.0
@@ -455,15 +452,15 @@ def reset_cpu(
     rvz = vtvz_val - vel_z
 
     # Body Frame Rel Vel (R=Identity at t=0)
-    observations[:, 600] = rvx
-    observations[:, 601] = rvy
-    observations[:, 602] = rvz
+    observations[:, 300] = rvx
+    observations[:, 301] = rvy
+    observations[:, 302] = rvz
 
     dx = vtx_val - pos_x
     dy = vty_val - pos_y
     dz = vtz_val - pos_z
     dist = np.sqrt(dx*dx + dy*dy + dz*dz)
-    observations[:, 603] = dist
+    observations[:, 303] = dist
 
     # Initial Tracker Features
     # R=I
@@ -489,10 +486,10 @@ def reset_cpu(
     conf = np.ones(num_agents, dtype=np.float32)
     conf = np.where((c30 * xb - s30 * zb) < 0, 0.0, conf)
 
-    observations[:, 604] = u
-    observations[:, 605] = v
-    observations[:, 606] = size
-    observations[:, 607] = conf
+    observations[:, 304] = u
+    observations[:, 305] = v
+    observations[:, 306] = size
+    observations[:, 307] = conf
 
     if len(reset_indices) > 0:
         step_counts[reset_indices] = 0
@@ -615,7 +612,7 @@ class DroneEnv(CUDAEnvironmentState):
              "done_flags": {"shape": (self.num_agents,), "dtype": np.float32},
              "rewards": {"shape": (self.num_agents,), "dtype": np.float32},
              "reward_components": {"shape": (self.num_agents, 8), "dtype": np.float32}, # New
-             "observations": {"shape": (self.num_agents, 608), "dtype": np.float32},
+             "observations": {"shape": (self.num_agents, 308), "dtype": np.float32},
              "reset_indices": {"shape": (self.num_agents,), "dtype": np.int32}, # Added for safety
              "actions": {"shape": (self.num_agents * 4,), "dtype": np.float32}, # Also needed for step
              "env_ids": {"shape": (self.num_agents,), "dtype": np.int32},
@@ -625,8 +622,8 @@ class DroneEnv(CUDAEnvironmentState):
         return (self.num_agents, 4)
 
     def get_observation_space(self):
-        # 200 * 3 + 4 + 4 = 608
-        return (self.num_agents, 608)
+        # 30 * 10 + 4 + 4 = 308
+        return (self.num_agents, 308)
 
     def get_reward_signature(self): return (self.num_agents,)
 

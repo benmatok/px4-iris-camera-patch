@@ -12,20 +12,23 @@ static const float DT = 0.05f;
 static const float GRAVITY = 9.81f;
 static const int SUBSTEPS = 2;
 
-// Helper: Custom Memmove using AVX
+// Helper: Custom Memmove using AVX for new obs size (308)
+// Shift 0..290 <- 10..300
+// 290 floats shift.
 inline void shift_observations_avx(float* observations, int i) {
     for (int k = 0; k < 8; k++) {
-        float* ptr = &observations[(i + k) * 608];
-        float* src = ptr + 6;
+        float* ptr = &observations[(i + k) * 308];
+        float* src = ptr + 10; // Shift by 10 (one step history)
         float* dst = ptr;
 
-        // Unrolled AVX copy
-        for (int j = 0; j < 74; j++) {
+        // Copy 290 floats
+        // 290 / 8 = 36 blocks + 2 remainder
+        for (int j = 0; j < 36; j++) {
             __m256 v = _mm256_loadu_ps(src + j * 8);
             _mm256_storeu_ps(dst + j * 8, v);
         }
-        dst[592] = src[592];
-        dst[593] = src[593];
+        dst[288] = src[288];
+        dst[289] = src[289];
     }
 }
 
@@ -40,7 +43,7 @@ inline void step_agents_avx2(
     float* vt_x, float* vt_y, float* vt_z, // Virtual Target Position (Output)
     float* target_trajectory, // Precomputed Trajectory: Shape (episode_length+1, num_agents, 3)
     float* pos_history, // Shape (episode_length, num_agents, 3)
-    float* observations, // stride 608
+    float* observations, // stride 308
     float* rewards,
     float* reward_components, // New: stride 8 (num_agents, 8)
     float* done_flags,
@@ -93,26 +96,11 @@ inline void step_agents_avx2(
     // ------------------------------------------------------------------------
     // Lookup Virtual Target Position from Precomputed Trajectory
     // ------------------------------------------------------------------------
-    // target_trajectory layout: (episode_length+1, num_agents, 3)
-    // Offset for time t: t * num_agents * 3
-    // We need indices for agents i..i+7.
-    // Base ptr for time t:
     int step_idx = t;
     if (step_idx > episode_length) step_idx = episode_length; // Clamp
 
     float* traj_base = &target_trajectory[step_idx * num_agents * 3];
 
-    // Load interleaved data: x0, y0, z0, x1, y1, z1 ...
-    // We need to deinterleave into vtx, vty, vtz registers.
-    // Since we are loading 8 agents = 24 floats.
-    // 3 AVX loads.
-    __m256 m0 = _mm256_loadu_ps(&traj_base[i*3 + 0]);  // x0 y0 z0 x1 y1 z1 x2 y2
-    __m256 m1 = _mm256_loadu_ps(&traj_base[i*3 + 8]);  // z2 x3 y3 z3 x4 y4 z4 x5
-    __m256 m2 = _mm256_loadu_ps(&traj_base[i*3 + 16]); // y5 z5 x6 y6 z6 x7 y7 z7
-
-    // Shuffle to extract planes. This is tedious in AVX.
-    // Alternative: Gather.
-    // vtx = gather(0, 3, 6, ...)
     __m256i idx_x = _mm256_set_epi32(7*3, 6*3, 5*3, 4*3, 3*3, 2*3, 1*3, 0);
     __m256i idx_y = _mm256_add_epi32(idx_x, _mm256_set1_epi32(1));
     __m256i idx_z = _mm256_add_epi32(idx_x, _mm256_set1_epi32(2));
@@ -121,12 +109,6 @@ inline void step_agents_avx2(
     __m256 vty = _mm256_i32gather_ps(&traj_base[i*3], idx_y, 4);
     __m256 vtz = _mm256_i32gather_ps(&traj_base[i*3], idx_z, 4);
 
-    // Calculate Target Velocity (Finite Difference or Analytic?)
-    // If we want 10x, finite difference from precomputed trajectory is fastest (already in cache maybe?)
-    // But we need t+1.
-    // Let's use scalar finite diff since we don't have vtvx buffer.
-    // Or simpler: Assume vtvx = (vt[t+1] - vt[t]) / DT?
-    // Yes.
     int next_step = step_idx + 1;
     if (next_step > episode_length) next_step = episode_length;
     float* traj_next = &target_trajectory[next_step * num_agents * 3];
@@ -136,9 +118,6 @@ inline void step_agents_avx2(
     __m256 vtz_n = _mm256_i32gather_ps(&traj_next[i*3], idx_z, 4);
 
     __m256 inv_dt = _mm256_set1_ps(1.0f / DT);
-    // Since environment step is DT, and t increments by 1.
-    // Actually, step() calls `t = step_counts[0]`.
-    // So pos[t] and pos[t+1] are separated by DT.
 
     __m256 vtvx = _mm256_mul_ps(_mm256_sub_ps(vtx_n, vtx), inv_dt);
     __m256 vtvy = _mm256_mul_ps(_mm256_sub_ps(vty_n, vty), inv_dt);
@@ -148,7 +127,28 @@ inline void step_agents_avx2(
     _mm256_storeu_ps(&vt_y[i], vty);
     _mm256_storeu_ps(&vt_z[i], vtz);
 
-    // Shift Observations
+    // ------------------------------------------------------------------------
+    // Tracker / UV features needed for History
+    // ------------------------------------------------------------------------
+    // Calculate these based on CURRENT state (before dynamics update)
+    // Or should it be after? User said "History of last 3 seconds".
+    // Usually state is recorded before action applied or after?
+    // In step_cpu, we record history at the end of the step.
+    // BUT we need `u` and `v` to put into history.
+    // If we calculate `u, v` at end of step, we put that into history.
+    // The history shift happens at START of step usually?
+    // In step_cpu: shift happens, then new data appended.
+    // So we need to calculate features, then shift & append.
+    // But we need the features of the *previous* step?
+    // No, standard is: Action -> New State -> Observation.
+    // Observation includes current state.
+    // So we should:
+    // 1. Shift history (dropping oldest).
+    // 2. Run Dynamics -> New State.
+    // 3. Calc Features (u, v, etc).
+    // 4. Append New State to History.
+    // 5. Update Obs buffer.
+
     shift_observations_avx(observations, i);
 
     // Substeps
@@ -206,37 +206,6 @@ inline void step_agents_avx2(
         vx = _mm256_blendv_ps(vx, c0, mask_under);
         vy = _mm256_blendv_ps(vy, c0, mask_under);
         vz = _mm256_blendv_ps(vz, c0, mask_under);
-
-        if (s == 0 || s == 1) {
-            int buffer_slot = (s == 0) ? 0 : 1;
-            // Noise
-            float nr[8], np[8], ny[8];
-            for (int k=0; k<8; k++) {
-                nr[k] = (((float)rand() / (float)RAND_MAX) - 0.5f) * 0.04f;
-                np[k] = (((float)rand() / (float)RAND_MAX) - 0.5f) * 0.04f;
-                ny[k] = (((float)rand() / (float)RAND_MAX) - 0.5f) * 0.04f;
-            }
-            __m256 vnr = _mm256_loadu_ps(nr);
-            __m256 vnp = _mm256_loadu_ps(np);
-            __m256 vny = _mm256_loadu_ps(ny);
-
-            __m256 r_noisy = _mm256_add_ps(r, vnr);
-            __m256 p_noisy = _mm256_add_ps(p, vnp);
-            __m256 y_noisy = _mm256_add_ps(y, vny);
-
-            float tmp_r[8], tmp_p[8], tmp_y[8];
-            _mm256_storeu_ps(tmp_r, r_noisy);
-            _mm256_storeu_ps(tmp_p, p_noisy);
-            _mm256_storeu_ps(tmp_y, y_noisy);
-
-            for(int k=0; k<8; k++) {
-                int agent_idx = i+k;
-                int offset = agent_idx * 608 + 594 + buffer_slot * 3;
-                observations[offset + 0] = tmp_r[k];
-                observations[offset + 1] = tmp_p[k];
-                observations[offset + 2] = tmp_y[k];
-            }
-        }
     }
 
     _mm256_storeu_ps(&pos_x[i], px);
@@ -271,7 +240,7 @@ inline void step_agents_avx2(
     }
 
     // ------------------------------------------------------------------------
-    // Calculate Augmented Features
+    // Calculate Augmented Features & Update History
     // ------------------------------------------------------------------------
     __m256 dx_w = _mm256_sub_ps(vtx, px);
     __m256 dy_w = _mm256_sub_ps(vty, py);
@@ -327,12 +296,39 @@ inline void step_agents_avx2(
     __m256 mask_behind = _mm256_cmp_ps(zc, c0, _CMP_LT_OQ);
     conf = _mm256_blendv_ps(conf, c0, mask_behind);
 
-    float tmp_u[8], tmp_v[8], tmp_size[8], tmp_conf[8];
+    // Update History (last 10 slots)
+    // Features: r, p, y, pz, thrust, rr, pr, yr, u, v
+    float tmp_r[8], tmp_p[8], tmp_y[8], tmp_pz[8];
+    float tmp_th[8], tmp_rr[8], tmp_pr[8], tmp_yr[8];
+    float tmp_u[8], tmp_v[8];
+
+    _mm256_storeu_ps(tmp_r, r);
+    _mm256_storeu_ps(tmp_p, p);
+    _mm256_storeu_ps(tmp_y, y);
+    _mm256_storeu_ps(tmp_pz, pz);
+    _mm256_storeu_ps(tmp_th, thrust_cmd);
+    _mm256_storeu_ps(tmp_rr, roll_rate_cmd);
+    _mm256_storeu_ps(tmp_pr, pitch_rate_cmd);
+    _mm256_storeu_ps(tmp_yr, yaw_rate_cmd);
     _mm256_storeu_ps(tmp_u, u);
     _mm256_storeu_ps(tmp_v, v);
-    _mm256_storeu_ps(tmp_size, rel_size);
-    _mm256_storeu_ps(tmp_conf, conf);
 
+    for (int k=0; k<8; k++) {
+        int agent_idx = i+k;
+        int off = agent_idx*308 + 290; // Last 10 of 300
+        observations[off+0] = tmp_r[k];
+        observations[off+1] = tmp_p[k];
+        observations[off+2] = tmp_y[k];
+        observations[off+3] = tmp_pz[k];
+        observations[off+4] = tmp_th[k];
+        observations[off+5] = tmp_rr[k];
+        observations[off+6] = tmp_pr[k];
+        observations[off+7] = tmp_yr[k];
+        observations[off+8] = tmp_u[k];
+        observations[off+9] = tmp_v[k];
+    }
+
+    // Update Aux Features (300-308)
     __m256 rvx = _mm256_sub_ps(vtvx, vx);
     __m256 rvy = _mm256_sub_ps(vtvy, vy);
     __m256 rvz = _mm256_sub_ps(vtvz, vz);
@@ -349,14 +345,17 @@ inline void step_agents_avx2(
     __m256 dist_safe = _mm256_max_ps(dist, c01);
 
     float tmp_rvx[8], tmp_rvy[8], tmp_rvz[8], tmp_dist[8];
+    float tmp_size[8], tmp_conf[8];
     _mm256_storeu_ps(tmp_rvx, rvx_b);
     _mm256_storeu_ps(tmp_rvy, rvy_b);
     _mm256_storeu_ps(tmp_rvz, rvz_b);
     _mm256_storeu_ps(tmp_dist, dist);
+    _mm256_storeu_ps(tmp_size, rel_size);
+    _mm256_storeu_ps(tmp_conf, conf);
 
     for(int k=0; k<8; k++) {
         int agent_idx = i+k;
-        int off = agent_idx*608 + 600;
+        int off = agent_idx*308 + 300;
         observations[off] = tmp_rvx[k];
         observations[off+1] = tmp_rvy[k];
         observations[off+2] = tmp_rvz[k];
