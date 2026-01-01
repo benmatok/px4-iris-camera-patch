@@ -237,26 +237,65 @@ class Autoencoder1D(nn.Module):
         self.input_dim = input_dim
         self.latent_dim = latent_dim
 
-        # Improved Encoder: 1D Conv for sequence length 30
-        # Input: (Batch, 10, 30)
-        self.encoder = nn.Sequential(
-            nn.Conv1d(input_dim, 32, kernel_size=3, stride=1, padding=1), # -> 30
-            nn.LeakyReLU(0.2),
-            nn.Conv1d(32, 64, kernel_size=3, stride=2, padding=1), # -> 15
-            nn.LeakyReLU(0.2),
-            nn.Conv1d(64, 128, kernel_size=3, stride=2, padding=1), # -> 8
-            nn.LeakyReLU(0.2),
-            nn.Flatten(), # 128*8 = 1024
-            nn.Linear(1024, latent_dim),
-            nn.Tanh() # Latent vector
-        )
+        # Structurally Aware Encoder
+        # Channel Groups:
+        # 0-2: Attitude (3)
+        # 3: Altitude (1)
+        # 4-7: Control (4)
+        # 8-9: Tracker (2)
 
-        # Decoder
+        # Branch 1: Attitude (3 ch)
+        self.enc_att = nn.Sequential(
+            nn.BatchNorm1d(3),
+            nn.Conv1d(3, 16, 3, 1, 1), nn.LeakyReLU(0.2),
+            nn.Conv1d(16, 32, 3, 2, 1), nn.LeakyReLU(0.2), # -> 15
+            nn.Conv1d(32, 64, 3, 2, 1), nn.LeakyReLU(0.2), # -> 8
+            nn.Flatten()
+        )
+        # 64 * 8 = 512
+
+        # Branch 2: Altitude (1 ch)
+        self.enc_alt = nn.Sequential(
+            nn.BatchNorm1d(1),
+            nn.Conv1d(1, 8, 3, 1, 1), nn.LeakyReLU(0.2),
+            nn.Conv1d(8, 16, 3, 2, 1), nn.LeakyReLU(0.2), # -> 15
+            nn.Conv1d(16, 32, 3, 2, 1), nn.LeakyReLU(0.2), # -> 8
+            nn.Flatten()
+        )
+        # 32 * 8 = 256
+
+        # Branch 3: Control (4 ch)
+        self.enc_ctrl = nn.Sequential(
+            nn.BatchNorm1d(4),
+            nn.Conv1d(4, 16, 3, 1, 1), nn.LeakyReLU(0.2),
+            nn.Conv1d(16, 32, 3, 2, 1), nn.LeakyReLU(0.2), # -> 15
+            nn.Conv1d(32, 64, 3, 2, 1), nn.LeakyReLU(0.2), # -> 8
+            nn.Flatten()
+        )
+        # 64 * 8 = 512
+
+        # Branch 4: Tracker (2 ch)
+        self.enc_track = nn.Sequential(
+            nn.BatchNorm1d(2),
+            nn.Conv1d(2, 16, 3, 1, 1), nn.LeakyReLU(0.2),
+            nn.Conv1d(16, 32, 3, 2, 1), nn.LeakyReLU(0.2), # -> 15
+            nn.Conv1d(32, 64, 3, 2, 1), nn.LeakyReLU(0.2), # -> 8
+            nn.Flatten()
+        )
+        # 64 * 8 = 512
+
+        # Total Flattened Dim = 512 + 256 + 512 + 512 = 1792
+        self.flat_dim = 1792
+
+        self.fc_enc = nn.Linear(self.flat_dim, latent_dim)
+        self.tanh = nn.Tanh()
+
+        # Decoder (Shared)
         self.decoder_linear = nn.Linear(latent_dim, 1024)
         self.decoder = nn.Sequential(
-            nn.ConvTranspose1d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=0), # 8 -> 15 (8-1)*2 - 2 + 3 + 0 = 15
+            nn.ConvTranspose1d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=0), # 8 -> 15
             nn.LeakyReLU(0.2),
-            nn.ConvTranspose1d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1), # 15 -> 30 (15-1)*2 - 2 + 3 + 1 = 30
+            nn.ConvTranspose1d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1), # 15 -> 30
             nn.LeakyReLU(0.2),
             nn.ConvTranspose1d(32, input_dim, kernel_size=3, stride=1, padding=1), # 30->30
         )
@@ -266,8 +305,25 @@ class Autoencoder1D(nn.Module):
         batch_size = x.shape[0]
         x_reshaped = x.view(batch_size, self.seq_len, self.input_dim).permute(0, 2, 1) # (N, 10, 30)
 
-        latent = self.encoder(x_reshaped)
+        # Split inputs based on structure
+        x_att = x_reshaped[:, 0:3, :]   # Roll, Pitch, Yaw
+        x_alt = x_reshaped[:, 3:4, :]   # Z
+        x_ctrl = x_reshaped[:, 4:8, :]  # Thrust, Rates
+        x_track = x_reshaped[:, 8:10, :] # U, V
 
+        # Encode branches
+        f_att = self.enc_att(x_att)
+        f_alt = self.enc_alt(x_alt)
+        f_ctrl = self.enc_ctrl(x_ctrl)
+        f_track = self.enc_track(x_track)
+
+        # Concatenate features
+        f_all = torch.cat([f_att, f_alt, f_ctrl, f_track], dim=1)
+
+        # Latent space
+        latent = self.tanh(self.fc_enc(f_all))
+
+        # Decode
         recon_features = self.decoder_linear(latent)
         recon_features = recon_features.view(batch_size, 128, 8)
 
