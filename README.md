@@ -101,7 +101,13 @@ To verify correctness, `train_ae.py` confirms that the physics simulation produc
 
 ### Autoencoder Training
 
-A separate script `train_ae.py` is provided to train the IMU Autoencoder independently using data generated from large-scale simulations. This script uses the Cython-optimized CPU environment to generate diverse flight trajectories (using a proportional controller) and trains the `Autoencoder1D` model using KFAC optimization.
+A separate script `train_ae.py` is provided to train the IMU Autoencoder independently using data generated from large-scale simulations. This script uses the Cython-optimized CPU environment to generate diverse flight trajectories (using a proportional controller) and trains the `TCNAutoencoder` model using KFAC optimization.
+
+**Architecture Update (TCN):**
+The policy now utilizes a **Temporal Convolutional Network (TCN) Autoencoder** (`models/ae_policy.py`) to encode the drone's 30-step history.
+- **Structure**: Stack of dilated causal convolutions (`d=1, 2, 4, 8`) to capture long-term temporal dependencies.
+- **Latent Space**: Compressed into a 64-dimensional latent vector (increased from 20).
+- **Goal**: Robust full-sequence reconstruction to ensure the latent state captures dynamic context (e.g., velocity trends, oscillations).
 
 #### Usage
 
