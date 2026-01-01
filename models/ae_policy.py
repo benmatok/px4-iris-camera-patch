@@ -253,160 +253,143 @@ class ChannelScaler(nn.Module):
     def forward(self, x):
         return x * self.scale + self.bias
 
-class Chomp1d(nn.Module):
-    def __init__(self, chomp_size):
-        super(Chomp1d, self).__init__()
-        self.chomp_size = chomp_size
-
-    def forward(self, x):
-        return x[:, :, :-self.chomp_size].contiguous()
-
-class TemporalBlock(nn.Module):
-    def __init__(self, n_inputs, n_outputs, kernel_size, stride, dilation, padding, dropout=0.2):
-        super(TemporalBlock, self).__init__()
-
-        # Conv 1
-        self.conv1 = nn.Conv1d(n_inputs, n_outputs, kernel_size,
-                               stride=stride, padding=padding, dilation=dilation)
-        self.chomp1 = Chomp1d(padding)
-        self.relu1 = nn.ReLU()
-        self.dropout1 = nn.Dropout(dropout)
-
-        # Conv 2
-        self.conv2 = nn.Conv1d(n_outputs, n_outputs, kernel_size,
-                               stride=stride, padding=padding, dilation=dilation)
-        self.chomp2 = Chomp1d(padding)
-        self.relu2 = nn.ReLU()
-        self.dropout2 = nn.Dropout(dropout)
-
-        self.net = nn.Sequential(self.conv1, self.chomp1, self.relu1, self.dropout1,
-                                 self.conv2, self.chomp2, self.relu2, self.dropout2)
-
-        # Residual Connection
-        self.downsample = nn.Conv1d(n_inputs, n_outputs, 1) if n_inputs != n_outputs else None
-        self.relu = nn.ReLU()
-        self.init_weights()
-
-    def init_weights(self):
-        self.conv1.weight.data.normal_(0, 0.01)
-        self.conv2.weight.data.normal_(0, 0.01)
-        if self.downsample is not None:
-            self.downsample.weight.data.normal_(0, 0.01)
-
-    def forward(self, x):
-        out = self.net(x)
-        res = x if self.downsample is None else self.downsample(x)
-        return self.relu(out + res)
-
-class TCNAutoencoder(nn.Module):
-    def __init__(self, input_dim=10, seq_len=30, latent_dim=64, num_channels=[32, 32, 64, 64]):
-        super(TCNAutoencoder, self).__init__()
-        self.input_dim = input_dim
+class Autoencoder1D(nn.Module):
+    def __init__(self, input_dim=10, seq_len=30, latent_dim=20):
+        super(Autoencoder1D, self).__init__()
         self.seq_len = seq_len
+        self.input_dim = input_dim
         self.latent_dim = latent_dim
 
-        # Input/Output Scalers
+        # Structurally Aware Encoder
+        # Channel Groups:
+        # 0-2: Attitude (3)
+        # 3: Altitude (1)
+        # 4-7: Control (4)
+        # 8-9: Tracker (2)
+
+        # Learnable Scalers (Global Parameters)
+        # Replaces BatchNorm to avoid batch-dependency issues while ensuring normalization.
+
+        # Branch 1: Attitude (3 ch)
+        # Scale ~ 0.3 (pi -> 1). Bias 0.
         self.scale_att = ChannelScaler(3, init_scale=0.3, init_bias=0.0)
+        self.enc_att = nn.Sequential(
+            nn.Conv1d(3, 16, 3, 1, 1), nn.LeakyReLU(0.2),
+            nn.Conv1d(16, 32, 3, 2, 1), nn.LeakyReLU(0.2), # -> 15
+            nn.Conv1d(32, 64, 3, 2, 1), nn.LeakyReLU(0.2), # -> 8
+            nn.Flatten()
+        )
+        # 64 * 8 = 512
+
+        # Branch 2: Altitude (1 ch)
+        # 0-20. Center at 10. Scale ~ 0.1. (x-10)*0.1 -> x*0.1 - 1.0
         self.scale_alt = ChannelScaler(1, init_scale=0.1, init_bias=-1.0)
+        self.enc_alt = nn.Sequential(
+            nn.Conv1d(1, 8, 3, 1, 1), nn.LeakyReLU(0.2),
+            nn.Conv1d(8, 16, 3, 2, 1), nn.LeakyReLU(0.2), # -> 15
+            nn.Conv1d(16, 32, 3, 2, 1), nn.LeakyReLU(0.2), # -> 8
+            nn.Flatten()
+        )
+        # 32 * 8 = 256
+
+        # Branch 3: Control (4 ch)
+        # Thrust: Center 0.5. (x - 0.5)*2.0 -> x*2 - 1.
+        # Rates: Scale 0.2.
         self.scale_ctrl = ChannelScaler(4, init_scale=[2.0, 0.2, 0.2, 0.2], init_bias=[-1.0, 0.0, 0.0, 0.0])
+        self.enc_ctrl = nn.Sequential(
+            nn.Conv1d(4, 16, 3, 1, 1), nn.LeakyReLU(0.2),
+            nn.Conv1d(16, 32, 3, 2, 1), nn.LeakyReLU(0.2), # -> 15
+            nn.Conv1d(32, 64, 3, 2, 1), nn.LeakyReLU(0.2), # -> 8
+            nn.Flatten()
+        )
+        # 64 * 8 = 512
+
+        # Branch 4: Tracker (2 ch)
+        # +/- 10. Scale 0.1.
         self.scale_track = ChannelScaler(2, init_scale=0.1, init_bias=0.0)
+        self.enc_track = nn.Sequential(
+            nn.Conv1d(2, 16, 3, 1, 1), nn.LeakyReLU(0.2),
+            nn.Conv1d(16, 32, 3, 2, 1), nn.LeakyReLU(0.2), # -> 15
+            nn.Conv1d(32, 64, 3, 2, 1), nn.LeakyReLU(0.2), # -> 8
+            nn.Flatten()
+        )
+        # 64 * 8 = 512
+
+        # Total Flattened Dim = 512 + 256 + 512 + 512 = 1792
+        self.flat_dim = 1792
+
+        self.fc_enc = nn.Linear(self.flat_dim, latent_dim)
+        self.tanh = nn.Tanh()
+
+        # Decoder (Shared)
+        self.decoder_linear = nn.Linear(latent_dim, 1024)
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose1d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=0), # 8 -> 15
+            nn.LeakyReLU(0.2),
+            nn.ConvTranspose1d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1), # 15 -> 30
+            nn.LeakyReLU(0.2),
+            nn.ConvTranspose1d(32, input_dim, kernel_size=3, stride=1, padding=1), # 30->30
+        )
+
+        # Output Scaler (Inversion)
+        # Initialize with roughly the inverse of input scales to easy the decoder's job.
+        # Inverse: x = (y - bias)/scale = y*(1/scale) - bias/scale
+        # So new_scale = 1/scale, new_bias = -bias/scale
+
+        # Att: scale=0.3, bias=0. -> inv_scale=3.33, inv_bias=0.
+        # Alt: scale=0.1, bias=-1. -> inv_scale=10., inv_bias=10.
+        # Ctrl:
+        #   Thrust: scale=2, bias=-1 -> inv_scale=0.5, inv_bias=0.5.
+        #   Rates: scale=0.2, bias=0 -> inv_scale=5., inv_bias=0.
+        # Track: scale=0.1, bias=0 -> inv_scale=10., inv_bias=0.
 
         inv_scales = [3.33]*3 + [10.0] + [0.5, 5.0, 5.0, 5.0] + [10.0]*2
         inv_biases = [0.0]*3 + [10.0] + [0.5, 0.0, 0.0, 0.0] + [0.0]*2
+
         self.out_scaler = ChannelScaler(input_dim, init_scale=inv_scales, init_bias=inv_biases)
 
-        # Encoder (TCN)
-        layers = []
-        num_levels = len(num_channels)
-        kernel_size = 3
-        in_channels = input_dim
-
-        for i in range(num_levels):
-            dilation_size = 2 ** i
-            out_channels = num_channels[i]
-            padding = (kernel_size - 1) * dilation_size # Causal padding
-
-            layers.append(TemporalBlock(in_channels, out_channels, kernel_size, stride=1, dilation=dilation_size, padding=padding, dropout=0.05))
-            in_channels = out_channels
-
-        self.tcn_encoder = nn.Sequential(*layers)
-
-        # Projection to Latent
-        # We take the last timestep of the TCN output as the summary of the sequence
-        self.to_latent = nn.Linear(num_channels[-1], latent_dim)
-
-        # Decoder
-        # Latent -> TCN -> Reconstructed Sequence
-        # We project latent back to TCN channel dim, repeat across time, and refine with TCN
-        self.from_latent = nn.Linear(latent_dim, num_channels[-1])
-
-        decoder_layers = []
-        # Same structure as encoder but can be non-causal if we want, or just causal.
-        # Autoencoders often use symmetric structures.
-
-        dec_channels = num_channels[::-1] # Reverse: [64, 64, 32, 32]
-        in_channels = dec_channels[0]
-
-        for i in range(num_levels):
-            dilation_size = 2 ** i # Reuse dilation pattern or reverse? Standard is symmetric.
-            # For reconstruction, causality isn't strictly required in decoder, but standard TCN blocks are handy.
-            out_channels = dec_channels[i] if i < num_levels - 1 else 32 # Taper down
-            padding = (kernel_size - 1) * dilation_size
-
-            decoder_layers.append(TemporalBlock(in_channels, out_channels, kernel_size, stride=1, dilation=dilation_size, padding=padding, dropout=0.05))
-            in_channels = out_channels
-
-        self.tcn_decoder = nn.Sequential(*decoder_layers)
-
-        # Final projection to input_dim
-        self.final_conv = nn.Conv1d(in_channels, input_dim, 1)
-
     def forward(self, x):
-        # x: (Batch, 300) -> (Batch, 10, 30) (after reshape and permute)
+        # x is (Batch, 300). Reshape to (Batch, 10, 30)
         batch_size = x.shape[0]
         x_reshaped = x.view(batch_size, self.seq_len, self.input_dim).permute(0, 2, 1) # (N, 10, 30)
 
-        # Split and Scale
-        x_att = self.scale_att(x_reshaped[:, 0:3, :])
-        x_alt = self.scale_alt(x_reshaped[:, 3:4, :])
-        x_ctrl = self.scale_ctrl(x_reshaped[:, 4:8, :])
-        x_track = self.scale_track(x_reshaped[:, 8:10, :])
+        # Split inputs based on structure
+        x_att = x_reshaped[:, 0:3, :]   # Roll, Pitch, Yaw
+        x_alt = x_reshaped[:, 3:4, :]   # Z
+        x_ctrl = x_reshaped[:, 4:8, :]  # Thrust, Rates
+        x_track = x_reshaped[:, 8:10, :] # U, V
 
-        x_scaled = torch.cat([x_att, x_alt, x_ctrl, x_track], dim=1) # (N, 10, 30)
+        # Scale Inputs
+        x_att = self.scale_att(x_att)
+        x_alt = self.scale_alt(x_alt)
+        x_ctrl = self.scale_ctrl(x_ctrl)
+        x_track = self.scale_track(x_track)
 
-        # Encoder
-        enc_out = self.tcn_encoder(x_scaled) # (N, C_out, 30)
+        # Encode branches
+        f_att = self.enc_att(x_att)
+        f_alt = self.enc_alt(x_alt)
+        f_ctrl = self.enc_ctrl(x_ctrl)
+        f_track = self.enc_track(x_track)
 
-        # Global Pooling or Last Timestep?
-        # TCNs with causal padding: Last timestep contains info from full receptive field.
-        # RF check: 32 layers? No, 4 layers: 1, 2, 4, 8. RF = 1 + 2*(1+2+4+8) = 31.
-        # So last timestep covers 30 inputs.
+        # Concatenate features
+        f_all = torch.cat([f_att, f_alt, f_ctrl, f_track], dim=1)
 
-        last_step = enc_out[:, :, -1] # (N, C_out)
-        latent = torch.tanh(self.to_latent(last_step)) # (N, Latent)
+        # Latent space
+        latent = self.tanh(self.fc_enc(f_all))
 
-        # Decoder
-        # Project back
-        dec_init = self.from_latent(latent) # (N, C_out)
+        # Decode
+        recon_features = self.decoder_linear(latent)
+        recon_features = recon_features.view(batch_size, 128, 8)
 
-        # Repeat for sequence length
-        # (N, C, 1) -> (N, C, 30)
-        dec_in = dec_init.unsqueeze(2).expand(-1, -1, self.seq_len)
+        recon = self.decoder(recon_features) # (N, 10, 30)
 
-        # Pass through Decoder TCN
-        dec_features = self.tcn_decoder(dec_in) # (N, C_final, 30)
+        # Apply Output Scaler
+        recon = self.out_scaler(recon)
 
-        # Project to Output
-        recon = self.final_conv(dec_features) # (N, 10, 30)
-
-        # Inverse Scale
-        recon_scaled = self.out_scaler(recon)
-
-        # Flatten
-        recon_flat = recon_scaled.permute(0, 2, 1).reshape(batch_size, -1)
+        # Flatten recon to match input
+        recon_flat = recon.permute(0, 2, 1).reshape(batch_size, -1)
 
         return latent, recon_flat
-
 
 class DronePolicy(nn.Module):
     def __init__(self, observation_dim=308, action_dim=4, hidden_dim=256, env=None, hidden_dims=None):
@@ -419,16 +402,15 @@ class DronePolicy(nn.Module):
         self.history_dim = 300
         self.target_dim = 4 # Target Commands
         self.tracker_dim = 4 # Tracker Features
-
-        self.latent_dim = 64 # Increased latent space
+        self.latent_dim = 20
 
         # Compatibility with different init styles
         if hidden_dims is None:
             hidden_dims = [hidden_dim, hidden_dim]
 
-        self.ae = TCNAutoencoder(input_dim=10, seq_len=30, latent_dim=self.latent_dim)
+        self.ae = Autoencoder1D(input_dim=10, seq_len=30, latent_dim=self.latent_dim)
 
-        # RL Agent Input: Latent(64) + Target(4) + Tracker(4) = 72
+        # RL Agent Input: Latent(20) + Target(4) + Tracker(4) = 28
         input_dim = self.latent_dim + self.target_dim + self.tracker_dim
 
         # Separate feature extraction from heads
@@ -451,6 +433,7 @@ class DronePolicy(nn.Module):
         self.value_head = nn.Linear(in_dim, 1)
 
         # Learnable Action Variance
+        # Initialize log_std to -0.69 (approx exp(-0.69) = 0.5)
         self.action_log_std = nn.Parameter(torch.ones(1, self.action_dim) * -0.69)
 
     def forward(self, obs):
@@ -465,7 +448,7 @@ class DronePolicy(nn.Module):
         latent, recon = self.ae(history)
 
         # RL Input
-        rl_input = torch.cat([latent, aux_features], dim=1) # 64 + 8 = 72
+        rl_input = torch.cat([latent, aux_features], dim=1) # 20 + 8 = 28
 
         # Feature Extraction
         features = self.feature_extractor(rl_input)

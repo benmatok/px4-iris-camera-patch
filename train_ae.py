@@ -8,7 +8,7 @@ import argparse
 from tqdm import tqdm
 
 from drone_env.drone import DroneEnv
-from models.ae_policy import TCNAutoencoder, KFACOptimizer
+from models.ae_policy import Autoencoder1D, KFACOptimizer
 
 class AETrainer:
     def __init__(self, num_agents=5000, episode_length=100, lr=0.001, load_checkpoint=None):
@@ -25,11 +25,11 @@ class AETrainer:
         for name, info in self.env.get_data_dictionary().items():
             self.data[name] = np.zeros(info["shape"], dtype=info["dtype"])
 
-        # Initialize TCN AE
+        # Initialize Autoencoder
         # Input dim 10, seq len 30
-        self.ae = TCNAutoencoder(input_dim=10, seq_len=30, latent_dim=64).to(self.device)
+        self.ae = Autoencoder1D(input_dim=10, seq_len=30, latent_dim=20).to(self.device)
 
-        # Use KFAC Optimizer (Note: KFAC handles Linear/Conv1d layers in TCN)
+        # Use KFAC Optimizer
         print("Using KFAC Optimizer")
         self.optimizer = KFACOptimizer(self.ae, lr=lr)
 
@@ -175,16 +175,16 @@ class AETrainer:
                     env_ids=env_ids_to_step
                 )
 
-                # 3. Train TCN AE
+                # 3. Train AE
                 # Extract history (first 300)
                 obs_np = self.data["observations"][:, :300]
                 obs_tensor = torch.from_numpy(obs_np).float().to(self.device)
 
                 # Forward
-                latent, recon_flat = self.ae(obs_tensor)
+                latent, recon = self.ae(obs_tensor)
 
-                # Loss: Reconstruction of the full sequence
-                loss = self.criterion(recon_flat, obs_tensor)
+                # Loss
+                loss = self.criterion(recon, obs_tensor)
 
                 # Backward
                 self.optimizer.zero_grad()
@@ -220,7 +220,7 @@ class AETrainer:
     def plot_loss(self):
         plt.figure(figsize=(10, 5))
         plt.plot(self.loss_history)
-        plt.title("TCN Autoencoder Training Loss (L1)")
+        plt.title("Autoencoder Training Loss (L1)")
         plt.xlabel("Step")
         plt.ylabel("L1 Loss")
         plt.yscale("log")
