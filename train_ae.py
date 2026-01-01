@@ -25,6 +25,11 @@ class AETrainer:
         for name, info in self.env.get_data_dictionary().items():
             self.data[name] = np.zeros(info["shape"], dtype=info["dtype"])
 
+        # Target Generation state (random phases for each agent)
+        # We will use these to generate smooth target velocities
+        self.phases = np.random.rand(num_agents, 4) * 2 * np.pi
+        self.freqs = 0.05 + np.random.rand(num_agents, 4) * 0.1 # Slow varying
+
         # Initialize Autoencoder
         # Input dim 10, seq len 30
         self.ae = Autoencoder1D(input_dim=10, seq_len=30, latent_dim=20).to(self.device)
@@ -73,6 +78,26 @@ class AETrainer:
             except Exception as e:
                 print(f"Error loading checkpoint: {e}")
                 print("Starting from scratch.")
+
+    def generate_targets(self, step):
+        """
+        Updates target velocities with diverse, smooth patterns (Lissajous-like).
+        This forces the drone to execute complex maneuvers (turns, climbs, dives).
+        """
+        t = float(step)
+
+        # Sine waves with individual phases and frequencies
+        # Target VX: Forward/Backward (approx +/- 2 m/s)
+        self.data["target_vx"][:] = 2.0 * np.sin(self.freqs[:, 0] * t + self.phases[:, 0])
+
+        # Target VY: Sideways (approx +/- 2 m/s)
+        self.data["target_vy"][:] = 2.0 * np.sin(self.freqs[:, 1] * t + self.phases[:, 1])
+
+        # Target VZ: Up/Down (approx +/- 1 m/s)
+        self.data["target_vz"][:] = 1.0 * np.sin(self.freqs[:, 2] * t + self.phases[:, 2])
+
+        # Target Yaw Rate: Turning (approx +/- 1 rad/s)
+        self.data["target_yaw_rate"][:] = 1.0 * np.sin(self.freqs[:, 3] * t + self.phases[:, 3])
 
     def simple_controller(self):
         """
@@ -148,14 +173,20 @@ class AETrainer:
                 num_agents=self.env.num_agents, reset_indices=np.array([0], dtype=np.int32)
             )
 
+            # Re-randomize phases each episode for variety
+            self.phases = np.random.rand(self.num_agents, 4) * 2 * np.pi
+
             pbar = tqdm(range(self.episode_length), desc=f"Ep {ep+1}/{total_episodes}")
             ep_loss = 0
 
             for t in pbar:
-                # 1. Compute Actions
+                # 1. Update Targets (Rich Scenarios)
+                self.generate_targets(t)
+
+                # 2. Compute Actions
                 actions = self.simple_controller()
 
-                # 2. Step Env
+                # 3. Step Env
                 env_ids_to_step = np.array([0], dtype=np.int32)
                 self.env.step_function(
                     pos_x=self.data["pos_x"], pos_y=self.data["pos_y"], pos_z=self.data["pos_z"],
@@ -175,7 +206,7 @@ class AETrainer:
                     env_ids=env_ids_to_step
                 )
 
-                # 3. Train AE
+                # 4. Train AE
                 # Extract history (first 300)
                 obs_np = self.data["observations"][:, :300]
                 obs_tensor = torch.from_numpy(obs_np).float().to(self.device)
