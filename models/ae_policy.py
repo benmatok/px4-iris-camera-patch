@@ -230,6 +230,29 @@ class KFACOptimizerPlaceholder(KFACOptimizer):
 
 # --- End KFAC Implementation ---
 
+class ChannelScaler(nn.Module):
+    def __init__(self, num_channels, init_scale=None, init_bias=None):
+        super(ChannelScaler, self).__init__()
+        self.scale = nn.Parameter(torch.ones(1, num_channels, 1))
+        self.bias = nn.Parameter(torch.zeros(1, num_channels, 1))
+
+        if init_scale is not None:
+            if isinstance(init_scale, (list, tuple)):
+                for i, v in enumerate(init_scale):
+                    self.scale.data[0, i, 0] = v
+            else:
+                self.scale.data.fill_(init_scale)
+
+        if init_bias is not None:
+            if isinstance(init_bias, (list, tuple)):
+                for i, v in enumerate(init_bias):
+                    self.bias.data[0, i, 0] = v
+            else:
+                self.bias.data.fill_(init_bias)
+
+    def forward(self, x):
+        return x * self.scale + self.bias
+
 class Autoencoder1D(nn.Module):
     def __init__(self, input_dim=10, seq_len=30, latent_dim=20):
         super(Autoencoder1D, self).__init__()
@@ -244,9 +267,13 @@ class Autoencoder1D(nn.Module):
         # 4-7: Control (4)
         # 8-9: Tracker (2)
 
+        # Learnable Scalers (Global Parameters)
+        # Replaces BatchNorm to avoid batch-dependency issues while ensuring normalization.
+
         # Branch 1: Attitude (3 ch)
+        # Scale ~ 0.3 (pi -> 1). Bias 0.
+        self.scale_att = ChannelScaler(3, init_scale=0.3, init_bias=0.0)
         self.enc_att = nn.Sequential(
-            nn.BatchNorm1d(3),
             nn.Conv1d(3, 16, 3, 1, 1), nn.LeakyReLU(0.2),
             nn.Conv1d(16, 32, 3, 2, 1), nn.LeakyReLU(0.2), # -> 15
             nn.Conv1d(32, 64, 3, 2, 1), nn.LeakyReLU(0.2), # -> 8
@@ -255,8 +282,9 @@ class Autoencoder1D(nn.Module):
         # 64 * 8 = 512
 
         # Branch 2: Altitude (1 ch)
+        # 0-20. Center at 10. Scale ~ 0.1. (x-10)*0.1 -> x*0.1 - 1.0
+        self.scale_alt = ChannelScaler(1, init_scale=0.1, init_bias=-1.0)
         self.enc_alt = nn.Sequential(
-            nn.BatchNorm1d(1),
             nn.Conv1d(1, 8, 3, 1, 1), nn.LeakyReLU(0.2),
             nn.Conv1d(8, 16, 3, 2, 1), nn.LeakyReLU(0.2), # -> 15
             nn.Conv1d(16, 32, 3, 2, 1), nn.LeakyReLU(0.2), # -> 8
@@ -265,8 +293,10 @@ class Autoencoder1D(nn.Module):
         # 32 * 8 = 256
 
         # Branch 3: Control (4 ch)
+        # Thrust: Center 0.5. (x - 0.5)*2.0 -> x*2 - 1.
+        # Rates: Scale 0.2.
+        self.scale_ctrl = ChannelScaler(4, init_scale=[2.0, 0.2, 0.2, 0.2], init_bias=[-1.0, 0.0, 0.0, 0.0])
         self.enc_ctrl = nn.Sequential(
-            nn.BatchNorm1d(4),
             nn.Conv1d(4, 16, 3, 1, 1), nn.LeakyReLU(0.2),
             nn.Conv1d(16, 32, 3, 2, 1), nn.LeakyReLU(0.2), # -> 15
             nn.Conv1d(32, 64, 3, 2, 1), nn.LeakyReLU(0.2), # -> 8
@@ -275,8 +305,9 @@ class Autoencoder1D(nn.Module):
         # 64 * 8 = 512
 
         # Branch 4: Tracker (2 ch)
+        # +/- 10. Scale 0.1.
+        self.scale_track = ChannelScaler(2, init_scale=0.1, init_bias=0.0)
         self.enc_track = nn.Sequential(
-            nn.BatchNorm1d(2),
             nn.Conv1d(2, 16, 3, 1, 1), nn.LeakyReLU(0.2),
             nn.Conv1d(16, 32, 3, 2, 1), nn.LeakyReLU(0.2), # -> 15
             nn.Conv1d(32, 64, 3, 2, 1), nn.LeakyReLU(0.2), # -> 8
@@ -300,6 +331,23 @@ class Autoencoder1D(nn.Module):
             nn.ConvTranspose1d(32, input_dim, kernel_size=3, stride=1, padding=1), # 30->30
         )
 
+        # Output Scaler (Inversion)
+        # Initialize with roughly the inverse of input scales to easy the decoder's job.
+        # Inverse: x = (y - bias)/scale = y*(1/scale) - bias/scale
+        # So new_scale = 1/scale, new_bias = -bias/scale
+
+        # Att: scale=0.3, bias=0. -> inv_scale=3.33, inv_bias=0.
+        # Alt: scale=0.1, bias=-1. -> inv_scale=10., inv_bias=10.
+        # Ctrl:
+        #   Thrust: scale=2, bias=-1 -> inv_scale=0.5, inv_bias=0.5.
+        #   Rates: scale=0.2, bias=0 -> inv_scale=5., inv_bias=0.
+        # Track: scale=0.1, bias=0 -> inv_scale=10., inv_bias=0.
+
+        inv_scales = [3.33]*3 + [10.0] + [0.5, 5.0, 5.0, 5.0] + [10.0]*2
+        inv_biases = [0.0]*3 + [10.0] + [0.5, 0.0, 0.0, 0.0] + [0.0]*2
+
+        self.out_scaler = ChannelScaler(input_dim, init_scale=inv_scales, init_bias=inv_biases)
+
     def forward(self, x):
         # x is (Batch, 300). Reshape to (Batch, 10, 30)
         batch_size = x.shape[0]
@@ -310,6 +358,12 @@ class Autoencoder1D(nn.Module):
         x_alt = x_reshaped[:, 3:4, :]   # Z
         x_ctrl = x_reshaped[:, 4:8, :]  # Thrust, Rates
         x_track = x_reshaped[:, 8:10, :] # U, V
+
+        # Scale Inputs
+        x_att = self.scale_att(x_att)
+        x_alt = self.scale_alt(x_alt)
+        x_ctrl = self.scale_ctrl(x_ctrl)
+        x_track = self.scale_track(x_track)
 
         # Encode branches
         f_att = self.enc_att(x_att)
@@ -328,6 +382,9 @@ class Autoencoder1D(nn.Module):
         recon_features = recon_features.view(batch_size, 128, 8)
 
         recon = self.decoder(recon_features) # (N, 10, 30)
+
+        # Apply Output Scaler
+        recon = self.out_scaler(recon)
 
         # Flatten recon to match input
         recon_flat = recon.permute(0, 2, 1).reshape(batch_size, -1)
