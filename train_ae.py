@@ -29,10 +29,6 @@ class AETrainer:
         # Input dim 10, seq len 30
         self.ae = Autoencoder1D(input_dim=10, seq_len=30, latent_dim=20).to(self.device)
 
-        if load_checkpoint and os.path.exists(load_checkpoint):
-            print(f"Loading checkpoint from {load_checkpoint}...")
-            self.ae.load_state_dict(torch.load(load_checkpoint, map_location=self.device))
-
         # Use KFAC Optimizer
         print("Using KFAC Optimizer")
         self.optimizer = KFACOptimizer(self.ae, lr=lr)
@@ -41,6 +37,42 @@ class AETrainer:
         self.criterion = nn.L1Loss()
 
         self.loss_history = []
+        self.start_episode = 0
+
+        # Checkpoint Loading Logic
+        if load_checkpoint is None:
+            # Auto-detect default checkpoint
+            if os.path.exists("ae_model.pth"):
+                print("Found existing checkpoint 'ae_model.pth', auto-resuming...")
+                load_checkpoint = "ae_model.pth"
+
+        if load_checkpoint and os.path.exists(load_checkpoint):
+            print(f"Loading checkpoint from {load_checkpoint}...")
+            try:
+                checkpoint = torch.load(load_checkpoint, map_location=self.device)
+
+                # Handle both old format (state_dict only) and new format (full dict)
+                if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+                    print("Detected full checkpoint format.")
+                    self.ae.load_state_dict(checkpoint["model_state_dict"])
+                    if "optimizer_state_dict" in checkpoint:
+                        try:
+                            self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+                        except Exception as e:
+                            print(f"Warning: Could not load optimizer state: {e}")
+
+                    if "loss_history" in checkpoint:
+                        self.loss_history = checkpoint["loss_history"]
+
+                    if "episode" in checkpoint:
+                        self.start_episode = checkpoint["episode"] + 1
+                        print(f"Resuming from episode {self.start_episode}")
+                else:
+                    print("Detected legacy checkpoint format (weights only).")
+                    self.ae.load_state_dict(checkpoint)
+            except Exception as e:
+                print(f"Error loading checkpoint: {e}")
+                print("Starting from scratch.")
 
     def simple_controller(self):
         """
@@ -95,11 +127,13 @@ class AETrainer:
         return actions.flatten()
 
     def train(self, num_episodes=50, target_loss=1e-4):
-        print(f"Starting training for max {num_episodes} episodes or until loss < {target_loss}...")
+        total_episodes = self.start_episode + num_episodes
+        print(f"Starting training from episode {self.start_episode+1} to {total_episodes} (max) or until loss < {target_loss}...")
 
         step_ctr = 0
 
-        for ep in range(num_episodes):
+        # Continue from start_episode
+        for ep in range(self.start_episode, total_episodes):
             # Reset
             self.env.reset_function(
                 pos_x=self.data["pos_x"], pos_y=self.data["pos_y"], pos_z=self.data["pos_z"],
@@ -114,7 +148,7 @@ class AETrainer:
                 num_agents=self.env.num_agents, reset_indices=np.array([0], dtype=np.int32)
             )
 
-            pbar = tqdm(range(self.episode_length), desc=f"Ep {ep+1}/{num_episodes}")
+            pbar = tqdm(range(self.episode_length), desc=f"Ep {ep+1}/{total_episodes}")
             ep_loss = 0
 
             for t in pbar:
@@ -169,7 +203,13 @@ class AETrainer:
             self.plot_loss()
 
             # Save Model Checkpoint
-            torch.save(self.ae.state_dict(), "ae_model.pth")
+            checkpoint_data = {
+                "model_state_dict": self.ae.state_dict(),
+                "optimizer_state_dict": self.optimizer.state_dict(),
+                "loss_history": self.loss_history,
+                "episode": ep
+            }
+            torch.save(checkpoint_data, "ae_model.pth")
 
             if mean_ep_loss < target_loss:
                 print(f"Target loss {target_loss} reached! Stopping.")
