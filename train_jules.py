@@ -44,30 +44,37 @@ class OracleController:
         params = traj_params[:, :, np.newaxis] # (10, N, 1)
         t = t_steps[np.newaxis, :] # (1, steps)
 
+        # Convert time to steps for DroneEnv compatibility
+        # DroneEnv uses 'step_count' (integer) for phase calc, so Fx is rad/step.
+        t_in_steps = t / self.dt
+
         # 1. Target Kinematics (Feedforward)
         Ax, Fx, Px = params[0], params[1], params[2]
         Ay, Fy, Py = params[3], params[4], params[5]
         Az, Fz, Pz, Oz = params[6], params[7], params[8], params[9]
 
         # Phases
-        ph_x = Fx * t + Px
-        ph_y = Fy * t + Py
-        ph_z = Fz * t + Pz
+        ph_x = Fx * t_in_steps + Px
+        ph_y = Fy * t_in_steps + Py
+        ph_z = Fz * t_in_steps + Pz
 
         # Target Pos
         tx = Ax * np.sin(ph_x)
         ty = Ay * np.sin(ph_y)
         tz = Oz + Az * np.sin(ph_z)
 
-        # Target Vel
-        tvx = Ax * Fx * np.cos(ph_x)
-        tvy = Ay * Fy * np.cos(ph_y)
-        tvz = Az * Fz * np.cos(ph_z)
+        # Target Vel (Chain rule: d/dt = d/dstep * dstep/dt = d/dstep * (1/dt))
+        # Fx is rad/step. d(sin(Fx*t_step))/dt = cos(...) * Fx * (1/dt)
+        freq_scale = 1.0 / self.dt
+
+        tvx = Ax * Fx * freq_scale * np.cos(ph_x)
+        tvy = Ay * Fy * freq_scale * np.cos(ph_y)
+        tvz = Az * Fz * freq_scale * np.cos(ph_z)
 
         # Target Accel
-        tax = -Ax * Fx**2 * np.sin(ph_x)
-        tay = -Ay * Fy**2 * np.sin(ph_y)
-        taz = -Az * Fz**2 * np.sin(ph_z)
+        tax = -Ax * (Fx * freq_scale)**2 * np.sin(ph_x)
+        tay = -Ay * (Fy * freq_scale)**2 * np.sin(ph_y)
+        taz = -Az * (Fz * freq_scale)**2 * np.sin(ph_z)
 
         # 2. Feedback Correction
         # If current_state is provided, we compute the REQUIRED accel to converge.
@@ -223,14 +230,17 @@ class OracleController:
         params = traj_params[:, :, np.newaxis] # (10, N, 1)
         t = t_steps[np.newaxis, :] # (1, steps)
 
+        # Convert to steps
+        t_in_steps = t / self.dt
+
         Ax, Fx, Px = params[0], params[1], params[2]
         Ay, Fy, Py = params[3], params[4], params[5]
         Az, Fz, Pz, Oz = params[6], params[7], params[8], params[9]
 
         # Position
-        x = Ax * np.sin(Fx * t + Px)
-        y = Ay * np.sin(Fy * t + Py)
-        z = Oz + Az * np.sin(Fz * t + Pz)
+        x = Ax * np.sin(Fx * t_in_steps + Px)
+        y = Ay * np.sin(Fy * t_in_steps + Py)
+        z = Oz + Az * np.sin(Fz * t_in_steps + Pz)
 
         # (N, 3, Steps)
         pos = np.stack([x, y, z], axis=2) # (N, Steps, 3)
@@ -266,6 +276,12 @@ def generate_data(num_episodes=20, num_agents=50, future_steps=5):
 
     for ep in range(num_episodes):
         env.reset_all_envs()
+
+        # SLOW DOWN TARGETS
+        # Scale frequencies (Fx, Fy, Fz at indices 1, 4, 7)
+        env.data_dictionary['traj_params'][1, :] *= 0.3
+        env.data_dictionary['traj_params'][4, :] *= 0.3
+        env.data_dictionary['traj_params'][7, :] *= 0.3
 
         for step in range(100):
             obs = env.data_dictionary['observations']
@@ -386,6 +402,11 @@ def evaluate(model_path="jules_model.pth"):
 
     env.reset_all_envs()
 
+    # SLOW DOWN TARGETS (Consistency with training)
+    env.data_dictionary['traj_params'][1, :] *= 0.3
+    env.data_dictionary['traj_params'][4, :] *= 0.3
+    env.data_dictionary['traj_params'][7, :] *= 0.3
+
     # Data buffers for viz
     # We will log the first agent
     actual_traj = []
@@ -469,6 +490,14 @@ def evaluate(model_path="jules_model.pth"):
     target_traj = np.array(target_traj)
     tracker_data = np.array(tracker_data)
     optimal_traj = np.array(optimal_traj)
+
+    # Validate Optimal Path
+    # Optimal Path (Position) should essentially match Target Path
+    path_error = np.linalg.norm(optimal_traj - target_traj, axis=1)
+    mean_path_error = np.mean(path_error)
+    logging.info(f"Optimal Path Generation Verification - Mean Error vs Env Target: {mean_path_error:.6f}")
+    if mean_path_error > 0.1:
+        logging.warning("Significant discrepancy between Oracle Optimal Path and Env Target Path!")
 
     # Add dimension for batch (1, T, 3)
     actual_traj = actual_traj[np.newaxis, :, :]
