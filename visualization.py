@@ -163,6 +163,7 @@ class Visualizer:
         os.rmdir(temp_dir)
 
         print(f"Saved episode video: {gif_path}")
+        return gif_path
 
 
     def plot_rewards(self):

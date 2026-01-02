@@ -404,7 +404,12 @@ def evaluate(model_path="jules_model.pth"):
     viz.generate_trajectory_gif()
 
     # Also save the specific episode video for clarity
-    viz.save_episode_gif(0, actual_traj[0], target_traj[0], tracker_data[0], filename_suffix="_eval", optimal_trajectory=optimal_traj[0])
+    gif_path = viz.save_episode_gif(0, actual_traj[0], target_traj[0], tracker_data[0], filename_suffix="_eval", optimal_trajectory=optimal_traj[0])
+
+    # Rename to a standard name for the user
+    if os.path.exists(gif_path):
+        os.rename(gif_path, "jules_trajectory.gif")
+        logging.info("Renamed evaluation GIF to jules_trajectory.gif")
 
 if __name__ == "__main__":
     train(epochs=15)
