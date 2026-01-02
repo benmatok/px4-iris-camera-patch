@@ -22,134 +22,177 @@ class OracleController:
         self.dt = dt
         self.g = 9.81
 
-        # Gains
-        self.kp_pos = 2.0
-        self.kd_pos = 1.5
-        self.kp_att = 10.0 # Proportional gain for attitude rates
+        # Planning Horizon for Min-Jerk
+        self.planning_horizon = 2.0 # seconds to converge
+
+    def solve_min_jerk(self, p0, v0, a0, pf, vf, af, T):
+        """
+        Solves Minimum Jerk Trajectory (Quintic Spline).
+        Returns coefficients c0..c5 for P(t) = c0 + c1*t + ... + c5*t^5
+        """
+        # Shapes: (N, 1) or (N,).
+        # We assume vectorized over N.
+
+        # Constraints matrix inversion can be precomputed analytically:
+        # P(t) = c0 + c1 t + c2 t^2 + c3 t^3 + c4 t^4 + c5 t^5
+        # P(0)=p0, V(0)=v0, A(0)=a0
+        # P(T)=pf, V(T)=vf, A(T)=af
+
+        c0 = p0
+        c1 = v0
+        c2 = 0.5 * a0
+
+        T2 = T*T; T3 = T2*T; T4 = T3*T; T5 = T4*T
+
+        # System for c3, c4, c5
+        # [ 3T^2  4T^3  5T^4 ] [c3]   [ pf - (c0 + c1T + c2T^2) ]
+        # [ 6T    12T^2 20T^3] [c4] = [ vf - (c1 + 2c2T)        ]
+        # [ 10    20T   60T^2] [c5]   [ af - (2c2)              ]
+
+        # Let DeltaP = pf - (c0 + c1*T + c2*T2)
+        # Let DeltaV = vf - (c1 + 2*c2*T)
+        # Let DeltaA = af - (2*c2)
+
+        DeltaP = pf - (c0 + c1*T + c2*T2)
+        DeltaV = vf - (c1 + 2*c2*T)
+        DeltaA = af - (2*c2)
+
+        # Analytical Solution
+        # c3 = (10*DeltaP - 4*DeltaV*T + 0.5*DeltaA*T2) / T3  (Wait, verify)
+        # Standard QuinticCoeffs:
+        c3 = (10*DeltaP - 4*DeltaV*T + 0.5*DeltaA*T2) / T3
+        c4 = (-15*DeltaP + 7*DeltaV*T - DeltaA*T2) / T4
+        c5 = (6*DeltaP - 3*DeltaV*T + 0.5*DeltaA*T2) / T5
+        # Wait, the 0.5 factor on DeltaA might be different.
+        # Correct form:
+        # c3 = (10(pf-p0) - 6v0*T - 4vf*T - 1.5a0*T2 + 0.5af*T2) / T^3? No.
+        # Using the Delta formulation is safer.
+        # Matrix inverse of [[T^3, T^4, T^5], [3T^2, 4T^3, 5T^4], [6T, 12T^2, 20T^3]] at t=T is solved as:
+        # P(T) = pf => c3 T3 + c4 T4 + c5 T5 = DeltaP
+        # V(T) = vf => 3c3 T2 + 4c4 T3 + 5c5 T4 = DeltaV
+        # A(T) = af => 6c3 T + 12c4 T2 + 20c5 T3 = DeltaA
+
+        # Solution:
+        # c3 = (10 DeltaP - 4 DeltaV T + 0.5 DeltaA T^2) / T^3
+        # c4 = (-15 DeltaP + 7 DeltaV T - 1 DeltaA T^2) / T^4
+        # c5 = (6 DeltaP - 3 DeltaV T + 0.5 DeltaA T^2) / T^5
+
+        return c0, c1, c2, c3, c4, c5
+
+    def eval_quintic(self, coeffs, t):
+        """ Evaluates P, V, A at time t (vectorized) """
+        c0, c1, c2, c3, c4, c5 = coeffs
+        t2 = t*t; t3 = t2*t; t4 = t3*t; t5 = t4*t
+
+        p = c0 + c1*t + c2*t2 + c3*t3 + c4*t4 + c5*t5
+        v = c1 + 2*c2*t + 3*c3*t2 + 4*c4*t3 + 5*c5*t4
+        a = 2*c2 + 6*c3*t + 12*c4*t2 + 20*c5*t3
+        return p, v, a
 
     def compute_trajectory(self, traj_params, t_start, steps, current_state=None):
         """
-        Computes the sequence of optimal actions for [t_start, t_start + steps*dt].
-        traj_params: (10, num_agents)
-        current_state: dict with 'pos', 'vel', 'rot' (optional).
-                       If provided, the first action corrects error.
-                       Subsequent actions assume perfect execution (MPC style) or we project.
-        Returns: (num_agents, 4, steps) -> [Thrust, RollRate, PitchRate, YawRate]
+        Computes optimal Receding Horizon Plan.
+        1. Determine Target State at t_end = t_start + planning_horizon (2.0s).
+        2. Plan Min-Jerk trajectory from current_state to Target State.
+        3. Sample this plan for 'steps' (0.5s).
+        Returns:
+            actions: (num_agents, 4, steps)
+            planned_pos: (num_agents, steps, 3) # For Viz
         """
-        # Time vector
-        # t: (steps, 1)
-        t_steps = np.arange(steps) * self.dt + t_start
+        # Output Time steps (0.5s)
+        t_out = np.arange(steps) * self.dt # 0 to 0.25 (wait, steps=5 -> 0, 0.05, 0.1, 0.15, 0.2)
+        # We want to output for the requested steps relative to t_start.
+        # But MinJerk is parameterized by tau in [0, T_plan].
+        # So we evaluate at tau = 0, dt, 2dt...
 
-        # Expand params to (10, num_agents, 1)
-        params = traj_params[:, :, np.newaxis] # (10, N, 1)
-        t = t_steps[np.newaxis, :] # (1, steps)
+        # 1. Get Start State
+        if current_state is None:
+            # Cold start (assume on track at t=0)
+            # We need to calc pos/vel/acc at t_start
+            pass # We'll handle this by calculating target at t_start
 
-        # Convert time to steps for DroneEnv compatibility
-        # DroneEnv uses 'step_count' (integer) for phase calc, so Fx is rad/step.
-        t_in_steps = t / self.dt
+        # Helper to get target state at specific time
+        def get_target_state(time_scalar):
+            # time_scalar: shape (1, 1) or scalar
+            # Returns P, V, A shape (N, 1)
+            t_steps = time_scalar / self.dt
 
-        # 1. Target Kinematics (Feedforward)
-        Ax, Fx, Px = params[0], params[1], params[2]
-        Ay, Fy, Py = params[3], params[4], params[5]
-        Az, Fz, Pz, Oz = params[6], params[7], params[8], params[9]
+            # Expand params
+            params = traj_params[:, :, np.newaxis]
+            Ax, Fx, Px = params[0], params[1], params[2]
+            Ay, Fy, Py = params[3], params[4], params[5]
+            Az, Fz, Pz, Oz = params[6], params[7], params[8], params[9]
 
-        # Phases
-        ph_x = Fx * t_in_steps + Px
-        ph_y = Fy * t_in_steps + Py
-        ph_z = Fz * t_in_steps + Pz
+            ph_x = Fx * t_steps + Px
+            ph_y = Fy * t_steps + Py
+            ph_z = Fz * t_steps + Pz
 
-        # Target Pos
-        tx = Ax * np.sin(ph_x)
-        ty = Ay * np.sin(ph_y)
-        tz = Oz + Az * np.sin(ph_z)
+            freq_scale = 1.0 / self.dt
 
-        # Target Vel (Chain rule: d/dt = d/dstep * dstep/dt = d/dstep * (1/dt))
-        # Fx is rad/step. d(sin(Fx*t_step))/dt = cos(...) * Fx * (1/dt)
-        freq_scale = 1.0 / self.dt
+            # Pos
+            tx = Ax * np.sin(ph_x)
+            ty = Ay * np.sin(ph_y)
+            tz = Oz + Az * np.sin(ph_z)
 
-        tvx = Ax * Fx * freq_scale * np.cos(ph_x)
-        tvy = Ay * Fy * freq_scale * np.cos(ph_y)
-        tvz = Az * Fz * freq_scale * np.cos(ph_z)
+            # Vel
+            tvx = Ax * Fx * freq_scale * np.cos(ph_x)
+            tvy = Ay * Fy * freq_scale * np.cos(ph_y)
+            tvz = Az * Fz * freq_scale * np.cos(ph_z)
 
-        # Target Accel
-        tax = -Ax * (Fx * freq_scale)**2 * np.sin(ph_x)
-        tay = -Ay * (Fy * freq_scale)**2 * np.sin(ph_y)
-        taz = -Az * (Fz * freq_scale)**2 * np.sin(ph_z)
+            # Acc
+            tax = -Ax * (Fx * freq_scale)**2 * np.sin(ph_x)
+            tay = -Ay * (Fy * freq_scale)**2 * np.sin(ph_y)
+            taz = -Az * (Fz * freq_scale)**2 * np.sin(ph_z)
 
-        # 2. Feedback Correction
-        # If current_state is provided, we compute the REQUIRED accel to converge.
-        # Note: This computes a SEQUENCE.
-        # For t=0, we use actual error.
-        # For t>0, we ideally propagate, but for simplicity/robustness in generating "Teacher" data,
-        # we can assume the drone is "on track" relative to the lookahead,
-        # OR we can just output the feedforward + small correction.
-        # BETTER: For t=0, use feedback. For t>0, assumes we close the gap linearly?
-        # Actually, let's just use the Feedforward kinematics for t>0 (open loop plan),
-        # BUT for t=0 (the action we actually execute in simulation), we add the feedback.
-        # This creates a "Receding Horizon" controller.
+            return (tx, ty, tz), (tvx, tvy, tvz), (tax, tay, taz)
 
-        # However, the Network is trained to predict the WHOLE sequence.
-        # If the sequence at t=1, t=2 doesn't include correction, the network might learn to ignore errors?
-        # A simple robust approach: Calculate the trajectory from CurrentPos to TargetPos(t+T)
-        # But we want to follow the curve.
-
-        # Let's apply the PD correction to ALL steps, assuming the error persists? No, that implies integral windup.
-        # Let's apply PD correction decaying over time?
-        # Or simply: The teacher demonstrates the "Ideal Recovery Path".
-        # We can simulate the recovery path forward.
-        # That's expensive (simulating physics).
-
-        # Approximation:
-        # We calculate the Desired Acceleration at each step.
-        # For t=0, we have explicit pos/vel.
-        # For t>0, we estimate pos/vel assuming we track perfectly from t=0.
-        # So for t>0, error = 0.
-
-        # Initialize arrays
-        num_agents = traj_params.shape[1]
-
-        # Current State
+        # Start State (P0, V0, A0)
         if current_state is not None:
-             px = current_state['pos_x'][:, np.newaxis] # (N, 1)
-             py = current_state['pos_y'][:, np.newaxis]
-             pz = current_state['pos_z'][:, np.newaxis]
-             vx = current_state['vel_x'][:, np.newaxis]
-             vy = current_state['vel_y'][:, np.newaxis]
-             vz = current_state['vel_z'][:, np.newaxis]
+            p0x = current_state['pos_x'][:, np.newaxis]
+            p0y = current_state['pos_y'][:, np.newaxis]
+            p0z = current_state['pos_z'][:, np.newaxis]
+            v0x = current_state['vel_x'][:, np.newaxis]
+            v0y = current_state['vel_y'][:, np.newaxis]
+            v0z = current_state['vel_z'][:, np.newaxis]
+            # Accel is not in state, assume 0 or prev? Assume 0 for start of plan
+            a0x = np.zeros_like(p0x)
+            a0y = np.zeros_like(p0y)
+            a0z = np.zeros_like(p0z)
         else:
-             # Assume perfect start (on target) if no state given
-             px, py, pz = tx[:, 0:1], ty[:, 0:1], tz[:, 0:1]
-             vx, vy, vz = tvx[:, 0:1], tvy[:, 0:1], tvz[:, 0:1]
+            (p0x, p0y, p0z), (v0x, v0y, v0z), (a0x, a0y, a0z) = get_target_state(t_start)
 
-        # Errors (Broadcast (N, 1) vs (N, Steps)) -> (N, Steps)
-        # NOTE: This assumes error is CONSTANT over the window if we don't simulate forward.
-        # This is a strong assumption but better than zero feedback.
-        # A better assumption is error decays.
-        # Let's just use the instantaneous error for the whole window.
-        # The network will learn "If error is X, plan to accelerate".
+        # End State (Pf, Vf, Af) at t_start + Horizon
+        t_end = t_start + self.planning_horizon
+        (pfx, pfy, pfz), (vfx, vfy, vfz), (afx, afy, afz) = get_target_state(t_end)
 
-        ex = tx - px
-        ey = ty - py
-        ez = tz - pz
-        evx = tvx - vx
-        evy = tvy - vy
-        evz = tvz - vz
+        # 2. Compute Min Jerk Coeffs
+        cx = self.solve_min_jerk(p0x, v0x, a0x, pfx, vfx, afx, self.planning_horizon)
+        cy = self.solve_min_jerk(p0y, v0y, a0y, pfy, vfy, afy, self.planning_horizon)
+        cz = self.solve_min_jerk(p0z, v0z, a0z, pfz, vfz, afz, self.planning_horizon)
 
-        # Desired Accel
-        ad_x = self.kp_pos * ex + self.kd_pos * evx + tax
-        ad_y = self.kp_pos * ey + self.kd_pos * evy + tay
-        ad_z = self.kp_pos * ez + self.kd_pos * evz + taz
+        # 3. Evaluate for output steps
+        # t_eval: (1, steps)
+        t_eval = t_out[np.newaxis, :]
 
-        # 3. Attitude Control (Differential Flatness)
+        px, vx, ax = self.eval_quintic(cx, t_eval)
+        py, vy, ay = self.eval_quintic(cy, t_eval)
+        pz, vz, az = self.eval_quintic(cz, t_eval)
+
+        # 4. Differential Flatness for Controls
 
         # Force Vector
         # Drag comp
         drag = 0.1
-        fx = ad_x + drag * vx
-        fy = ad_y + drag * vy
-        fz = ad_z + drag * vz + self.g
+        fx = ax + drag * vx
+        fy = ay + drag * vy
+        fz = az + drag * vz + self.g
 
         f_norm = np.sqrt(fx**2 + fy**2 + fz**2)
+
+        # Thrust
+        max_thrust = 20.0
+        thrust_cmd = f_norm / max_thrust
+        thrust_cmd = np.clip(thrust_cmd, 0.0, 1.0)
 
         # Thrust
         max_thrust = 20.0
@@ -161,10 +204,9 @@ class OracleController:
         zb_y = fy / f_norm
         zb_z = fz / f_norm
 
-        # Desired Yaw (Look along velocity)
-        # If velocity is small, keep current yaw or target yaw?
-        # Use target velocity for smoothness
-        yaw_des = np.arctan2(tvy, tvx)
+        # Desired Yaw (Look along MinJerk velocity)
+        # Use planned velocity for yaw
+        yaw_des = np.arctan2(vy, vx)
 
         # R = [xb, yb, zb] construction
         xc_des_x = np.cos(yaw_des)
@@ -184,10 +226,6 @@ class OracleController:
         xb_z = yb_x * zb_y - yb_y * zb_x
 
         # Extract Roll/Pitch
-        # R31 = zb_x, R32 = zb_y, R33 = zb_z
-        # Using the same inversion as before
-        # R_tilt = R_des_yaw.T @ zb
-
         cy = np.cos(yaw_des); sy = np.sin(yaw_des)
         v1 = -sy * zb_x + cy * zb_y # -sin(roll)
         v0 = cy * zb_x + sy * zb_y # sin(pitch)cos(roll)
@@ -196,21 +234,7 @@ class OracleController:
         roll_des = -np.arcsin(np.clip(v1, -1.0, 1.0))
         pitch_des = np.arctan2(v0, v2)
 
-        # Rates via Finite Difference / Gain
-        # Since we want to correct errors, we should output rates that move us to Desired Attitude.
-        # But we don't have current attitude in the inputs easily accessible in this vectorized form
-        # without complicating the signature heavily.
-        # However, the Network inputs (History) HAS attitude.
-        # The Oracle output (Target) should be the IDEAL trajectory.
-        # So we should output the Derivative of the Ideal Attitude Trajectory.
-        # The *Student* (Network) will see "Current Att != Ideal Att" in its history, and "Target Action = Rate to maintain Ideal".
-        # This is strictly not enough for feedback on attitude.
-        # BUT: The positional feedback (ad_x, ad_y) changes the Ideal Attitude (roll_des, pitch_des).
-        # If we are to the left, ad_y increases -> roll_des increases (bank right).
-        # So the `roll_des` computed here *already contains* the corrective term.
-        # So `roll_rate = gradient(roll_des)` IS the rate of change of the corrective maneuver.
-        # This should be sufficient for the "Teacher" to demonstrate recovery.
-
+        # Rates via Finite Difference on the Planned Trajectory
         roll_rate = np.gradient(roll_des, self.dt, axis=1)
         pitch_rate = np.gradient(pitch_des, self.dt, axis=1)
 
@@ -218,7 +242,11 @@ class OracleController:
         yaw_rate = np.gradient(yaw_des_unwrapped, self.dt, axis=1)
 
         actions = np.stack([thrust_cmd, roll_rate, pitch_rate, yaw_rate], axis=1)
-        return actions
+
+        # Planned Position for Viz: (N, steps, 3)
+        planned_pos = np.stack([px, py, pz], axis=2)
+
+        return actions, planned_pos
 
     def compute_position_trajectory(self, traj_params, t_start, steps):
         """
@@ -311,7 +339,7 @@ def generate_data(num_episodes=20, num_agents=50, future_steps=5):
                 'vel_z': env.data_dictionary['vel_z']
             }
 
-            future_actions = oracle.compute_trajectory(traj_params, t_current, future_steps, current_state) # (N, 4, 5)
+            future_actions, _ = oracle.compute_trajectory(traj_params, t_current, future_steps, current_state) # (N, 4, 5)
 
             # Fit Future Coeffs
             future_actions_torch = torch.from_numpy(future_actions).float()
@@ -458,11 +486,27 @@ def evaluate(model_path="jules_model.pth"):
         # Tracker
         tracker_data.append(obs[0, 304:308]) # u, v, size, conf
 
-        # Optimal Position (Oracle)
-        # We calculate it for the CURRENT time
+        # Optimal Planning (Oracle)
         t_current = float(step) * 0.05
-        opt_pos = oracle.compute_position_trajectory(traj_params, t_current, 1) # (N, 1, 3)
-        optimal_traj.append(opt_pos[0, 0, :])
+
+        # Current State for Planning
+        current_state = {
+            'pos_x': env.data_dictionary['pos_x'],
+            'pos_y': env.data_dictionary['pos_y'],
+            'pos_z': env.data_dictionary['pos_z'],
+            'vel_x': env.data_dictionary['vel_x'],
+            'vel_y': env.data_dictionary['vel_y'],
+            'vel_z': env.data_dictionary['vel_z']
+        }
+
+        # Plan Min-Jerk trajectory (2.0s plan, but we visualize it)
+        # We sample it for 10 steps (0.5s) or more for viz?
+        # Let's visualize the 0.5s plan that matches the action window
+        viz_steps = 10
+        _, planned_pos = oracle.compute_trajectory(traj_params, t_current, viz_steps, current_state)
+        # planned_pos: (N, 10, 3)
+
+        optimal_traj.append(planned_pos[0]) # Store the whole plan array for this step
 
         # Execute Action
         # Clip actions to prevent explosion
@@ -489,34 +533,24 @@ def evaluate(model_path="jules_model.pth"):
     actual_traj = np.array(actual_traj) # (100, 3)
     target_traj = np.array(target_traj)
     tracker_data = np.array(tracker_data)
-    optimal_traj = np.array(optimal_traj)
-
-    # DEBUG: Log Start/End positions
-    logging.info(f"Actual Start: {actual_traj[0,0]}")
-    logging.info(f"Actual End:   {actual_traj[0,-1]}")
-    logging.info(f"Target Start: {target_traj[0,0]}")
-    logging.info(f"Optim Start:  {optimal_traj[0,0]}")
-
-    # Validate Optimal Path
-    # Optimal Path (Position) should essentially match Target Path
-    path_error = np.linalg.norm(optimal_traj - target_traj, axis=1)
-    mean_path_error = np.mean(path_error)
-    logging.info(f"Optimal Path Generation Verification - Mean Error vs Env Target: {mean_path_error:.6f}")
-    if mean_path_error > 0.1:
-        logging.warning("Significant discrepancy between Oracle Optimal Path and Env Target Path!")
+    # optimal_traj is now list of (10, 3) arrays. Keep it as list?
+    # Visualization expects (N, T, 3) or similar.
+    # But now we have "Plan at each step".
+    # Visualizer needs update. We pass the list of plans.
 
     # Add dimension for batch (1, T, 3)
     actual_traj = actual_traj[np.newaxis, :, :]
     target_traj = target_traj[np.newaxis, :, :]
     tracker_data = tracker_data[np.newaxis, :, :]
-    optimal_traj = optimal_traj[np.newaxis, :, :]
+    # optimal_traj is just passed as list of arrays
 
     # Log and Save
     viz.log_trajectory(0, actual_traj, target_traj, tracker_data, optimal_traj)
     viz.generate_trajectory_gif()
 
     # Also save the specific episode video for clarity
-    gif_path = viz.save_episode_gif(0, actual_traj[0], target_traj[0], tracker_data[0], filename_suffix="_eval", optimal_trajectory=optimal_traj[0])
+    # optimal_traj is list of (10, 3) arrays. Pass directly.
+    gif_path = viz.save_episode_gif(0, actual_traj[0], target_traj[0], tracker_data[0], filename_suffix="_eval", optimal_trajectory=optimal_traj)
 
     # Rename to a standard name for the user
     if os.path.exists(gif_path):
