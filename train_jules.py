@@ -491,6 +491,12 @@ def evaluate(model_path="jules_model.pth"):
     tracker_data = np.array(tracker_data)
     optimal_traj = np.array(optimal_traj)
 
+    # DEBUG: Log Start/End positions
+    logging.info(f"Actual Start: {actual_traj[0,0]}")
+    logging.info(f"Actual End:   {actual_traj[0,-1]}")
+    logging.info(f"Target Start: {target_traj[0,0]}")
+    logging.info(f"Optim Start:  {optimal_traj[0,0]}")
+
     # Validate Optimal Path
     # Optimal Path (Position) should essentially match Target Path
     path_error = np.linalg.norm(optimal_traj - target_traj, axis=1)

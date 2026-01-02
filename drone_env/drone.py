@@ -356,6 +356,7 @@ def reset_cpu(
     roll, pitch, yaw,
     masses, drag_coeffs, thrust_coeffs,
     target_vx, target_vy, target_vz, target_yaw_rate,
+    vt_x, vt_y, vt_z,
     traj_params, # New shape (10, num_agents)
     target_trajectory,
     pos_history,
@@ -436,6 +437,11 @@ def reset_cpu(
 
     vtz_val = traj_params[9] + traj_params[6] * np.sin(traj_params[8])
     vtvz_val = traj_params[6] * traj_params[7] * np.cos(traj_params[8])
+
+    # Store Initial Target Position
+    vt_x[:] = vtx_val
+    vt_y[:] = vty_val
+    vt_z[:] = vtz_val
 
     # Point Drone at Target
     dx = vtx_val - pos_x
@@ -681,6 +687,7 @@ class DroneEnv(CUDAEnvironmentState):
             "roll": "roll", "pitch": "pitch", "yaw": "yaw",
             "masses": "masses", "drag_coeffs": "drag_coeffs", "thrust_coeffs": "thrust_coeffs",
             "target_vx": "target_vx", "target_vy": "target_vy", "target_vz": "target_vz", "target_yaw_rate": "target_yaw_rate",
+            "vt_x": "vt_x", "vt_y": "vt_y", "vt_z": "vt_z",
             "traj_params": "traj_params", # New
             "target_trajectory": "target_trajectory",
             "pos_history": "pos_history",
