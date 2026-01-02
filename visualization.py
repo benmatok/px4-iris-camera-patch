@@ -19,13 +19,15 @@ class Visualizer:
         trajectories: shape (num_agents, episode_length, 3)
         targets: shape (num_agents, episode_length, 3) (Optional)
         tracker_data: shape (num_agents, episode_length, 4) (Optional) - u, v, size, conf
-        optimal_trajectory: shape (num_agents, episode_length, 3) (Optional) - The Oracle's path
+        optimal_trajectory: List of planning paths (Optional)
         """
         # We only keep one agent's trajectory for visualization clarity
         single_traj = trajectories[0].copy() # (episode_length, 3)
         single_target = targets[0].copy() if targets is not None else None
         single_tracker = tracker_data[0].copy() if tracker_data is not None else None
-        single_optimal = optimal_trajectory[0].copy() if optimal_trajectory is not None else None
+        # single_optimal is now a list of arrays (one per step), or None
+        # We don't need to copy/index if it's already a list of the plan for agent 0
+        single_optimal = optimal_trajectory
 
         self.trajectory_snapshots.append((iteration, single_traj, single_target, single_tracker, single_optimal))
 
@@ -35,7 +37,7 @@ class Visualizer:
         trajectories: (episode_length, 3)
         targets: (episode_length, 3)
         tracker_data: (episode_length, 4)
-        optimal_trajectory: (episode_length, 3) (Optional)
+        optimal_trajectory: List of (steps, 3) arrays (Optional) - Plan at each timestep
         """
         traj = trajectories
         target = targets
@@ -63,10 +65,7 @@ class Visualizer:
             vals_y.append(target[:,1])
             vals_z.append(target[:,2])
 
-        if optimal is not None:
-            vals_x.append(optimal[:,0])
-            vals_y.append(optimal[:,1])
-            vals_z.append(optimal[:,2])
+        # We don't easily scan all optimal plans for bounds, assume target/traj covers it
 
         x_min, x_max = min([v.min() for v in vals_x]), max([v.max() for v in vals_x])
         y_min, y_max = min([v.min() for v in vals_y]), max([v.max() for v in vals_y])
@@ -85,9 +84,12 @@ class Visualizer:
             ax1.plot(traj[:t+1, 0], traj[:t+1, 1], 'b-', label="Agent (Actual)")
             ax1.plot(traj[t, 0], traj[t, 1], 'bo')
 
-            if optimal is not None:
-                ax1.plot(optimal[:t+1, 0], optimal[:t+1, 1], 'g--', label="Optimal (Oracle)")
-                ax1.plot(optimal[t, 0], optimal[t, 1], 'g^')
+            # Plot CURRENT Plan (Min Jerk)
+            if optimal is not None and t < len(optimal):
+                plan = optimal[t] # (steps, 3)
+                if plan is not None:
+                    ax1.plot(plan[:, 0], plan[:, 1], 'g--', alpha=0.7, label="Oracle Plan")
+                    ax1.plot(plan[-1, 0], plan[-1, 1], 'g^', label="Plan End")
 
             if target is not None:
                 ax1.plot(target[:t+1, 0], target[:t+1, 1], 'r:', alpha=0.5, label="Target Path")
@@ -106,9 +108,11 @@ class Visualizer:
             ax2.plot(traj[:t+1, 0], traj[:t+1, 2], 'b-', label="Agent")
             ax2.plot(traj[t, 0], traj[t, 2], 'bo')
 
-            if optimal is not None:
-                ax2.plot(optimal[:t+1, 0], optimal[:t+1, 2], 'g--', label="Optimal")
-                ax2.plot(optimal[t, 0], optimal[t, 2], 'g^')
+            if optimal is not None and t < len(optimal):
+                plan = optimal[t]
+                if plan is not None:
+                    ax2.plot(plan[:, 0], plan[:, 2], 'g--', alpha=0.7)
+                    ax2.plot(plan[-1, 0], plan[-1, 2], 'g^')
 
             if target is not None:
                 ax2.plot(target[:t+1, 0], target[:t+1, 2], 'r:', alpha=0.5, label="Target")
@@ -186,17 +190,31 @@ class Visualizer:
 
         # Determine bounds
         # item is (itr, traj, target, tracker, optimal)
-        all_trajs = []
+        all_points = []
         for item in self.trajectory_snapshots:
-             all_trajs.append(item[1])
+             # traj
+             all_points.append(item[1])
+             # target
+             if item[2] is not None:
+                 all_points.append(item[2])
+             # optimal (list of arrays)
              if item[4] is not None:
-                 all_trajs.append(item[4])
+                 if isinstance(item[4], list):
+                     for plan in item[4]:
+                         if plan is not None:
+                             all_points.append(plan)
+                 else:
+                     all_points.append(item[4])
 
-        all_trajs = np.concatenate(all_trajs, axis=0) # (num_trajs * len, 3)
-
-        x_min, x_max = all_trajs[:, 0].min(), all_trajs[:, 0].max()
-        y_min, y_max = all_trajs[:, 1].min(), all_trajs[:, 1].max()
-        z_min, z_max = all_trajs[:, 2].min(), all_trajs[:, 2].max()
+        if all_points:
+            all_points_cat = np.concatenate(all_points, axis=0)
+            x_min, x_max = all_points_cat[:, 0].min(), all_points_cat[:, 0].max()
+            y_min, y_max = all_points_cat[:, 1].min(), all_points_cat[:, 1].max()
+            z_min, z_max = all_points_cat[:, 2].min(), all_points_cat[:, 2].max()
+        else:
+            x_min, x_max = -10, 10
+            y_min, y_max = -10, 10
+            z_min, z_max = 0, 20
 
         pad = 1.0
         x_lim = (x_min - pad, x_max + pad)
@@ -210,7 +228,9 @@ class Visualizer:
             ax1 = fig.add_subplot(131)
             ax1.plot(traj[:, 0], traj[:, 1], 'b-', label="Agent")
             if optimal is not None:
-                ax1.plot(optimal[:, 0], optimal[:, 1], 'g--', alpha=0.7, label="Optimal")
+                # optimal is a list of plans. We can't plot all. Plot nothing or first/last?
+                # Just skip for the summary GIF to avoid clutter/errors
+                pass
 
             ax1.plot(traj[0, 0], traj[0, 1], 'go', label="Start")
             ax1.plot(traj[-1, 0], traj[-1, 1], 'rx', label="End")
@@ -231,7 +251,7 @@ class Visualizer:
             ax2 = fig.add_subplot(132)
             ax2.plot(traj[:, 0], traj[:, 2], 'b-', label="Agent")
             if optimal is not None:
-                ax2.plot(optimal[:, 0], optimal[:, 2], 'g--', alpha=0.7, label="Optimal")
+                pass # Skip list of plans
 
             ax2.plot(traj[0, 0], traj[0, 2], 'go', label="Start")
             ax2.plot(traj[-1, 0], traj[-1, 2], 'rx', label="End")
