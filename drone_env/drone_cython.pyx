@@ -474,6 +474,7 @@ cdef void _reset_agent_scalar_wrapper(
     float[:] roll, float[:] pitch, float[:] yaw,
     float[:] masses, float[:] drag_coeffs, float[:] thrust_coeffs,
     float[:] target_vx, float[:] target_vy, float[:] target_vz, float[:] target_yaw_rate,
+    float[:] vt_x, float[:] vt_y, float[:] vt_z,
     float[:, :] traj_params,
     float[:, :] observations
 ) noexcept nogil:
@@ -556,6 +557,11 @@ cdef void _reset_agent_scalar_wrapper(
     cdef float vtz_val = oz_p + az_p * sz
     cdef float vtvz_val = az_p * fz_p * cz
 
+    # Store Initial Target Position
+    vt_x[i] = vtx_val
+    vt_y[i] = vty_val
+    vt_z[i] = vtz_val
+
     # Point Drone at Target
     cdef float dx = vtx_val - pos_x[i]
     cdef float dy = vty_val - pos_y[i]
@@ -637,6 +643,7 @@ def reset_cython(
     float[:] roll, float[:] pitch, float[:] yaw,
     float[:] masses, float[:] drag_coeffs, float[:] thrust_coeffs,
     float[:] target_vx, float[:] target_vy, float[:] target_vz, float[:] target_yaw_rate,
+    float[:] vt_x, float[:] vt_y, float[:] vt_z,
     float[:, :] traj_params, # Shape (10, num_agents)
     float[:, :, :] target_trajectory, # New
     float[:, :, :] pos_history,
@@ -659,6 +666,7 @@ def reset_cython(
                 roll, pitch, yaw,
                 masses, drag_coeffs, thrust_coeffs,
                 target_vx, target_vy, target_vz, target_yaw_rate,
+                vt_x, vt_y, vt_z,
                 traj_params,
                 observations
             )
@@ -672,3 +680,18 @@ def reset_cython(
     # Reset step counts
     if reset_indices.shape[0] > 0:
          step_counts[0] = 0
+
+def update_target_trajectory_from_params(
+    float[:, :] traj_params,
+    float[:, :, :] target_trajectory,
+    int num_agents,
+    int steps
+):
+    cdef int i, t_idx
+
+    with nogil:
+        for i in prange(num_agents):
+            for t_idx in range(steps):
+                target_trajectory[t_idx, i, 0] = traj_params[0, i] * sin(traj_params[1, i] * <float>t_idx + traj_params[2, i])
+                target_trajectory[t_idx, i, 1] = traj_params[3, i] * sin(traj_params[4, i] * <float>t_idx + traj_params[5, i])
+                target_trajectory[t_idx, i, 2] = traj_params[9, i] + traj_params[6, i] * sin(traj_params[7, i] * <float>t_idx + traj_params[8, i])
