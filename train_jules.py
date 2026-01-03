@@ -272,6 +272,10 @@ def generate_data(num_episodes=20, num_agents=50, future_steps=10):
         env.data_dictionary['traj_params'][4, :] *= 0.3
         env.data_dictionary['traj_params'][7, :] *= 0.3
 
+        # IMPORTANT: Refresh the precomputed target trajectory buffer
+        # because the params have changed!
+        env.update_target_trajectory()
+
         for step in range(100):
             obs = env.data_dictionary['observations']
             traj_params = env.data_dictionary['traj_params']
@@ -345,8 +349,6 @@ def generate_data(num_episodes=20, num_agents=50, future_steps=10):
 
             # Logging progress
             if step % 20 == 0:
-                # Calculate mean error of chosen action vs Oracle just for sanity?
-                # or just log
                 pass
 
     # Concat all
@@ -409,6 +411,9 @@ def evaluate(model_path="jules_model.pth"):
     env.data_dictionary['traj_params'][1, :] *= 0.3
     env.data_dictionary['traj_params'][4, :] *= 0.3
     env.data_dictionary['traj_params'][7, :] *= 0.3
+
+    # IMPORTANT: Refresh trajectory buffer
+    env.update_target_trajectory()
 
     actual_traj = []
     target_traj = []

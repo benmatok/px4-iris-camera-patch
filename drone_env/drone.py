@@ -29,7 +29,7 @@ except ImportError:
 
 # Try importing the Cython extension
 try:
-    from drone_env.drone_cython import step_cython, reset_cython
+    from drone_env.drone_cython import step_cython, reset_cython, update_target_trajectory_from_params
     _HAS_CYTHON = True
 except ImportError:
     _HAS_CYTHON = False
@@ -568,6 +568,17 @@ class DroneEnv(CUDAEnvironmentState):
                 pass
 
         self.reset_function(**args)
+
+    def update_target_trajectory(self):
+        """
+        Updates the precomputed target trajectory based on current traj_params.
+        This is necessary if traj_params are modified after reset when using the Cython backend.
+        """
+        if _HAS_CYTHON:
+             traj_params = self.data_dictionary["traj_params"]
+             target_trajectory = self.data_dictionary["target_trajectory"]
+             steps = target_trajectory.shape[0]
+             update_target_trajectory_from_params(traj_params, target_trajectory, self.num_agents, steps)
 
     def get_environment_info(self):
         return {
