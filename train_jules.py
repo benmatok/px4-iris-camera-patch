@@ -145,17 +145,31 @@ class OracleController:
 
         # 4. Differential Flatness for Controls
 
-        # Force Vector
-        # Drag comp
-        drag = 0.1
-        fx = ax + drag * vx
-        fy = ay + drag * vy
-        fz = az + drag * vz + self.g
+        # Physics Parameters from current_state if available, else defaults
+        if current_state is not None and 'masses' in current_state:
+            # (N, 1) broadcastable
+            mass = current_state['masses'][:, np.newaxis]
+            drag_coeff = current_state['drag_coeffs'][:, np.newaxis]
+            thrust_coeff = current_state['thrust_coeffs'][:, np.newaxis]
+        else:
+            mass = 1.0
+            drag_coeff = 0.1
+            thrust_coeff = 1.0
+
+        # Calculate specific drag (drag_coeff / mass)
+        # In dynamics: a = F/m - (drag_coeff * v) / m + g
+        # So effective drag term in force equation: F = m(a - g) + drag_coeff * v
+        # g vector is (0,0,-9.81). -g vector is (0,0,9.81).
+
+        fx = mass * ax + drag_coeff * vx
+        fy = mass * ay + drag_coeff * vy
+        fz = mass * (az + self.g) + drag_coeff * vz
 
         f_norm = np.sqrt(fx**2 + fy**2 + fz**2)
 
         # Thrust
-        max_thrust = 20.0
+        # max_thrust force = 20.0 * thrust_coeff
+        max_thrust = 20.0 * thrust_coeff
         thrust_cmd = f_norm / max_thrust
         thrust_cmd = np.clip(thrust_cmd, 0.0, 1.0)
 
@@ -180,6 +194,10 @@ class OracleController:
         yb_norm = np.maximum(yb_norm, 1e-6)
 
         yb_x /= yb_norm; yb_y /= yb_norm; yb_z /= yb_norm
+
+        xb_x = yb_y * zb_z - yb_z * zb_y
+        xb_y = yb_z * zb_x - yb_x * zb_z
+        xb_z = yb_x * zb_y - yb_y * zb_x
 
         # Extract Roll/Pitch
         cy = np.cos(yaw_des); sy = np.sin(yaw_des)
@@ -457,7 +475,10 @@ def evaluate(model_path="jules_model.pth"):
             'pos_z': env.data_dictionary['pos_z'],
             'vel_x': env.data_dictionary['vel_x'],
             'vel_y': env.data_dictionary['vel_y'],
-            'vel_z': env.data_dictionary['vel_z']
+            'vel_z': env.data_dictionary['vel_z'],
+            'masses': env.data_dictionary['masses'],
+            'drag_coeffs': env.data_dictionary['drag_coeffs'],
+            'thrust_coeffs': env.data_dictionary['thrust_coeffs']
         }
 
         # Viz 10 steps
