@@ -498,7 +498,8 @@ cdef void _reset_agent_scalar_wrapper(
     traj_params[6, i] = 1.0 + rand_float() * 2.0
     traj_params[7, i] = 0.05 + rand_float() * 0.1
     traj_params[8, i] = rand_float() * 6.28318
-    traj_params[9, i] = 8.0 + rand_float() * 4.0
+    # Oz range [9.0, 12.0]. Az range [1.0, 3.0]. Min Z = 9-3=6.0. Max Terrain = 5.0.
+    traj_params[9, i] = 9.0 + rand_float() * 3.0
 
     rnd_cmd = rand_float()
     tvx=0.0; tvy=0.0; tvz=0.0; tyr=0.0
@@ -524,8 +525,8 @@ cdef void _reset_agent_scalar_wrapper(
     # Initial Position
     pos_x[i] = 0.0
     pos_y[i] = 0.0
-    pos_z[i] = 10.0
-    vel_x[i] = 0.0
+    pos_z[i] = 50.0
+    vel_x[i] = rand_float() * 5.0 # Forward velocity 0-5 m/s
     vel_y[i] = 0.0
     vel_z[i] = 0.0
     roll[i] = 0.0
