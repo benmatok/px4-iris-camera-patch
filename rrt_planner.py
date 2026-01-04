@@ -58,7 +58,7 @@ class GradientController:
         Plans using Gradient Refinement.
         """
         # 1. Oracle Initialization
-        oracle_actions, oracle_planned_pos = self.oracle.compute_trajectory(
+        oracle_actions, oracle_planned_pos, oracle_planned_att = self.oracle.compute_trajectory(
             current_traj_params, t_start, self.horizon_steps, current_state_dict
         )
 
@@ -98,10 +98,22 @@ class GradientController:
         # ---------------------------------------------------------------------
         # OPTIMIZATION LOOP
         # ---------------------------------------------------------------------
-        # Target Trajectory for residuals: Oracle Planned Pos (N, Steps, 3)
-        # Flatten to (N, Steps*3)
-        Y_target = oracle_planned_pos.reshape(self.num_main_agents, -1)
-        Y_target = torch.from_numpy(Y_target).float()
+        # Target Trajectory for residuals:
+        # 1. Position: Oracle Planned Pos (N, Steps, 3)
+        # 2. Attitude: Oracle Planned Att (N, Steps, 3)
+        # Combine: (N, Steps, 6) -> (N, Steps*6)
+
+        # Weight for Attitude Residuals
+        w_att = 5.0
+
+        Y_pos_tgt = torch.from_numpy(oracle_planned_pos).float() # (N, S, 3)
+        Y_att_tgt = torch.from_numpy(oracle_planned_att).float() # (N, S, 3)
+
+        # Flatten
+        Y_pos_tgt_flat = Y_pos_tgt.reshape(self.num_main_agents, -1)
+        Y_att_tgt_flat = Y_att_tgt.reshape(self.num_main_agents, -1) * w_att
+
+        Y_target = torch.cat([Y_pos_tgt_flat, Y_att_tgt_flat], dim=1) # (N, S*6)
 
         for itr in range(self.iterations):
             # 1. Expand Coeffs (N, 13, 12)
@@ -134,6 +146,8 @@ class GradientController:
 
             # Rollout
             rollout_pos = []
+            rollout_att = []
+
             for step in range(self.horizon_steps):
                 step_actions = sim_controls_np[:, :, step]
                 self.sim_env.data_dictionary['actions'][:] = step_actions.reshape(-1)
@@ -146,21 +160,78 @@ class GradientController:
                 pz = self.sim_env.data_dictionary['pos_z'].copy()
                 rollout_pos.append(np.stack([px, py, pz], axis=1))
 
-            # (Steps, N*13, 3) -> (N*13, Steps*3)
+                r = self.sim_env.data_dictionary['roll'].copy()
+                p = self.sim_env.data_dictionary['pitch'].copy()
+                y = self.sim_env.data_dictionary['yaw'].copy()
+                rollout_att.append(np.stack([r, p, y], axis=1))
+
+            # Pos: (Steps, N*13, 3) -> (N*13, Steps*3)
             rollout_pos = np.stack(rollout_pos, axis=0)
             rollout_pos = rollout_pos.transpose(1, 0, 2).reshape(self.total_sim_agents, -1)
-            Y_sim = torch.from_numpy(rollout_pos).float()
+
+            # Att: (Steps, N*13, 3) -> (N*13, Steps*3)
+            rollout_att = np.stack(rollout_att, axis=0)
+            rollout_att = rollout_att.transpose(1, 0, 2).reshape(self.total_sim_agents, -1)
+
+            # Combine to Y_sim (matching Y_target structure)
+            # Need to process Att to match Target Att (Yaw wrapping) before simple subtraction?
+            # Actually, we do residuals = Y_base - Y_target.
+            # Y_sim should just be the raw values.
+            # However, for Jacobian estimation (perturbation), raw values are fine as long as perturbation is small.
+            # But for the Base Residual, we need to handle wrapping.
+
+            # Let's assemble Y_sim as concatenation first
+            Y_pos_sim_t = torch.from_numpy(rollout_pos).float() # (N*13, S*3)
+            Y_att_sim_t = torch.from_numpy(rollout_att).float() * w_att # (N*13, S*3)
+
+            # Reshape to (N, 13, M)
+            Y_pos_sim = Y_pos_sim_t.view(self.num_main_agents, self.k_sims, -1)
+            Y_att_sim = Y_att_sim_t.view(self.num_main_agents, self.k_sims, -1)
 
             # 3. Compute Jacobian & Residuals
-            # Y_sim shape: (N*13, M) where M = Steps*3
-            # Reshape to (N, 13, M)
-            Y_sim = Y_sim.view(self.num_main_agents, self.k_sims, -1)
 
-            # Y_base: (N, M) -> index 0
-            Y_base = Y_sim[:, 0, :]
+            # Position Part
+            Y_pos_base = Y_pos_sim[:, 0, :]
+            res_pos = Y_pos_base - Y_pos_tgt_flat
 
-            # Residuals: r = Y_base - Y_target
-            residuals = Y_base - Y_target # (N, M)
+            # Attitude Part
+            # We need to handle Yaw wrapping for Residuals
+            # Y_att_sim structure: [r0, p0, y0, r1, p1, y1, ...]
+            # We can just subtract and then wrap the specific indices?
+            # Or simpler: Unpack, wrap, Repack.
+
+            # Target Att (unflattened for math): (N, S, 3)
+            # Base Att (unflattened): (N, S, 3)
+            att_base_raw = Y_att_sim[:, 0, :].view(self.num_main_agents, self.horizon_steps, 3) / w_att
+            att_tgt_raw = Y_att_tgt # (N, S, 3)
+
+            diff_att = att_base_raw - att_tgt_raw
+            # Wrap Yaw (Index 2)
+            diff_att[:, :, 2] = (diff_att[:, :, 2] + np.pi) % (2 * np.pi) - np.pi
+
+            # Flatten and Apply Weight
+            res_att = diff_att.view(self.num_main_agents, -1) * w_att
+
+            # Combined Residuals
+            residuals = torch.cat([res_pos, res_att], dim=1) # (N, M_pos + M_att)
+
+            # Jacobian Calculation
+            # J = (Y_perturbed - Y_base) / epsilon
+
+            # For Attitude Jacobian, simple difference is usually fine for small epsilon,
+            # assuming we don't cross the wrap boundary with epsilon.
+            # Epsilon is small (0.01).
+
+            Y_sim_combined = torch.cat([Y_pos_sim, Y_att_sim], dim=2)
+
+            Y_base_combined = Y_sim_combined[:, 0, :]
+            Y_perturbed_combined = Y_sim_combined[:, 1:, :]
+
+            # Note: residuals calculated above use wrapped yaw difference.
+            # The Jacobian uses direct difference of perturbed vs base.
+            # This is correct because locally J = d(Obs)/d(Action).
+
+            J = (Y_perturbed_combined - Y_base_combined.unsqueeze(1)) / self.epsilon
 
             # Jacobian: J = (Y_perturbed - Y_base) / epsilon
             # Y_perturbed: (N, 12, M) -> indices 1..12

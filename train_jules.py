@@ -181,15 +181,23 @@ class OracleController:
         zb_y = fy / f_norm
         zb_z = fz / f_norm
 
-        # Desired Yaw (Look along MinJerk velocity)
-        # Use planned velocity for yaw
-        # yaw_des = np.arctan2(vy, vx)
+        # Desired Yaw
+        # Option 1: Look at Target (Gaze)
+        # (tx, ty, _), _, _ = get_target_state(t_out + t_start)
+        # yaw_gaze = np.arctan2(ty - py, tx - px)
 
-        # Better Yaw: Look at the Target Position at each step
-        # Get Target state for all t_out
+        # Option 2: Look along Velocity (Coordination / Derivative of Position)
+        # We use this to satisfy "optimize attitude close to derivative of position".
+        # Handle low velocity singularity by falling back to current yaw or previous
+        yaw_vel = np.arctan2(vy, vx)
+        vel_xy_sq = vx**2 + vy**2
+
+        # If moving slowly (< 0.5 m/s), use Gaze or maintain heading?
+        # Using Gaze as fallback is safe for target tracking.
         (tx, ty, _), _, _ = get_target_state(t_out + t_start)
-        # Yaw towards target: atan2(dy, dx)
-        yaw_des = np.arctan2(ty - py, tx - px)
+        yaw_gaze = np.arctan2(ty - py, tx - px)
+
+        yaw_des = np.where(vel_xy_sq > 0.25, yaw_vel, yaw_gaze)
 
         # R = [xb, yb, zb] construction
         xc_des_x = np.cos(yaw_des)
@@ -258,9 +266,12 @@ class OracleController:
         actions = np.stack([thrust_cmd, roll_rate, pitch_rate, yaw_rate], axis=1)
 
         # Planned Position for Viz: (N, steps, 3)
-        planned_pos = np.stack([px, py, pz], axis=2)
+        planned_pos = np.stack([px, py, pz], axis=2) # (N, steps, 3)
 
-        return actions, planned_pos
+        # Planned Attitude for Optimization: (N, steps, 3)
+        planned_att = np.stack([roll_des, pitch_des, yaw_des], axis=2)
+
+        return actions, planned_pos, planned_att
 
     def compute_position_trajectory(self, traj_params, t_start, steps):
         """
@@ -526,7 +537,7 @@ def evaluate(model_path="jules_model.pth"):
         }
 
         # Viz 10 steps
-        _, planned_pos = oracle.compute_trajectory(traj_params, t_current, 10, current_state)
+        _, planned_pos, _ = oracle.compute_trajectory(traj_params, t_current, 10, current_state)
         optimal_traj.append(planned_pos[0])
 
         actions_np = actions.numpy()
@@ -623,7 +634,7 @@ def evaluate_rrt():
         }
 
         # Viz Oracle plan
-        _, planned_pos_oracle = oracle.compute_trajectory(traj_params, t_current, 10, current_state)
+        _, planned_pos_oracle, _ = oracle.compute_trajectory(traj_params, t_current, 10, current_state)
         optimal_traj.append(planned_pos_oracle[0])
 
         # Execute RRT
