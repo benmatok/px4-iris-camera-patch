@@ -448,6 +448,10 @@ def evaluate(model_path="jules_model.pth"):
 
     traj_params = env.data_dictionary['traj_params']
 
+    # Debug: Print initial tracker state
+    obs_init = env.data_dictionary['observations']
+    logging.info(f"Initial Tracker State (Agent 0): u={obs_init[0, 304]:.4f}, v={obs_init[0, 305]:.4f}, conf={obs_init[0, 307]:.4f}")
+
     for step in range(100):
         obs = env.data_dictionary['observations']
         pos_x = env.data_dictionary['pos_x']
@@ -473,7 +477,7 @@ def evaluate(model_path="jules_model.pth"):
         vt_z = env.data_dictionary['vt_z'][0]
         target_traj.append([vt_x, vt_y, vt_z])
 
-        tracker_data.append(obs[0, 304:308])
+        tracker_data.append(obs[0, 304:308].copy())
 
         # Optimal Planning (Oracle)
         t_current = float(step) * 0.05
@@ -568,7 +572,7 @@ def evaluate_rrt():
         vt_z = env.data_dictionary['vt_z'][0]
         target_traj.append([vt_x, vt_y, vt_z])
 
-        tracker_data.append(obs[0, 304:308])
+        tracker_data.append(obs[0, 304:308].copy())
 
         t_current = float(step) * 0.05
         current_state = {
