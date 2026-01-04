@@ -7,7 +7,7 @@ from torch.utils.data import Dataset, DataLoader
 from drone_env.drone import DroneEnv
 from models.predictive_policy import JulesPredictiveController, Chebyshev
 from visualization import Visualizer
-from rrt_planner import RRTController
+from rrt_planner import GradientController
 import os
 
 # Configure Logging
@@ -277,12 +277,12 @@ class DroneDatasetWithAux(Dataset):
 
 def generate_data(num_episodes=20, num_agents=50, future_steps=10):
     """
-    Generates training data using the RRT Planner (which uses Oracle as heuristic).
+    Generates training data using the Gradient Refinement Planner.
     future_steps=10 corresponds to 0.5s horizon.
     """
     env = DroneEnv(num_agents=num_agents, episode_length=100)
     oracle = OracleController(num_agents)
-    planner = RRTController(env, oracle, horizon_steps=future_steps, num_samples=50)
+    planner = GradientController(env, oracle, horizon_steps=future_steps, iterations=3)
 
     cheb_hist = Chebyshev(30, 3, device='cpu')
 
@@ -539,14 +539,14 @@ def evaluate(model_path="jules_model.pth"):
         logging.info("Renamed evaluation GIF to jules_trajectory.gif")
 
 def evaluate_rrt():
-    logging.info("Starting Evaluation (RRT Policy)...")
+    logging.info("Starting Evaluation (Gradient Policy)...")
 
     # Setup Env
     num_agents = 10
     env = DroneEnv(num_agents=num_agents, episode_length=100)
     oracle = OracleController(num_agents)
     # Planner for inference
-    planner = RRTController(env, oracle, horizon_steps=10, num_samples=50)
+    planner = GradientController(env, oracle, horizon_steps=10, iterations=3)
     viz = Visualizer()
 
     env.reset_all_envs()
