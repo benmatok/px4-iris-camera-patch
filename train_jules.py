@@ -212,11 +212,16 @@ class OracleController:
         pitch_des = np.arctan2(v0, v2)
 
         # Rates via Finite Difference on the Planned Trajectory
-        roll_rate = np.gradient(roll_des, self.dt, axis=1)
-        pitch_rate = np.gradient(pitch_des, self.dt, axis=1)
+        if steps > 1:
+            roll_rate = np.gradient(roll_des, self.dt, axis=1)
+            pitch_rate = np.gradient(pitch_des, self.dt, axis=1)
 
-        yaw_des_unwrapped = np.unwrap(yaw_des, axis=1)
-        yaw_rate = np.gradient(yaw_des_unwrapped, self.dt, axis=1)
+            yaw_des_unwrapped = np.unwrap(yaw_des, axis=1)
+            yaw_rate = np.gradient(yaw_des_unwrapped, self.dt, axis=1)
+        else:
+            roll_rate = np.zeros_like(roll_des)
+            pitch_rate = np.zeros_like(pitch_des)
+            yaw_rate = np.zeros_like(yaw_des)
 
         actions = np.stack([thrust_cmd, roll_rate, pitch_rate, yaw_rate], axis=1)
 
