@@ -386,7 +386,8 @@ def reset_cpu(
     traj_params[6] = 1.0 + np.random.rand(num_agents) * 2.0 # Az
     traj_params[7] = 0.05 + np.random.rand(num_agents) * 0.1 # Fz
     traj_params[8] = np.random.rand(num_agents) * 2 * np.pi # Pz
-    traj_params[9] = 8.0 + np.random.rand(num_agents) * 4.0 # Oz
+    # Oz range [9.0, 12.0]. Az range [1.0, 3.0]. Min Z = 9-3=6.0. Max Terrain = 5.0.
+    traj_params[9] = 9.0 + np.random.rand(num_agents) * 3.0 # Oz
 
     rnd_cmd = np.random.rand(num_agents)
 
@@ -416,8 +417,8 @@ def reset_cpu(
     # Initial Position
     pos_x[:] = 0.0
     pos_y[:] = 0.0
-    pos_z[:] = 10.0
-    vel_x[:] = 0.0
+    pos_z[:] = 50.0
+    vel_x[:] = np.random.rand(num_agents) * 5.0 # Forward velocity 0-5 m/s
     vel_y[:] = 0.0
     vel_z[:] = 0.0
     roll[:] = 0.0
