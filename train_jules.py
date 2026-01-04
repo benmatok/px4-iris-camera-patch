@@ -183,7 +183,13 @@ class OracleController:
 
         # Desired Yaw (Look along MinJerk velocity)
         # Use planned velocity for yaw
-        yaw_des = np.arctan2(vy, vx)
+        # yaw_des = np.arctan2(vy, vx)
+
+        # Better Yaw: Look at the Target Position at each step
+        # Get Target state for all t_out
+        (tx, ty, _), _, _ = get_target_state(t_out + t_start)
+        # Yaw towards target: atan2(dy, dx)
+        yaw_des = np.arctan2(ty - py, tx - px)
 
         # R = [xb, yb, zb] construction
         xc_des_x = np.cos(yaw_des)
