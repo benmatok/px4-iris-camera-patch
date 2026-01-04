@@ -251,10 +251,10 @@ cdef void _step_agent_scalar(
     u = xc / zc
     v = yc / zc
 
-    if u > 10.0: u = 10.0
-    if u < -10.0: u = -10.0
-    if v > 10.0: v = 10.0
-    if v < -10.0: v = -10.0
+    if u > 1.732: u = 1.732
+    if u < -1.732: u = -1.732
+    if v > 1.732: v = 1.732
+    if v < -1.732: v = -1.732
 
     # Add new history entry (10 features)
     observations[i, 290] = r
