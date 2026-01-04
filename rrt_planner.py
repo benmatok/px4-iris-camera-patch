@@ -54,6 +54,52 @@ class RRTController:
             current_traj_params, t_start, self.horizon_steps, current_state_dict
         )
 
+        # ---------------------------------------------------------------------
+        # SCANNING BEHAVIOR (Prepare Overrides)
+        # ---------------------------------------------------------------------
+        # Check Confidence
+        conf = current_obs[:, 307]
+        lost_mask = conf < 0.1 # Boolean array (num_agents,)
+
+        # We will use this to override the FINAL selection.
+        # But we also modify oracle_actions so that if we WERE to use RRT,
+        # it would start from scanning. But RRT might drift away.
+        # So we force the result for lost agents.
+
+        # Calculate Scanning Coeffs
+        scanning_coeffs = None
+
+        if np.any(lost_mask):
+            # Calculate Hover Thrust
+            g = 9.81
+            masses = current_state_dict['masses']
+            thrust_coeffs = current_state_dict['thrust_coeffs']
+            hover_thrust = (g * masses) / (20.0 * thrust_coeffs)
+            hover_thrust = np.clip(hover_thrust, 0.0, 1.0)
+
+            # Generate Scanning Yaw Rate
+            t_grid = t_start + np.arange(self.horizon_steps) * self.dt # (Steps,)
+            scan_yaw_rate = np.sin(t_grid) + t_grid * np.cos(t_grid)
+            scan_yaw_rate = np.clip(scan_yaw_rate, -2.0, 2.0)
+
+            # Create Scanning Actions tensor
+            # (N, 4, Steps)
+            scan_actions = np.zeros_like(oracle_actions)
+
+            # Fill for all agents (we mask later) or just fill relevant?
+            # Easier to fill all row-wise using broadcasting
+            scan_actions[:, 0, :] = hover_thrust[:, np.newaxis] # Constant thrust
+            scan_actions[:, 1, :] = 0.0
+            scan_actions[:, 2, :] = 0.0
+            scan_actions[:, 3, :] = scan_yaw_rate[np.newaxis, :] # Same pattern for all
+
+            # Convert to Coeffs
+            scan_actions_torch = torch.from_numpy(scan_actions).float()
+            scanning_coeffs_all = self.cheb_future.fit(scan_actions_torch) # (N, 4, 3)
+            scanning_coeffs = scanning_coeffs_all
+
+        # ---------------------------------------------------------------------
+
         # Convert Oracle Actions to Coeffs
         oracle_actions_torch = torch.from_numpy(oracle_actions).float() # (N, 4, Steps)
         oracle_coeffs = self.cheb_future.fit(oracle_actions_torch) # (N, 4, 3)
@@ -120,8 +166,12 @@ class RRTController:
 
         best_coeffs = []
         for i in range(self.num_main_agents):
-            idx = best_indices[i]
-            best_coeffs.append(sampled_coeffs[i, idx])
+            if lost_mask[i]:
+                # Force Scanning Coeffs
+                best_coeffs.append(scanning_coeffs[i])
+            else:
+                idx = best_indices[i]
+                best_coeffs.append(sampled_coeffs[i, idx])
 
         best_coeffs = torch.stack(best_coeffs) # (N, 4, 3)
 

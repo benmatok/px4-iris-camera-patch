@@ -569,7 +569,8 @@ cdef void _reset_agent_scalar_wrapper(
     cdef float dist_xy = sqrt(dx*dx + dy*dy)
 
     yaw[i] = atan2f(dy, dx)
-    pitch[i] = atan2f(dz, dist_xy) + 0.5235987756
+    # Corrected: Pitch UP (-30 deg) to compensate for Camera Down (30 deg)
+    pitch[i] = -atan2f(dz, dist_xy) - 0.5235987756
 
     # Populate Obs
     cdef float rvx = vtvx_val - vel_x[i]

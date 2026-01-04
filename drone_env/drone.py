@@ -449,8 +449,8 @@ def reset_cpu(
     dz = vtz_val - pos_z
     dist_xy = np.sqrt(dx*dx + dy*dy)
     yaw[:] = np.arctan2(dy, dx)
-    # Pitch up by 30 deg (pi/6) to compensate for camera down-tilt
-    pitch[:] = np.arctan2(dz, dist_xy) + (np.pi / 6.0)
+    # Corrected: Pitch UP (-30 deg) to compensate for Camera Down (30 deg)
+    pitch[:] = -np.arctan2(dz, dist_xy) - (np.pi / 6.0)
 
     # Populate Obs
     rvx = vtvx_val - vel_x
