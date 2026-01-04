@@ -187,17 +187,28 @@ class OracleController:
         # yaw_gaze = np.arctan2(ty - py, tx - px)
 
         # Option 2: Look along Velocity (Coordination / Derivative of Position)
-        # We use this to satisfy "optimize attitude close to derivative of position".
-        # Handle low velocity singularity by falling back to current yaw or previous
         yaw_vel = np.arctan2(vy, vx)
         vel_xy_sq = vx**2 + vy**2
 
-        # If moving slowly (< 0.5 m/s), use Gaze or maintain heading?
-        # Using Gaze as fallback is safe for target tracking.
         (tx, ty, _), _, _ = get_target_state(t_out + t_start)
         yaw_gaze = np.arctan2(ty - py, tx - px)
 
-        yaw_des = np.where(vel_xy_sq > 0.25, yaw_vel, yaw_gaze)
+        # Smart Gaze Logic:
+        # 1. Use Velocity Alignment (yaw_vel) if moving fast enough (> 0.5 m/s)
+        # 2. BUT: If Velocity Alignment puts target out of POV (> 50 deg offset), force Gaze.
+        # 3. Fallback to Gaze if moving slowly.
+
+        # Angle Diff calculation
+        diff = yaw_vel - yaw_gaze
+        diff = (diff + np.pi) % (2 * np.pi) - np.pi
+        abs_diff = np.abs(diff)
+
+        # FOV is 120 (half 60). Use 50 as buffer.
+        fov_half_rad = np.deg2rad(50.0)
+
+        use_vel = (vel_xy_sq > 0.25) & (abs_diff < fov_half_rad)
+
+        yaw_des = np.where(use_vel, yaw_vel, yaw_gaze)
 
         # R = [xb, yb, zb] construction
         xc_des_x = np.cos(yaw_des)

@@ -216,8 +216,8 @@ def step_cpu(
     zc_safe = np.maximum(zc, 0.1)
     u = xc / zc_safe
     v = yc / zc_safe
-    u = np.clip(u, -10.0, 10.0)
-    v = np.clip(v, -10.0, 10.0)
+    u = np.clip(u, -1.732, 1.732)
+    v = np.clip(v, -1.732, 1.732)
 
     size = 10.0 / (zc*zc + 1.0)
 
@@ -484,9 +484,9 @@ def reset_cpu(
     u = xc / zc_safe
     v = yc / zc_safe
 
-    # Clamp u and v to [-10, 10]
-    u = np.clip(u, -10.0, 10.0)
-    v = np.clip(v, -10.0, 10.0)
+    # Clamp u and v to [-1.732, 1.732] (120 deg FOV)
+    u = np.clip(u, -1.732, 1.732)
+    v = np.clip(v, -1.732, 1.732)
 
     size = 10.0 / (zc*zc + 1.0)
 

@@ -92,6 +92,7 @@ inline void step_agents_avx2(
     __m256 c01 = _mm256_set1_ps(0.1f);
     __m256 c10 = _mm256_set1_ps(10.0f);
     __m256 c05 = _mm256_set1_ps(0.5f);
+    __m256 c_fov = _mm256_set1_ps(1.732f); // tan(60) for 120 deg FOV
 
     // ------------------------------------------------------------------------
     // Lookup Virtual Target Position from Precomputed Trajectory
@@ -279,9 +280,9 @@ inline void step_agents_avx2(
     __m256 u = _mm256_div_ps(xc, zc_safe);
     __m256 v = _mm256_div_ps(yc, zc_safe);
 
-    __m256 c10_neg = _mm256_set1_ps(-10.0f);
-    u = _mm256_max_ps(c10_neg, _mm256_min_ps(u, c10));
-    v = _mm256_max_ps(c10_neg, _mm256_min_ps(v, c10));
+    __m256 c_fov_neg = _mm256_sub_ps(c0, c_fov);
+    u = _mm256_max_ps(c_fov_neg, _mm256_min_ps(u, c_fov));
+    v = _mm256_max_ps(c_fov_neg, _mm256_min_ps(v, c_fov));
 
     __m256 rel_size = _mm256_div_ps(c10, _mm256_add_ps(_mm256_mul_ps(zc, zc), c1));
 
