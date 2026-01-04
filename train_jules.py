@@ -156,14 +156,17 @@ class OracleController:
             drag_coeff = 0.1
             thrust_coeff = 1.0
 
-        # Calculate specific drag (drag_coeff / mass)
-        # In dynamics: a = F/m - (drag_coeff * v) / m + g
-        # So effective drag term in force equation: F = m(a - g) + drag_coeff * v
-        # g vector is (0,0,-9.81). -g vector is (0,0,9.81).
+        # Calculate Drag and Forces
+        # In simulation: a = F/m - k*v.
+        # F_net = m*a
+        # F_thrust + F_gravity + F_drag = m*a
+        # F_thrust = m*a - F_gravity - F_drag
+        # F_thrust = m*a - m*g - m*(-k*v) (Sim defines drag accel as -k*v)
+        # F_thrust = m*(a - g + k*v)
 
-        fx = mass * ax + drag_coeff * vx
-        fy = mass * ay + drag_coeff * vy
-        fz = mass * (az + self.g) + drag_coeff * vz
+        fx = mass * (ax + drag_coeff * vx)
+        fy = mass * (ay + drag_coeff * vy)
+        fz = mass * (az + self.g + drag_coeff * vz)
 
         f_norm = np.sqrt(fx**2 + fy**2 + fz**2)
 
@@ -410,7 +413,7 @@ def train(epochs=10, batch_size=256, model_path="jules_model.pth"):
     return model
 
 def evaluate(model_path="jules_model.pth"):
-    logging.info("Starting Evaluation...")
+    logging.info("Starting Evaluation (RL Policy)...")
 
     # Load Model with correct future_len
     model = JulesPredictiveController(future_len=10)
@@ -514,12 +517,112 @@ def evaluate(model_path="jules_model.pth"):
     viz.log_trajectory(0, actual_traj, target_traj, tracker_data, optimal_traj)
     viz.generate_trajectory_gif()
 
-    gif_path = viz.save_episode_gif(0, actual_traj[0], target_traj[0], tracker_data[0], filename_suffix="_eval", optimal_trajectory=optimal_traj)
+    gif_path = viz.save_episode_gif(0, actual_traj[0], target_traj[0], tracker_data[0], filename_suffix="_rl", optimal_trajectory=optimal_traj)
 
     if os.path.exists(gif_path):
         os.rename(gif_path, "jules_trajectory.gif")
         logging.info("Renamed evaluation GIF to jules_trajectory.gif")
 
+def evaluate_rrt():
+    logging.info("Starting Evaluation (RRT Policy)...")
+
+    # Setup Env
+    num_agents = 10
+    env = DroneEnv(num_agents=num_agents, episode_length=100)
+    oracle = OracleController(num_agents)
+    # Planner for inference
+    planner = RRTController(env, oracle, horizon_steps=10, num_samples=50)
+    viz = Visualizer()
+
+    env.reset_all_envs()
+
+    # SLOW DOWN TARGETS
+    env.data_dictionary['traj_params'][1, :] *= 0.3
+    env.data_dictionary['traj_params'][4, :] *= 0.3
+    env.data_dictionary['traj_params'][7, :] *= 0.3
+
+    env.update_target_trajectory()
+
+    actual_traj = []
+    target_traj = []
+    tracker_data = []
+    optimal_traj = []
+
+    traj_params = env.data_dictionary['traj_params']
+
+    for step in range(100):
+        obs = env.data_dictionary['observations']
+        pos_x = env.data_dictionary['pos_x']
+        pos_y = env.data_dictionary['pos_y']
+        pos_z = env.data_dictionary['pos_z']
+
+        actual_traj.append([pos_x[0], pos_y[0], pos_z[0]])
+
+        vt_x = env.data_dictionary['vt_x'][0]
+        vt_y = env.data_dictionary['vt_y'][0]
+        vt_z = env.data_dictionary['vt_z'][0]
+        target_traj.append([vt_x, vt_y, vt_z])
+
+        tracker_data.append(obs[0, 304:308])
+
+        t_current = float(step) * 0.05
+        current_state = {
+            'pos_x': env.data_dictionary['pos_x'],
+            'pos_y': env.data_dictionary['pos_y'],
+            'pos_z': env.data_dictionary['pos_z'],
+            'vel_x': env.data_dictionary['vel_x'],
+            'vel_y': env.data_dictionary['vel_y'],
+            'vel_z': env.data_dictionary['vel_z'],
+            'roll': env.data_dictionary['roll'],
+            'pitch': env.data_dictionary['pitch'],
+            'yaw': env.data_dictionary['yaw'],
+            'masses': env.data_dictionary['masses'],
+            'drag_coeffs': env.data_dictionary['drag_coeffs'],
+            'thrust_coeffs': env.data_dictionary['thrust_coeffs']
+        }
+
+        # Viz Oracle plan
+        _, planned_pos_oracle = oracle.compute_trajectory(traj_params, t_current, 10, current_state)
+        optimal_traj.append(planned_pos_oracle[0])
+
+        # Execute RRT
+        future_coeffs = planner.plan(current_state, obs, traj_params, t_current)
+
+        # Action at t=0 (x=-1)
+        fc_reshaped = future_coeffs.view(num_agents, 4, 3)
+        current_action = fc_reshaped[:, :, 0] - fc_reshaped[:, :, 1] + fc_reshaped[:, :, 2]
+
+        current_action[:, 0] = torch.clamp(current_action[:, 0], 0.0, 1.0)
+        current_action[:, 1:] = torch.clamp(current_action[:, 1:], -10.0, 10.0)
+
+        env.data_dictionary['actions'][:] = current_action.numpy().reshape(-1)
+
+        step_kwargs = env.get_step_function_kwargs()
+        step_args = {}
+        for k, v in step_kwargs.items():
+            if v in env.data_dictionary:
+                step_args[k] = env.data_dictionary[v]
+            elif k == "num_agents":
+                step_args[k] = env.num_agents
+            elif k == "episode_length":
+                step_args[k] = env.episode_length
+
+        env.step_function(**step_args)
+
+    actual_traj = np.array(actual_traj)
+    target_traj = np.array(target_traj)
+    tracker_data = np.array(tracker_data)
+
+    actual_traj = actual_traj[np.newaxis, :, :]
+    target_traj = target_traj[np.newaxis, :, :]
+    tracker_data = tracker_data[np.newaxis, :, :]
+
+    gif_path = viz.save_episode_gif(0, actual_traj[0], target_traj[0], tracker_data[0], filename_suffix="_rrt", optimal_trajectory=optimal_traj)
+    if os.path.exists(gif_path):
+        os.rename(gif_path, "rrt_trajectory.gif")
+        logging.info("Renamed RRT GIF to rrt_trajectory.gif")
+
 if __name__ == "__main__":
     train(epochs=15)
     evaluate()
+    evaluate_rrt()
