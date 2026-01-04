@@ -219,15 +219,41 @@ class OracleController:
 
         # Rates via Finite Difference on the Planned Trajectory
         if steps > 1:
-            roll_rate = np.gradient(roll_des, self.dt, axis=1)
-            pitch_rate = np.gradient(pitch_des, self.dt, axis=1)
+            roll_rate_ff = np.gradient(roll_des, self.dt, axis=1)
+            pitch_rate_ff = np.gradient(pitch_des, self.dt, axis=1)
 
             yaw_des_unwrapped = np.unwrap(yaw_des, axis=1)
-            yaw_rate = np.gradient(yaw_des_unwrapped, self.dt, axis=1)
+            yaw_rate_ff = np.gradient(yaw_des_unwrapped, self.dt, axis=1)
         else:
-            roll_rate = np.zeros_like(roll_des)
-            pitch_rate = np.zeros_like(pitch_des)
-            yaw_rate = np.zeros_like(yaw_des)
+            roll_rate_ff = np.zeros_like(roll_des)
+            pitch_rate_ff = np.zeros_like(pitch_des)
+            yaw_rate_ff = np.zeros_like(yaw_des)
+
+        # Add Feedback (P-Controller) for Attitude
+        # Using simple Proportional Gain
+        Kp_att = 5.0 # Gain
+
+        if current_state is not None:
+             curr_r = current_state['roll'][:, np.newaxis]
+             curr_p = current_state['pitch'][:, np.newaxis]
+             curr_y = current_state['yaw'][:, np.newaxis]
+        else:
+             curr_r = 0.0; curr_p = 0.0; curr_y = 0.0
+
+        # Error Calculation
+        err_r = roll_des - curr_r
+        err_p = pitch_des - curr_p
+
+        # Yaw Error with wrapping
+        err_y = yaw_des - curr_y
+        err_y = (err_y + np.pi) % (2 * np.pi) - np.pi
+
+        # Combine Feedforward + Feedback
+        # Note: We apply feedback to ALL steps based on CURRENT error.
+        # This is an approximation for Receding Horizon where we mostly care about step 0.
+        roll_rate = roll_rate_ff + Kp_att * err_r
+        pitch_rate = pitch_rate_ff + Kp_att * err_p
+        yaw_rate = yaw_rate_ff + Kp_att * err_y
 
         actions = np.stack([thrust_cmd, roll_rate, pitch_rate, yaw_rate], axis=1)
 
