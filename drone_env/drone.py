@@ -29,7 +29,7 @@ except ImportError:
 
 # Try importing the Cython extension
 try:
-    from drone_env.drone_cython import step_cython, reset_cython, update_target_trajectory_from_params
+    from drone_env.drone_cython import step_cython, reset_cython, update_target_trajectory_from_params, recompute_initial_observations
     _HAS_CYTHON = True
 except ImportError:
     _HAS_CYTHON = False
@@ -579,6 +579,27 @@ class DroneEnv(CUDAEnvironmentState):
              target_trajectory = self.data_dictionary["target_trajectory"]
              steps = target_trajectory.shape[0]
              update_target_trajectory_from_params(traj_params, target_trajectory, self.num_agents, steps)
+
+    def recompute_initial_observations(self):
+        """
+        Recomputes observations at t=0 using the current state and target trajectory.
+        Use this after modifying parameters and calling update_target_trajectory().
+        """
+        if _HAS_CYTHON:
+            kwargs = self.get_reset_function_kwargs()
+            # We need pos, vel, rot, vt, target_traj, obs
+            args = {}
+            # Subset of args needed for recompute
+            needed = ["pos_x", "pos_y", "pos_z", "vel_x", "vel_y", "vel_z",
+                      "roll", "pitch", "yaw", "vt_x", "vt_y", "vt_z",
+                      "target_trajectory", "observations"]
+
+            for k in needed:
+                args[k] = self.data_dictionary[k]
+
+            args["num_agents"] = self.num_agents
+
+            recompute_initial_observations(**args)
 
     def get_environment_info(self):
         return {
