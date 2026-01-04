@@ -695,3 +695,137 @@ def update_target_trajectory_from_params(
                 target_trajectory[t_idx, i, 0] = traj_params[0, i] * sin(traj_params[1, i] * <float>t_idx + traj_params[2, i])
                 target_trajectory[t_idx, i, 1] = traj_params[3, i] * sin(traj_params[4, i] * <float>t_idx + traj_params[5, i])
                 target_trajectory[t_idx, i, 2] = traj_params[9, i] + traj_params[6, i] * sin(traj_params[7, i] * <float>t_idx + traj_params[8, i])
+
+# Scalar helper for refreshing observations
+cdef void _recompute_obs_scalar(
+    int i,
+    float[:] pos_x, float[:] pos_y, float[:] pos_z,
+    float[:] vel_x, float[:] vel_y, float[:] vel_z,
+    float[:] roll, float[:] pitch, float[:] yaw,
+    float[:] vt_x, float[:] vt_y, float[:] vt_z,
+    float[:, :, :] target_trajectory,
+    float[:, :] observations
+) noexcept nogil:
+    # Use t=0
+    cdef float dt = 0.05
+    cdef float vtx_val = target_trajectory[0, i, 0]
+    cdef float vty_val = target_trajectory[0, i, 1]
+    cdef float vtz_val = target_trajectory[0, i, 2]
+
+    cdef float vtx_n = target_trajectory[1, i, 0]
+    cdef float vty_n = target_trajectory[1, i, 1]
+    cdef float vtz_n = target_trajectory[1, i, 2]
+
+    cdef float inv_dt = 1.0 / dt
+    cdef float vtvx_val = (vtx_n - vtx_val) * inv_dt
+    cdef float vtvy_val = (vty_n - vty_val) * inv_dt
+    cdef float vtvz_val = (vtz_n - vtz_val) * inv_dt
+
+    vt_x[i] = vtx_val
+    vt_y[i] = vty_val
+    vt_z[i] = vtz_val
+
+    # Point Drone at Target (Recalc Relative Only? or also re-orient?)
+    # "reset_cython" DOES set orientation.
+    # But here we are just updating the target.
+    # If we changed the target, should we snap the drone to look at it?
+    # Probably NOT, because we might be mid-episode (though typically done at start).
+    # BUT wait, the use case is "Generate Data" -> Reset -> Modify Params -> Update.
+    # At t=0, if we change target pos, the drone's initial orientation (looking at old target) might be wrong.
+    # If we don't fix orientation, u,v will be large.
+    # Let's fix orientation to be consistent with "Reset state".
+
+    cdef float dx = vtx_val - pos_x[i]
+    cdef float dy = vty_val - pos_y[i]
+    cdef float dz = vtz_val - pos_z[i]
+    cdef float dist_xy = sqrt(dx*dx + dy*dy)
+
+    yaw[i] = atan2f(dy, dx)
+    pitch[i] = atan2f(dz, dist_xy) + 0.5235987756
+
+    # Populate Obs
+    cdef float rvx = vtvx_val - vel_x[i]
+    cdef float rvy = vtvy_val - vel_y[i]
+    cdef float rvz = vtvz_val - vel_z[i]
+
+    cdef float r0 = roll[i]
+    cdef float p0 = pitch[i]
+    cdef float y0 = yaw[i]
+
+    cdef float sr, cr, sp, cp, sy, cy
+    sincosf(r0, &sr, &cr)
+    sincosf(p0, &sp, &cp)
+    sincosf(y0, &sy, &cy)
+
+    cdef float r11 = cy * cp
+    cdef float r12 = sy * cp
+    cdef float r13 = -sp
+    cdef float r21 = cy * sp * sr - sy * cr
+    cdef float r22 = sy * sp * sr + cy * cr
+    cdef float r23 = cp * sr
+    cdef float r31 = cy * sp * cr + sy * sr
+    cdef float r32 = sy * sp * cr - cy * sr
+    cdef float r33 = cp * cr
+
+    cdef float rvx_b = r11 * rvx + r12 * rvy + r13 * rvz
+    cdef float rvy_b = r21 * rvx + r22 * rvy + r23 * rvz
+    cdef float rrvz_b = r31 * rvx + r32 * rvy + r33 * rvz
+
+    observations[i, 300] = rvx_b
+    observations[i, 301] = rvy_b
+    observations[i, 302] = rrvz_b
+
+    cdef float dist = sqrt(dx*dx + dy*dy + dz*dz)
+    observations[i, 303] = dist
+
+    cdef float xb = r11 * dx + r12 * dy + r13 * dz
+    cdef float yb = r21 * dx + r22 * dy + r23 * dz
+    cdef float zb = r31 * dx + r32 * dy + r33 * dz
+
+    cdef float xc, yc, zc
+    cdef float s30 = 0.5
+    cdef float c30 = 0.866025
+    xc = yb
+    yc = s30 * xb + c30 * zb
+    zc = c30 * xb - s30 * zb
+
+    cdef float u, v, size, conf
+    if zc < 0.1: zc = 0.1
+    u = xc / zc
+    v = yc / zc
+
+    if u > 10.0: u = 10.0
+    if u < -10.0: u = -10.0
+    if v > 10.0: v = 10.0
+    if v < -10.0: v = -10.0
+
+    size = 10.0 / (zc*zc + 1.0)
+    conf = 1.0
+    if (c30 * xb - s30 * zb) < 0: conf = 0.0
+
+    observations[i, 304] = u
+    observations[i, 305] = v
+    observations[i, 306] = size
+    observations[i, 307] = conf
+
+def recompute_initial_observations(
+    float[:] pos_x, float[:] pos_y, float[:] pos_z,
+    float[:] vel_x, float[:] vel_y, float[:] vel_z,
+    float[:] roll, float[:] pitch, float[:] yaw,
+    float[:] vt_x, float[:] vt_y, float[:] vt_z,
+    float[:, :, :] target_trajectory,
+    float[:, :] observations,
+    int num_agents
+):
+    cdef int i
+    with nogil:
+        for i in prange(num_agents):
+            _recompute_obs_scalar(
+                i,
+                pos_x, pos_y, pos_z,
+                vel_x, vel_y, vel_z,
+                roll, pitch, yaw,
+                vt_x, vt_y, vt_z,
+                target_trajectory,
+                observations
+            )
