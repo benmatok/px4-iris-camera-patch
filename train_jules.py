@@ -302,10 +302,6 @@ def generate_data(num_episodes=20, num_agents=50, future_steps=10):
         # because the params have changed!
         env.update_target_trajectory()
 
-        # IMPORTANT: Recompute initial observation at t=0
-        # because the target trajectory changed!
-        env.recompute_initial_observations()
-
         for step in range(100):
             obs = env.data_dictionary['observations']
             traj_params = env.data_dictionary['traj_params']
@@ -444,7 +440,6 @@ def evaluate(model_path="jules_model.pth"):
 
     # IMPORTANT: Refresh trajectory buffer
     env.update_target_trajectory()
-    env.recompute_initial_observations()
 
     actual_traj = []
     target_traj = []
@@ -552,7 +547,6 @@ def evaluate_rrt():
     env.data_dictionary['traj_params'][7, :] *= 0.3
 
     env.update_target_trajectory()
-    env.recompute_initial_observations()
 
     actual_traj = []
     target_traj = []
