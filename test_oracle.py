@@ -66,7 +66,7 @@ def test_oracle_physics():
     tp = np.zeros((10, 1), dtype=np.float32)
     tp[9, 0] = 10.0 # Oz
 
-    actions, planned_pos = oracle.compute_trajectory(tp, 0.0, 1, current_state)
+    actions, planned_pos, planned_att = oracle.compute_trajectory(tp, 0.0, 1, current_state)
 
     thrust = actions[0, 0, 0]
     print(f"Calculated Thrust: {thrust}")
@@ -90,7 +90,7 @@ def test_oracle_physics():
     # This should CLIPPING (20.62 > 20.0). Output 1.0.
 
     current_state['vel_z'] = np.array([1.0])
-    actions, _ = oracle.compute_trajectory(tp, 0.0, 1, current_state)
+    actions, _, _ = oracle.compute_trajectory(tp, 0.0, 1, current_state)
     thrust = actions[0, 0, 0]
     print(f"Moving Up (High Drag) Thrust: {thrust}. Expected: 1.0 (Clipped)")
 
@@ -102,7 +102,7 @@ def test_oracle_physics():
     # cmd = 18.62 / 20.0 = 0.931.
 
     current_state['vel_z'] = np.array([-1.0])
-    actions, _ = oracle.compute_trajectory(tp, 0.0, 1, current_state)
+    actions, _, _ = oracle.compute_trajectory(tp, 0.0, 1, current_state)
     thrust = actions[0, 0, 0]
     expected_down = 18.62 / 20.0
     print(f"Moving Down Thrust: {thrust}. Expected: {expected_down}")
