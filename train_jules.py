@@ -130,10 +130,66 @@ class OracleController:
         t_end = t_start + self.planning_horizon
         (pfx, pfy, pfz), (vfx, vfy, vfz), (afx, afy, afz) = get_target_state(t_end)
 
+        # Cruise Logic: If target is too far, do not try to reach it in T=5s.
+        # Instead, plan to a waypoint towards the target to maintain stable cruise.
+        # Calculate vector to target
+        dx = pfx - p0x
+        dy = pfy - p0y
+        dz = pfz - p0z # Vertical distance
+        dist_xy = np.sqrt(dx*dx + dy*dy)
+
+        # Define a cruise distance for the planning horizon
+        # 5 seconds at 5 m/s = 25m.
+        CRUISE_DIST = 25.0
+
+        # If horizontal distance is large, clamp it
+        scale_mask = dist_xy > CRUISE_DIST
+
+        # We want to keep z as is? Or also limit z descent?
+        # User said "slowly decline".
+        # If we are 100m away and 50m up, and target is at 0.
+        # If we just clamp XY, we might still dive in Z if we keep original pfz.
+        # Let's scale the whole vector.
+
+        # Calculate full distance vector
+        dist_full = np.sqrt(dx*dx + dy*dy + dz*dz)
+
+        # Use a scaling factor to bring the target closer (Virtual Waypoint)
+        # We can just check if dist > CRUISE_DIST
+        # Broadcast scale
+        scale = np.ones_like(dist_full)
+        scale = np.where(dist_full > CRUISE_DIST, CRUISE_DIST / (dist_full + 1e-6), 1.0)
+
+        # Apply scale to relative vector
+        pfx_plan = p0x + dx * scale
+        pfy_plan = p0y + dy * scale
+        pfz_plan = p0z + dz * scale
+
+        # If we are scaling, we probably want the arrival velocity to be pointing towards the target
+        # rather than the target's actual velocity (which might be perpendicular).
+        # But MinJerk matches final velocity.
+        # If we treat it as a waypoint, we want non-zero velocity at the waypoint.
+        # Let's assume we want to arrive at waypoint with the direction of the vector.
+
+        # Direction
+        dir_x = dx / (dist_full + 1e-6)
+        dir_y = dy / (dist_full + 1e-6)
+        dir_z = dz / (dist_full + 1e-6)
+
+        cruise_speed = 5.0
+        vfx_plan = np.where(scale < 1.0, dir_x * cruise_speed, vfx)
+        vfy_plan = np.where(scale < 1.0, dir_y * cruise_speed, vfy)
+        vfz_plan = np.where(scale < 1.0, dir_z * cruise_speed, vfz)
+
+        # Accel 0 at waypoint
+        afx_plan = np.where(scale < 1.0, np.zeros_like(afx), afx)
+        afy_plan = np.where(scale < 1.0, np.zeros_like(afy), afy)
+        afz_plan = np.where(scale < 1.0, np.zeros_like(afz), afz)
+
         # 2. Compute Min Jerk Coeffs
-        cx = self.solve_min_jerk(p0x, v0x, a0x, pfx, vfx, afx, self.planning_horizon)
-        cy = self.solve_min_jerk(p0y, v0y, a0y, pfy, vfy, afy, self.planning_horizon)
-        cz = self.solve_min_jerk(p0z, v0z, a0z, pfz, vfz, afz, self.planning_horizon)
+        cx = self.solve_min_jerk(p0x, v0x, a0x, pfx_plan, vfx_plan, afx_plan, self.planning_horizon)
+        cy = self.solve_min_jerk(p0y, v0y, a0y, pfy_plan, vfy_plan, afy_plan, self.planning_horizon)
+        cz = self.solve_min_jerk(p0z, v0z, a0z, pfz_plan, vfz_plan, afz_plan, self.planning_horizon)
 
         # 3. Evaluate for output steps
         # t_eval: (1, steps)
@@ -258,9 +314,21 @@ class OracleController:
         Kp_att = 5.0 # Gain
 
         if current_state is not None:
-             curr_r = current_state['roll'][:, np.newaxis]
-             curr_p = current_state['pitch'][:, np.newaxis]
-             curr_y = current_state['yaw'][:, np.newaxis]
+             # Check if roll/pitch keys exist, as 'current_state' might come from simplified dicts
+             if 'roll' in current_state:
+                 curr_r = current_state['roll'][:, np.newaxis]
+             else:
+                 curr_r = np.zeros((self.num_agents, 1))
+
+             if 'pitch' in current_state:
+                 curr_p = current_state['pitch'][:, np.newaxis]
+             else:
+                 curr_p = np.zeros((self.num_agents, 1))
+
+             if 'yaw' in current_state:
+                 curr_y = current_state['yaw'][:, np.newaxis]
+             else:
+                 curr_y = np.zeros((self.num_agents, 1))
         else:
              curr_r = 0.0; curr_p = 0.0; curr_y = 0.0
 
@@ -657,8 +725,53 @@ def evaluate_rrt():
         future_coeffs = planner.plan(current_state, obs, traj_params, t_current)
 
         # Action at t=0 (x=-1)
-        fc_reshaped = future_coeffs.view(num_agents, 4, 3)
-        current_action = fc_reshaped[:, :, 0] - fc_reshaped[:, :, 1] + fc_reshaped[:, :, 2]
+        # Check shape mismatch: future_coeffs comes from Planner, which might have returned coeffs for ALL sim agents?
+        # No, planner returns (N, num_params).
+        # num_params is 20 (4 dims * 5 degrees).
+        # Wait, planner uses degree 4. 5 coeffs.
+        # But previous code used degree 2 (3 coeffs).
+        # GradientController init: self.degree = 4.
+        # So it returns 20 coeffs.
+        # But generate_data uses 3 coeffs logic?
+        # Ah, generate_data uses: fc_reshaped = future_coeffs.view(num_agents, 4, 3)
+        # This implies it expects 12 coeffs.
+        # GradientController must match this if we want it to work.
+        # Or we update this logic to use degree 4.
+
+        # In GradientController:
+        # self.degree = 4
+        # self.num_params = self.action_dim * (self.degree + 1) # 20
+        # It returns coeffs of shape (N, 20).
+
+        # In generate_data and evaluate_rrt, we try to view as (N, 4, 3).
+        # 4*3 = 12. 20 != 12.
+        # This is why it fails.
+
+        # We need to evaluate the polynomial at t=0 (x=-1 in Chebyshev domain [-1, 1] if mapped? Or just t=0?)
+        # The Chebyshev class handles evaluation.
+        # If we just want the action at step 0:
+        # We can use chebyshev evaluation.
+
+        # However, the `generate_data` function seems to assume Quadratic (degree 2) Chebyshev.
+        # If GradientController was changed to Degree 4, we must update the evaluation logic here.
+
+        # GradientController uses self.cheb_future = Chebyshev(horizon_steps, self.degree, device='cpu')
+        # It can evaluate for us.
+
+        # Let's use the planner's internal Chebyshev object to evaluate at step 0.
+        # Or simply reinstantiate one.
+
+        # reshape to (N, 4, 5)
+        fc_reshaped = future_coeffs.view(num_agents, 4, 5)
+
+        # Evaluate at step 0.
+        # Chebyshev domain is typically [-1, 1].
+        # The class maps indices 0..steps-1 to [-1, 1].
+        # Step 0 corresponds to x = -1.
+        # T0(-1)=1, T1(-1)=-1, T2(-1)=1, T3(-1)=-1, T4(-1)=1
+        # Action = c0 - c1 + c2 - c3 + c4
+
+        current_action = fc_reshaped[:, :, 0] - fc_reshaped[:, :, 1] + fc_reshaped[:, :, 2] - fc_reshaped[:, :, 3] + fc_reshaped[:, :, 4]
 
         current_action[:, 0] = torch.clamp(current_action[:, 0], 0.0, 1.0)
         current_action[:, 1:] = torch.clamp(current_action[:, 1:], -10.0, 10.0)

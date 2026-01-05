@@ -373,18 +373,21 @@ def reset_cpu(
 
     # Initialize Trajectory Parameters (Lissajous / Complex)
     # 0:Ax, 1:Fx, 2:Px, 3:Ay, 4:Fy, 5:Py, 6:Az, 7:Fz, 8:Pz, 9:Oz
+    # Slow target down: no more than 1m/s.
+    # V_max = A * F. If A=7, F must be < 1/7 ~ 0.14.
+    # Current F was 0.03-0.1.
+    # User requested very slow. Let's reduce F.
     traj_params[0] = 3.0 + np.random.rand(num_agents) * 4.0 # Ax
-    traj_params[1] = 0.03 + np.random.rand(num_agents) * 0.07 # Fx
+    traj_params[1] = 0.01 + np.random.rand(num_agents) * 0.03 # Fx (reduced)
     # Ensure starting in front (Positive X)
-    # x = Ax * sin(Px) > 0 => sin(Px) > 0 => Px in [0, pi]
     traj_params[2] = np.random.rand(num_agents) * np.pi # Px [0, pi]
 
     traj_params[3] = 3.0 + np.random.rand(num_agents) * 4.0 # Ay
-    traj_params[4] = 0.03 + np.random.rand(num_agents) * 0.07 # Fy
+    traj_params[4] = 0.01 + np.random.rand(num_agents) * 0.03 # Fy (reduced)
     traj_params[5] = np.random.rand(num_agents) * 2 * np.pi # Py
 
     traj_params[6] = 1.0 + np.random.rand(num_agents) * 2.0 # Az
-    traj_params[7] = 0.05 + np.random.rand(num_agents) * 0.1 # Fz
+    traj_params[7] = 0.01 + np.random.rand(num_agents) * 0.05 # Fz (reduced)
     traj_params[8] = np.random.rand(num_agents) * 2 * np.pi # Pz
     # Oz range [9.0, 12.0]. Az range [1.0, 3.0]. Min Z = 9-3=6.0. Max Terrain = 5.0.
     traj_params[9] = 9.0 + np.random.rand(num_agents) * 3.0 # Oz
@@ -414,22 +417,8 @@ def reset_cpu(
     # Reset Observations (Size 308)
     observations[:] = 0.0
 
-    # Initial Position
-    pos_x[:] = 0.0
-    pos_y[:] = 0.0
-    pos_z[:] = 50.0
-    vel_x[:] = np.random.rand(num_agents) * 5.0 # Forward velocity 0-5 m/s
-    vel_y[:] = 0.0
-    vel_z[:] = 0.0
-    roll[:] = 0.0
-    # Pitch and Yaw will be set to look at target
-
-    # Calculate Initial Target State (t=0)
+    # Calculate Initial Target State (t=0) FIRST so we can place drone relative to it
     # traj_params: (10, num_agents)
-    # 0:Ax, 1:Fx, 2:Px, 3:Ay, 4:Fy, 5:Py, 6:Az, 7:Fz, 8:Pz, 9:Oz
-
-    # t=0, so sin(Px)
-    # vtx = Ax * sin(Px)
     vtx_val = traj_params[0] * np.sin(traj_params[2])
     vtvx_val = traj_params[0] * traj_params[1] * np.cos(traj_params[2])
 
@@ -444,11 +433,37 @@ def reset_cpu(
     vt_y[:] = vty_val
     vt_z[:] = vtz_val
 
-    # Point Drone at Target
+    # Initial Position: 100m from target
+    # We place drone at random angle at 100m distance? Or just X-offset?
+    # User said "init the drone 100m from target".
+    # Let's place it at (-100, 0) relative to target in XY plane to start.
+    # Actually, let's just create a random angle and place it 100m away horizontally.
+    init_angle = np.random.rand(num_agents) * 2 * np.pi
+    dist_xy_desired = 100.0
+
+    pos_x[:] = vtx_val + dist_xy_desired * np.cos(init_angle)
+    pos_y[:] = vty_val + dist_xy_desired * np.sin(init_angle)
+    pos_z[:] = 50.0
+
+    # Initial Velocity: Slow speed (0-2 m/s)
+    speed = np.random.rand(num_agents) * 2.0
+    # Point velocity towards target approximately
+    # Vector to target
     dx = vtx_val - pos_x
     dy = vty_val - pos_y
     dz = vtz_val - pos_z
     dist_xy = np.sqrt(dx*dx + dy*dy)
+
+    dir_x = dx / (dist_xy + 1e-6)
+    dir_y = dy / (dist_xy + 1e-6)
+
+    vel_x[:] = dir_x * speed
+    vel_y[:] = dir_y * speed
+    vel_z[:] = 0.0
+
+    roll[:] = 0.0
+
+    # Point Drone at Target
     yaw[:] = np.arctan2(dy, dx)
     # Corrected: Pitch UP (-30 deg) to compensate for Camera Down (30 deg)
     pitch[:] = -np.arctan2(dz, dist_xy) - (np.pi / 6.0)
