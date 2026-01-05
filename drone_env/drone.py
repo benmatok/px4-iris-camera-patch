@@ -439,7 +439,7 @@ def reset_cpu(
     # Let's place it at (-100, 0) relative to target in XY plane to start.
     # Actually, let's just create a random angle and place it 100m away horizontally.
     init_angle = np.random.rand(num_agents) * 2 * np.pi
-    dist_xy_desired = 100.0
+    dist_xy_desired = 40.0
 
     pos_x[:] = vtx_val + dist_xy_desired * np.cos(init_angle)
     pos_y[:] = vty_val + dist_xy_desired * np.sin(init_angle)
