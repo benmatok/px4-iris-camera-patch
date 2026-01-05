@@ -443,7 +443,8 @@ def reset_cpu(
 
     pos_x[:] = vtx_val + dist_xy_desired * np.cos(init_angle)
     pos_y[:] = vty_val + dist_xy_desired * np.sin(init_angle)
-    pos_z[:] = 50.0
+    # Initialize at target altitude to ensure visibility with Camera Up 30
+    pos_z[:] = vtz_val
 
     # Initial Velocity: Slow speed (0-2 m/s)
     speed = np.random.rand(num_agents) * 2.0
@@ -465,8 +466,9 @@ def reset_cpu(
 
     # Point Drone at Target
     yaw[:] = np.arctan2(dy, dx)
-    # Corrected: Pitch DOWN (+30 deg) to compensate for Camera Up (30 deg)
-    pitch[:] = -np.arctan2(dz, dist_xy) + (np.pi / 6.0)
+    # Initialize Pitch to 0 (Level Flight) to match "Parallel to ground" requirement.
+    # Target will be visible at bottom of frame (approx -30 deg) due to Camera Up 30 deg.
+    pitch[:] = 0.0
 
     # Populate Obs
     rvx = vtvx_val - vel_x
