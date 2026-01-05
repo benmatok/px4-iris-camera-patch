@@ -210,8 +210,8 @@ def step_cpu(
     c30 = 0.866025
 
     xc = yb
-    yc = s30 * xb + c30 * zb
-    zc = c30 * xb - s30 * zb
+    yc = -s30 * xb + c30 * zb
+    zc = c30 * xb + s30 * zb
 
     zc_safe = np.maximum(zc, 0.1)
     u = xc / zc_safe
@@ -223,8 +223,8 @@ def step_cpu(
 
     w2 = roll_rate**2 + pitch_rate**2 + yaw_rate**2
     conf = np.exp(-0.1 * w2)
-    # Behind camera check
-    conf = np.where((c30 * xb - s30 * zb) < 0.0, 0.0, conf)
+    # Behind camera check (zc < 0)
+    conf = np.where((c30 * xb + s30 * zb) < 0.0, 0.0, conf)
     # Strictly behind check
     conf = np.where(xb < 0.0, 0.0, conf)
 
@@ -465,8 +465,8 @@ def reset_cpu(
 
     # Point Drone at Target
     yaw[:] = np.arctan2(dy, dx)
-    # Corrected: Pitch UP (-30 deg) to compensate for Camera Down (30 deg)
-    pitch[:] = -np.arctan2(dz, dist_xy) - (np.pi / 6.0)
+    # Corrected: Pitch DOWN (+30 deg) to compensate for Camera Up (30 deg)
+    pitch[:] = -np.arctan2(dz, dist_xy) + (np.pi / 6.0)
 
     # Populate Obs
     rvx = vtvx_val - vel_x
@@ -506,7 +506,7 @@ def reset_cpu(
     size = 10.0 / (zc*zc + 1.0)
 
     conf = np.ones(num_agents, dtype=np.float32)
-    conf = np.where((c30 * xb - s30 * zb) < 0, 0.0, conf)
+    conf = np.where((c30 * xb + s30 * zb) < 0, 0.0, conf)
 
     observations[:, 304] = u
     observations[:, 305] = v
