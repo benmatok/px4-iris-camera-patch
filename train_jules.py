@@ -130,61 +130,43 @@ class OracleController:
         t_end = t_start + self.planning_horizon
         (pfx, pfy, pfz), (vfx, vfy, vfz), (afx, afy, afz) = get_target_state(t_end)
 
-        # Cruise Logic: If target is too far, do not try to reach it in T=5s.
-        # Instead, plan to a waypoint towards the target to maintain stable cruise.
-        # Calculate vector to target
+        # Intercept Logic:
+        # Instead of planning to rendezvous (match pos/vel) at T=5s,
+        # we plan to fly THROUGH the target (or towards it) at a constant cruise speed.
+        # We always set a virtual waypoint at a fixed distance (e.g., 20m) in the direction
+        # of the target's predicted position.
+
+        # Vector to predicted target
         dx = pfx - p0x
         dy = pfy - p0y
-        dz = pfz - p0z # Vertical distance
-        dist_xy = np.sqrt(dx*dx + dy*dy)
+        dz = pfz - p0z
 
-        # Define a cruise distance for the planning horizon
-        # 5 seconds at 5 m/s = 25m.
-        CRUISE_DIST = 25.0
-
-        # If horizontal distance is large, clamp it
-        scale_mask = dist_xy > CRUISE_DIST
-
-        # We want to keep z as is? Or also limit z descent?
-        # User said "slowly decline".
-        # If we are 100m away and 50m up, and target is at 0.
-        # If we just clamp XY, we might still dive in Z if we keep original pfz.
-        # Let's scale the whole vector.
-
-        # Calculate full distance vector
         dist_full = np.sqrt(dx*dx + dy*dy + dz*dz)
 
-        # Use a scaling factor to bring the target closer (Virtual Waypoint)
-        # We can just check if dist > CRUISE_DIST
-        # Broadcast scale
-        scale = np.ones_like(dist_full)
-        scale = np.where(dist_full > CRUISE_DIST, CRUISE_DIST / (dist_full + 1e-6), 1.0)
-
-        # Apply scale to relative vector
-        pfx_plan = p0x + dx * scale
-        pfy_plan = p0y + dy * scale
-        pfz_plan = p0z + dz * scale
-
-        # If we are scaling, we probably want the arrival velocity to be pointing towards the target
-        # rather than the target's actual velocity (which might be perpendicular).
-        # But MinJerk matches final velocity.
-        # If we treat it as a waypoint, we want non-zero velocity at the waypoint.
-        # Let's assume we want to arrive at waypoint with the direction of the vector.
-
         # Direction
-        dir_x = dx / (dist_full + 1e-6)
-        dir_y = dy / (dist_full + 1e-6)
-        dir_z = dz / (dist_full + 1e-6)
+        inv_dist = 1.0 / (dist_full + 1e-6)
+        dir_x = dx * inv_dist
+        dir_y = dy * inv_dist
+        dir_z = dz * inv_dist
 
-        cruise_speed = 5.0
-        vfx_plan = np.where(scale < 1.0, dir_x * cruise_speed, vfx)
-        vfy_plan = np.where(scale < 1.0, dir_y * cruise_speed, vfy)
-        vfz_plan = np.where(scale < 1.0, dir_z * cruise_speed, vfz)
+        # Cruise Parameters
+        CRUISE_DIST = 20.0 # Meters
+        CRUISE_SPEED = 5.0 # m/s
 
-        # Accel 0 at waypoint
-        afx_plan = np.where(scale < 1.0, np.zeros_like(afx), afx)
-        afy_plan = np.where(scale < 1.0, np.zeros_like(afy), afy)
-        afz_plan = np.where(scale < 1.0, np.zeros_like(afz), afz)
+        # Virtual Waypoint
+        pfx_plan = p0x + dir_x * CRUISE_DIST
+        pfy_plan = p0y + dir_y * CRUISE_DIST
+        pfz_plan = p0z + dir_z * CRUISE_DIST
+
+        # Desired Velocity at Waypoint (Maintain Cruise)
+        vfx_plan = dir_x * CRUISE_SPEED
+        vfy_plan = dir_y * CRUISE_SPEED
+        vfz_plan = dir_z * CRUISE_SPEED
+
+        # Desired Accel at Waypoint (Zero/Constant)
+        afx_plan = np.zeros_like(afx)
+        afy_plan = np.zeros_like(afy)
+        afz_plan = np.zeros_like(afz)
 
         # 2. Compute Min Jerk Coeffs
         cx = self.solve_min_jerk(p0x, v0x, a0x, pfx_plan, vfx_plan, afx_plan, self.planning_horizon)
