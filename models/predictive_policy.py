@@ -87,7 +87,7 @@ class JulesPredictiveController(nn.Module):
 
         # Configuration
         self.input_degree = 3  # Cubic fit for history -> 4 coeffs
-        self.output_degree = 2 # Quadratic fit for future -> 3 coeffs
+        self.output_degree = 4 # Quartic fit for future -> 5 coeffs (Matches GradientController)
 
         # Input Size: 10 vars * 4 coeffs = 40
         self.encoder_input_dim = self.history_dim * (self.input_degree + 1)
@@ -95,7 +95,7 @@ class JulesPredictiveController(nn.Module):
         # Aux Input: Target Error (rvx, rvy, rvz, dist) + Tracker (u, v, size, conf) = 8
         self.aux_dim = 8
 
-        # Output Size: 4 actions * 3 coeffs = 12
+        # Output Size: 4 actions * 5 coeffs = 20
         self.output_dim = self.action_dim * (self.output_degree + 1)
 
         # --- 1. THE ENCODER (The Past) ---
@@ -119,7 +119,7 @@ class JulesPredictiveController(nn.Module):
         self.cheb_future = Chebyshev(future_len, self.output_degree)
 
         self.register_buffer('hist_fit_mat', self.cheb_hist.fit_mat)
-        self.register_buffer('future_T_eval_start', torch.tensor([1.0, -1.0, 1.0])) # T_n(-1) for n=0,1,2
+        self.register_buffer('future_T_eval_start', torch.tensor([1.0, -1.0, 1.0, -1.0, 1.0])) # T_n(-1) for n=0..4
 
     def fit_history(self, history):
         """
@@ -167,16 +167,14 @@ class JulesPredictiveController(nn.Module):
         Reconstructs the immediate action (t=0) from the coefficients.
         t=0 corresponds to x=-1 in our future window [0, 0.5] mapped to [-1, 1].
         """
-        # Reshape to (Batch, 4 controls, 3 coeffs)
+        # Reshape to (Batch, 4 controls, output_degree+1 coeffs)
         batch_size = action_coeffs.shape[0]
-        coeffs_reshaped = action_coeffs.view(batch_size, 4, 3)
+        # output_degree=4 => 5 coeffs
+        coeffs_reshaped = action_coeffs.view(batch_size, 4, self.output_degree + 1)
 
         # Eval at x=-1
-        # T0(-1)=1, T1(-1)=-1, T2(-1)=1
-        # action = c0 * 1 + c1 * (-1) + c2 * 1
-
         # We use the registered buffer for the basis vector at -1
-        # self.future_T_eval_start shape is (3,)
+        # self.future_T_eval_start shape is (5,)
 
         current_action = torch.einsum('bck, k -> bc', coeffs_reshaped, self.future_T_eval_start)
         return current_action

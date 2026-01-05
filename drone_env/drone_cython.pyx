@@ -557,7 +557,7 @@ cdef void _reset_agent_scalar_wrapper(
 
     # Initial Position: 100m from target
     cdef float init_angle = rand_float() * 6.2831853
-    cdef float dist_xy_desired = 100.0
+    cdef float dist_xy_desired = 40.0
     cdef float sa, ca
     sincosf(init_angle, &sa, &ca)
 

@@ -474,11 +474,11 @@ def generate_data(num_episodes=20, num_agents=50, future_steps=10):
 
             # Derive Immediate Action from Coeffs to step the environment
             # Eval at x=-1 (t=0)
-            # T0(-1)=1, T1(-1)=-1, T2(-1)=1
-            # Coeffs: (N, 4, 3)
-            fc_reshaped = future_coeffs.view(num_agents, 4, 3)
-            # Action = c0 - c1 + c2
-            current_action = fc_reshaped[:, :, 0] - fc_reshaped[:, :, 1] + fc_reshaped[:, :, 2]
+            # T0(-1)=1, T1(-1)=-1, T2(-1)=1, T3(-1)=-1, T4(-1)=1
+            # Coeffs: (N, 4, 5) (GradientController uses degree 4)
+            fc_reshaped = future_coeffs.view(num_agents, 4, 5)
+            # Action = c0 - c1 + c2 - c3 + c4
+            current_action = fc_reshaped[:, :, 0] - fc_reshaped[:, :, 1] + fc_reshaped[:, :, 2] - fc_reshaped[:, :, 3] + fc_reshaped[:, :, 4]
 
             # Clip
             current_action[:, 0] = torch.clamp(current_action[:, 0], 0.0, 1.0)
