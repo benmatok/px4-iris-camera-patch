@@ -487,16 +487,17 @@ cdef void _reset_agent_scalar_wrapper(
     thrust_coeffs[i] = 0.8 + rand_float() * 0.4
 
     # Randomize Trajectory Params
+    # Reduced frequencies for slow target (<= 1m/s)
     traj_params[0, i] = 3.0 + rand_float() * 4.0
-    traj_params[1, i] = 0.03 + rand_float() * 0.07
+    traj_params[1, i] = 0.01 + rand_float() * 0.03 # Fx reduced
     traj_params[2, i] = rand_float() * 6.28318
 
     traj_params[3, i] = 3.0 + rand_float() * 4.0
-    traj_params[4, i] = 0.03 + rand_float() * 0.07
+    traj_params[4, i] = 0.01 + rand_float() * 0.03 # Fy reduced
     traj_params[5, i] = rand_float() * 6.28318
 
     traj_params[6, i] = 1.0 + rand_float() * 2.0
-    traj_params[7, i] = 0.05 + rand_float() * 0.1
+    traj_params[7, i] = 0.01 + rand_float() * 0.05 # Fz reduced
     traj_params[8, i] = rand_float() * 6.28318
     # Oz range [9.0, 12.0]. Az range [1.0, 3.0]. Min Z = 9-3=6.0. Max Terrain = 5.0.
     traj_params[9, i] = 9.0 + rand_float() * 3.0
@@ -521,15 +522,6 @@ cdef void _reset_agent_scalar_wrapper(
 
     # Reset Observations (Size 308)
     memset(&observations[i, 0], 0, 308 * 4)
-
-    # Initial Position
-    pos_x[i] = 0.0
-    pos_y[i] = 0.0
-    pos_z[i] = 50.0
-    vel_x[i] = rand_float() * 5.0 # Forward velocity 0-5 m/s
-    vel_y[i] = 0.0
-    vel_z[i] = 0.0
-    roll[i] = 0.0
 
     # Calculate Initial Target State (t=0) locally
     cdef float ax_p = traj_params[0, i]
@@ -563,11 +555,32 @@ cdef void _reset_agent_scalar_wrapper(
     vt_y[i] = vty_val
     vt_z[i] = vtz_val
 
-    # Point Drone at Target
+    # Initial Position: 100m from target
+    cdef float init_angle = rand_float() * 6.2831853
+    cdef float dist_xy_desired = 100.0
+    cdef float sa, ca
+    sincosf(init_angle, &sa, &ca)
+
+    pos_x[i] = vtx_val + dist_xy_desired * ca
+    pos_y[i] = vty_val + dist_xy_desired * sa
+    pos_z[i] = 50.0
+
+    # Initial Velocity: Slow speed (0-2 m/s)
+    cdef float speed = rand_float() * 2.0
+    # Vector to target
     cdef float dx = vtx_val - pos_x[i]
     cdef float dy = vty_val - pos_y[i]
     cdef float dz = vtz_val - pos_z[i]
     cdef float dist_xy = sqrt(dx*dx + dy*dy)
+
+    cdef float dir_x = dx / (dist_xy + 1e-6)
+    cdef float dir_y = dy / (dist_xy + 1e-6)
+
+    vel_x[i] = dir_x * speed
+    vel_y[i] = dir_y * speed
+    vel_z[i] = 0.0
+
+    roll[i] = 0.0
 
     yaw[i] = atan2f(dy, dx)
     # Corrected: Pitch UP (-30 deg) to compensate for Camera Down (30 deg)
