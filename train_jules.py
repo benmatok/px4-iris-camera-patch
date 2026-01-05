@@ -24,7 +24,7 @@ class OracleController:
         self.g = 9.81
 
         # Planning Horizon for Min-Jerk
-        self.planning_horizon = 2.0 # seconds to converge
+        self.planning_horizon = 5.0 # seconds to converge (increased to prevent aggressive diving)
 
     def solve_min_jerk(self, p0, v0, a0, pf, vf, af, T):
         """
@@ -235,6 +235,11 @@ class OracleController:
 
         roll_des = -np.arcsin(np.clip(v1, -1.0, 1.0))
         pitch_des = np.arctan2(v0, v2)
+
+        # Clamp pitch to prevent aggressive decline (max 45 degrees nose down)
+        # Assuming Positive Pitch = Nose Down
+        max_pitch = np.deg2rad(45.0)
+        pitch_des = np.clip(pitch_des, -max_pitch, max_pitch)
 
         # Rates via Finite Difference on the Planned Trajectory
         if steps > 1:

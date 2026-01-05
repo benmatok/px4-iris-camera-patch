@@ -29,8 +29,8 @@ class GradientController:
 
         # Action space: 4 dims. Degree: 2 (Quadratic) -> 3 coeffs.
         self.action_dim = 4
-        self.degree = 2
-        self.num_params = self.action_dim * 3 # 12 parameters
+        self.degree = 4
+        self.num_params = self.action_dim * (self.degree + 1) # 20 parameters
 
         self.cheb_future = Chebyshev(horizon_steps, self.degree, device='cpu')
 
@@ -62,10 +62,10 @@ class GradientController:
             current_traj_params, t_start, self.horizon_steps, current_state_dict
         )
 
-        # Oracle Coeffs: (N, 4, 3)
+        # Oracle Coeffs: (N, 4, degree+1)
         oracle_actions_torch = torch.from_numpy(oracle_actions).float()
-        current_coeffs = self.cheb_future.fit(oracle_actions_torch) # (N, 4, 3)
-        current_coeffs = current_coeffs.view(self.num_main_agents, 12)
+        current_coeffs = self.cheb_future.fit(oracle_actions_torch) # (N, 4, 5)
+        current_coeffs = current_coeffs.view(self.num_main_agents, self.num_params)
 
         # ---------------------------------------------------------------------
         # SCANNING CHECK
@@ -93,7 +93,7 @@ class GradientController:
             scan_actions[:, 3, :] = scan_yaw_rate[np.newaxis, :]
 
             scan_actions_torch = torch.from_numpy(scan_actions).float()
-            scanning_coeffs = self.cheb_future.fit(scan_actions_torch).view(self.num_main_agents, 12)
+            scanning_coeffs = self.cheb_future.fit(scan_actions_torch).view(self.num_main_agents, self.num_params)
 
         # ---------------------------------------------------------------------
         # OPTIMIZATION LOOP
@@ -116,23 +116,23 @@ class GradientController:
         Y_target = torch.cat([Y_pos_tgt_flat, Y_att_tgt_flat], dim=1) # (N, S*6)
 
         for itr in range(self.iterations):
-            # 1. Expand Coeffs (N, 13, 12)
+            # 1. Expand Coeffs (N, K, num_params)
             # Slot 0: Base
-            # Slot 1..12: Base + epsilon * e_j
+            # Slot 1..N: Base + epsilon * e_j
 
-            coeffs_base = current_coeffs.clone() # (N, 12)
-            coeffs_expanded = coeffs_base.unsqueeze(1).repeat(1, self.k_sims, 1) # (N, 13, 12)
+            coeffs_base = current_coeffs.clone() # (N, num_params)
+            coeffs_expanded = coeffs_base.unsqueeze(1).repeat(1, self.k_sims, 1) # (N, K, num_params)
 
             # Apply perturbations
             # We want coeffs_expanded[i, j+1, j] += epsilon
-            # Create identity perturbation matrix (12, 12) scaled by eps
-            perturbations = torch.eye(12) * self.epsilon
-            # Broadcast to (N, 12, 12)
+            # Create identity perturbation matrix
+            perturbations = torch.eye(self.num_params) * self.epsilon
+            # Broadcast
             coeffs_expanded[:, 1:, :] += perturbations.unsqueeze(0)
 
             # 2. Simulate
-            # Flatten to (N*13, 12) -> (N*13, 4, 3)
-            sim_coeffs = coeffs_expanded.view(-1, 4, 3)
+            # Flatten to (N*K, num_params) -> (N*K, 4, degree+1)
+            sim_coeffs = coeffs_expanded.view(-1, 4, self.degree + 1)
             sim_controls = self.cheb_future.evaluate(sim_coeffs)
 
             # Clip
@@ -234,36 +234,38 @@ class GradientController:
             J = (Y_perturbed_combined - Y_base_combined.unsqueeze(1)) / self.epsilon
 
             # Jacobian: J = (Y_perturbed - Y_base) / epsilon
-            # Y_perturbed: (N, 12, M) -> indices 1..12
-            Y_perturbed = Y_sim[:, 1:, :]
+            # Y_perturbed: (N, num_params, M) -> indices 1..
+            # Use Y_sim_combined from above
+            Y_perturbed = Y_sim_combined[:, 1:, :]
+            Y_base = Y_sim_combined[:, 0, :]
 
-            J = (Y_perturbed - Y_base.unsqueeze(1)) / self.epsilon # (N, 12, M)
-            # We need J in shape (N, M, 12) for standard notation J*delta = -r
-            J = J.transpose(1, 2) # (N, M, 12)
+            J = (Y_perturbed - Y_base.unsqueeze(1)) / self.epsilon # (N, num_params, M)
+            # We need J in shape (N, M, num_params) for standard notation J*delta = -r
+            J = J.transpose(1, 2) # (N, M, num_params)
 
             # 4. Levenberg-Marquardt Update
             # delta = -(J^T J + lambda I)^-1 J^T r
 
-            # J_T: (N, 12, M)
+            # J_T: (N, num_params, M)
             J_T = J.transpose(1, 2)
 
-            # J^T J: (N, 12, 12)
+            # J^T J: (N, num_params, num_params)
             JTJ = torch.bmm(J_T, J)
 
             # Damping
-            diag_idx = torch.arange(12)
+            diag_idx = torch.arange(self.num_params)
             JTJ[:, diag_idx, diag_idx] += self.lambda_damping
 
-            # J^T r: (N, 12, 1)
+            # J^T r: (N, num_params, 1)
             # r: (N, M) -> (N, M, 1)
             JTr = torch.bmm(J_T, residuals.unsqueeze(2))
 
             # Solve linear system
             # Use torch.linalg.solve(A, B) -> X
             try:
-                # delta: (N, 12, 1)
+                # delta: (N, num_params, 1)
                 delta = torch.linalg.solve(JTJ, -JTr)
-                delta = delta.squeeze(2) # (N, 12)
+                delta = delta.squeeze(2) # (N, num_params)
 
                 # Update
                 current_coeffs = current_coeffs + delta
