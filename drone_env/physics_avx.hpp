@@ -273,8 +273,11 @@ inline void step_agents_avx2(
     __m256 c30 = _mm256_set1_ps(0.866025f);
 
     __m256 xc = yb;
-    __m256 yc = _mm256_add_ps(_mm256_mul_ps(s30, xb), _mm256_mul_ps(c30, zb));
-    __m256 zc = _mm256_sub_ps(_mm256_mul_ps(c30, xb), _mm256_mul_ps(s30, zb));
+    // Camera Up 30 deg:
+    // yc = -s30 * xb + c30 * zb
+    // zc = c30 * xb + s30 * zb
+    __m256 yc = _mm256_add_ps(_mm256_mul_ps(_mm256_sub_ps(c0, s30), xb), _mm256_mul_ps(c30, zb));
+    __m256 zc = _mm256_add_ps(_mm256_mul_ps(c30, xb), _mm256_mul_ps(s30, zb));
 
     __m256 zc_safe = _mm256_max_ps(zc, c01);
     __m256 u = _mm256_div_ps(xc, zc_safe);
@@ -294,6 +297,7 @@ inline void step_agents_avx2(
         )
     );
     __m256 conf = exp256_ps(_mm256_mul_ps(_mm256_set1_ps(-0.1f), w2));
+    // Behind camera if zc < 0 (using new zc)
     __m256 mask_behind = _mm256_cmp_ps(zc, c0, _CMP_LT_OQ);
     conf = _mm256_blendv_ps(conf, c0, mask_behind);
 

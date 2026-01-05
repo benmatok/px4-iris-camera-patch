@@ -20066,7 +20066,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
  *     cdef float s30 = 0.5
  *     cdef float c30 = 0.866025             # <<<<<<<<<<<<<<
  *     xc = yb
- *     yc = s30 * xb + c30 * zb
+ *     yc = -s30 * xb + c30 * zb
 */
   __pyx_v_c30 = 0.866025;
 
@@ -20074,28 +20074,28 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
  *     cdef float s30 = 0.5
  *     cdef float c30 = 0.866025
  *     xc = yb             # <<<<<<<<<<<<<<
- *     yc = s30 * xb + c30 * zb
- *     zc = c30 * xb - s30 * zb
+ *     yc = -s30 * xb + c30 * zb
+ *     zc = c30 * xb + s30 * zb
 */
   __pyx_v_xc = __pyx_v_yb;
 
   /* "drone_env/drone_cython.pyx":246
  *     cdef float c30 = 0.866025
  *     xc = yb
- *     yc = s30 * xb + c30 * zb             # <<<<<<<<<<<<<<
- *     zc = c30 * xb - s30 * zb
+ *     yc = -s30 * xb + c30 * zb             # <<<<<<<<<<<<<<
+ *     zc = c30 * xb + s30 * zb
  *
 */
-  __pyx_v_yc = ((__pyx_v_s30 * __pyx_v_xb) + (__pyx_v_c30 * __pyx_v_zb));
+  __pyx_v_yc = (((-__pyx_v_s30) * __pyx_v_xb) + (__pyx_v_c30 * __pyx_v_zb));
 
   /* "drone_env/drone_cython.pyx":247
  *     xc = yb
- *     yc = s30 * xb + c30 * zb
- *     zc = c30 * xb - s30 * zb             # <<<<<<<<<<<<<<
+ *     yc = -s30 * xb + c30 * zb
+ *     zc = c30 * xb + s30 * zb             # <<<<<<<<<<<<<<
  *
  *     cdef float u, v
 */
-  __pyx_v_zc = ((__pyx_v_c30 * __pyx_v_xb) - (__pyx_v_s30 * __pyx_v_zb));
+  __pyx_v_zc = ((__pyx_v_c30 * __pyx_v_xb) + (__pyx_v_s30 * __pyx_v_zb));
 
   /* "drone_env/drone_cython.pyx":250
  *
@@ -20308,7 +20308,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
  *     cdef float w2 = roll_rate_cmd*roll_rate_cmd + pitch_rate_cmd*pitch_rate_cmd + yaw_rate_cmd*yaw_rate_cmd
  *     conf = exp(-0.1 * w2)             # <<<<<<<<<<<<<<
  *     if zc <= 0.1:
- *         if (c30 * xb - s30 * zb) < 0:
+ *         if (c30 * xb + s30 * zb) < 0:
 */
   __pyx_v_conf = exp((-0.1 * __pyx_v_w2));
 
@@ -20316,7 +20316,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
  *     cdef float w2 = roll_rate_cmd*roll_rate_cmd + pitch_rate_cmd*pitch_rate_cmd + yaw_rate_cmd*yaw_rate_cmd
  *     conf = exp(-0.1 * w2)
  *     if zc <= 0.1:             # <<<<<<<<<<<<<<
- *         if (c30 * xb - s30 * zb) < 0:
+ *         if (c30 * xb + s30 * zb) < 0:
  *             conf = 0.0
 */
   __pyx_t_2 = (__pyx_v_zc <= 0.1);
@@ -20325,16 +20325,16 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
     /* "drone_env/drone_cython.pyx":280
  *     conf = exp(-0.1 * w2)
  *     if zc <= 0.1:
- *         if (c30 * xb - s30 * zb) < 0:             # <<<<<<<<<<<<<<
+ *         if (c30 * xb + s30 * zb) < 0:             # <<<<<<<<<<<<<<
  *             conf = 0.0
  *
 */
-    __pyx_t_2 = (((__pyx_v_c30 * __pyx_v_xb) - (__pyx_v_s30 * __pyx_v_zb)) < 0.0);
+    __pyx_t_2 = (((__pyx_v_c30 * __pyx_v_xb) + (__pyx_v_s30 * __pyx_v_zb)) < 0.0);
     if (__pyx_t_2) {
 
       /* "drone_env/drone_cython.pyx":281
  *     if zc <= 0.1:
- *         if (c30 * xb - s30 * zb) < 0:
+ *         if (c30 * xb + s30 * zb) < 0:
  *             conf = 0.0             # <<<<<<<<<<<<<<
  *
  *     # Rel Vel
@@ -20344,7 +20344,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
       /* "drone_env/drone_cython.pyx":280
  *     conf = exp(-0.1 * w2)
  *     if zc <= 0.1:
- *         if (c30 * xb - s30 * zb) < 0:             # <<<<<<<<<<<<<<
+ *         if (c30 * xb + s30 * zb) < 0:             # <<<<<<<<<<<<<<
  *             conf = 0.0
  *
 */
@@ -20354,7 +20354,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
  *     cdef float w2 = roll_rate_cmd*roll_rate_cmd + pitch_rate_cmd*pitch_rate_cmd + yaw_rate_cmd*yaw_rate_cmd
  *     conf = exp(-0.1 * w2)
  *     if zc <= 0.1:             # <<<<<<<<<<<<<<
- *         if (c30 * xb - s30 * zb) < 0:
+ *         if (c30 * xb + s30 * zb) < 0:
  *             conf = 0.0
 */
   }
@@ -22673,21 +22673,21 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar_wrapper(int __
  *     roll[i] = 0.0
  *
  *     yaw[i] = atan2f(dy, dx)             # <<<<<<<<<<<<<<
- *     # Corrected: Pitch UP (-30 deg) to compensate for Camera Down (30 deg)
- *     pitch[i] = -atan2f(dz, dist_xy) - 0.5235987756
+ *     # Corrected: Pitch DOWN (+30 deg) to compensate for Camera Up (30 deg)
+ *     pitch[i] = -atan2f(dz, dist_xy) + 0.5235987756
 */
   __pyx_t_3 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_yaw.data + __pyx_t_3 * __pyx_v_yaw.strides[0]) )) = atan2f(__pyx_v_dy, __pyx_v_dx);
 
   /* "drone_env/drone_cython.pyx":587
  *     yaw[i] = atan2f(dy, dx)
- *     # Corrected: Pitch UP (-30 deg) to compensate for Camera Down (30 deg)
- *     pitch[i] = -atan2f(dz, dist_xy) - 0.5235987756             # <<<<<<<<<<<<<<
+ *     # Corrected: Pitch DOWN (+30 deg) to compensate for Camera Up (30 deg)
+ *     pitch[i] = -atan2f(dz, dist_xy) + 0.5235987756             # <<<<<<<<<<<<<<
  *
  *     # Populate Obs
 */
   __pyx_t_3 = __pyx_v_i;
-  *((float *) ( /* dim=0 */ (__pyx_v_pitch.data + __pyx_t_3 * __pyx_v_pitch.strides[0]) )) = ((-atan2f(__pyx_v_dz, __pyx_v_dist_xy)) - 0.5235987756);
+  *((float *) ( /* dim=0 */ (__pyx_v_pitch.data + __pyx_t_3 * __pyx_v_pitch.strides[0]) )) = ((-atan2f(__pyx_v_dz, __pyx_v_dist_xy)) + 0.5235987756);
 
   /* "drone_env/drone_cython.pyx":590
  *
@@ -22978,7 +22978,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar_wrapper(int __
  *     cdef float s30 = 0.5
  *     cdef float c30 = 0.866025             # <<<<<<<<<<<<<<
  *     xc = yb
- *     yc = s30 * xb + c30 * zb
+ *     yc = -s30 * xb + c30 * zb
 */
   __pyx_v_c30 = 0.866025;
 
@@ -22986,28 +22986,28 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar_wrapper(int __
  *     cdef float s30 = 0.5
  *     cdef float c30 = 0.866025
  *     xc = yb             # <<<<<<<<<<<<<<
- *     yc = s30 * xb + c30 * zb
- *     zc = c30 * xb - s30 * zb
+ *     yc = -s30 * xb + c30 * zb
+ *     zc = c30 * xb + s30 * zb
 */
   __pyx_v_xc = __pyx_v_yb;
 
   /* "drone_env/drone_cython.pyx":633
  *     cdef float c30 = 0.866025
  *     xc = yb
- *     yc = s30 * xb + c30 * zb             # <<<<<<<<<<<<<<
- *     zc = c30 * xb - s30 * zb
+ *     yc = -s30 * xb + c30 * zb             # <<<<<<<<<<<<<<
+ *     zc = c30 * xb + s30 * zb
  *
 */
-  __pyx_v_yc = ((__pyx_v_s30 * __pyx_v_xb) + (__pyx_v_c30 * __pyx_v_zb));
+  __pyx_v_yc = (((-__pyx_v_s30) * __pyx_v_xb) + (__pyx_v_c30 * __pyx_v_zb));
 
   /* "drone_env/drone_cython.pyx":634
  *     xc = yb
- *     yc = s30 * xb + c30 * zb
- *     zc = c30 * xb - s30 * zb             # <<<<<<<<<<<<<<
+ *     yc = -s30 * xb + c30 * zb
+ *     zc = c30 * xb + s30 * zb             # <<<<<<<<<<<<<<
  *
  *     cdef float u, v, size, conf
 */
-  __pyx_v_zc = ((__pyx_v_c30 * __pyx_v_xb) - (__pyx_v_s30 * __pyx_v_zb));
+  __pyx_v_zc = ((__pyx_v_c30 * __pyx_v_xb) + (__pyx_v_s30 * __pyx_v_zb));
 
   /* "drone_env/drone_cython.pyx":637
  *
@@ -23092,7 +23092,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar_wrapper(int __
  *
  *     size = 10.0 / (zc*zc + 1.0)             # <<<<<<<<<<<<<<
  *     conf = 1.0
- *     if (c30 * xb - s30 * zb) < 0: conf = 0.0
+ *     if (c30 * xb + s30 * zb) < 0: conf = 0.0
 */
   __pyx_v_size = (10.0 / ((__pyx_v_zc * __pyx_v_zc) + 1.0));
 
@@ -23100,7 +23100,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar_wrapper(int __
  *
  *     size = 10.0 / (zc*zc + 1.0)
  *     conf = 1.0             # <<<<<<<<<<<<<<
- *     if (c30 * xb - s30 * zb) < 0: conf = 0.0
+ *     if (c30 * xb + s30 * zb) < 0: conf = 0.0
  *
 */
   __pyx_v_conf = 1.0;
@@ -23108,17 +23108,17 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar_wrapper(int __
   /* "drone_env/drone_cython.pyx":648
  *     size = 10.0 / (zc*zc + 1.0)
  *     conf = 1.0
- *     if (c30 * xb - s30 * zb) < 0: conf = 0.0             # <<<<<<<<<<<<<<
+ *     if (c30 * xb + s30 * zb) < 0: conf = 0.0             # <<<<<<<<<<<<<<
  *
  *     observations[i, 304] = u
 */
-  __pyx_t_4 = (((__pyx_v_c30 * __pyx_v_xb) - (__pyx_v_s30 * __pyx_v_zb)) < 0.0);
+  __pyx_t_4 = (((__pyx_v_c30 * __pyx_v_xb) + (__pyx_v_s30 * __pyx_v_zb)) < 0.0);
   if (__pyx_t_4) {
     __pyx_v_conf = 0.0;
   }
 
   /* "drone_env/drone_cython.pyx":650
- *     if (c30 * xb - s30 * zb) < 0: conf = 0.0
+ *     if (c30 * xb + s30 * zb) < 0: conf = 0.0
  *
  *     observations[i, 304] = u             # <<<<<<<<<<<<<<
  *     observations[i, 305] = v

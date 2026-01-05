@@ -243,8 +243,8 @@ cdef void _step_agent_scalar(
     cdef float s30 = 0.5
     cdef float c30 = 0.866025
     xc = yb
-    yc = s30 * xb + c30 * zb
-    zc = c30 * xb - s30 * zb
+    yc = -s30 * xb + c30 * zb
+    zc = c30 * xb + s30 * zb
 
     cdef float u, v
     if zc < 0.1: zc = 0.1
@@ -277,7 +277,7 @@ cdef void _step_agent_scalar(
     cdef float w2 = roll_rate_cmd*roll_rate_cmd + pitch_rate_cmd*pitch_rate_cmd + yaw_rate_cmd*yaw_rate_cmd
     conf = exp(-0.1 * w2)
     if zc <= 0.1:
-        if (c30 * xb - s30 * zb) < 0:
+        if (c30 * xb + s30 * zb) < 0:
             conf = 0.0
 
     # Rel Vel
@@ -583,8 +583,8 @@ cdef void _reset_agent_scalar_wrapper(
     roll[i] = 0.0
 
     yaw[i] = atan2f(dy, dx)
-    # Corrected: Pitch UP (-30 deg) to compensate for Camera Down (30 deg)
-    pitch[i] = -atan2f(dz, dist_xy) - 0.5235987756
+    # Corrected: Pitch DOWN (+30 deg) to compensate for Camera Up (30 deg)
+    pitch[i] = -atan2f(dz, dist_xy) + 0.5235987756
 
     # Populate Obs
     cdef float rvx = vtvx_val - vel_x[i]
@@ -630,8 +630,8 @@ cdef void _reset_agent_scalar_wrapper(
     cdef float s30 = 0.5
     cdef float c30 = 0.866025
     xc = yb
-    yc = s30 * xb + c30 * zb
-    zc = c30 * xb - s30 * zb
+    yc = -s30 * xb + c30 * zb
+    zc = c30 * xb + s30 * zb
 
     cdef float u, v, size, conf
     if zc < 0.1: zc = 0.1
@@ -645,7 +645,7 @@ cdef void _reset_agent_scalar_wrapper(
 
     size = 10.0 / (zc*zc + 1.0)
     conf = 1.0
-    if (c30 * xb - s30 * zb) < 0: conf = 0.0
+    if (c30 * xb + s30 * zb) < 0: conf = 0.0
 
     observations[i, 304] = u
     observations[i, 305] = v
