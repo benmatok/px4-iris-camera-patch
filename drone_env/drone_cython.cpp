@@ -22537,7 +22537,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar_wrapper(int __
  *
  *     pos_x[i] = vtx_val + dist_xy_desired * ca             # <<<<<<<<<<<<<<
  *     pos_y[i] = vty_val + dist_xy_desired * sa
- *     pos_z[i] = 50.0
+ *     pos_z[i] = vtz_val
 */
   __pyx_t_3 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_pos_x.data + __pyx_t_3 * __pyx_v_pos_x.strides[0]) )) = (__pyx_v_vtx_val + (__pyx_v_dist_xy_desired * __pyx_v_ca));
@@ -22546,7 +22546,7 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar_wrapper(int __
  *
  *     pos_x[i] = vtx_val + dist_xy_desired * ca
  *     pos_y[i] = vty_val + dist_xy_desired * sa             # <<<<<<<<<<<<<<
- *     pos_z[i] = 50.0
+ *     pos_z[i] = vtz_val
  *
 */
   __pyx_t_3 = __pyx_v_i;
@@ -22555,12 +22555,12 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar_wrapper(int __
   /* "drone_env/drone_cython.pyx":566
  *     pos_x[i] = vtx_val + dist_xy_desired * ca
  *     pos_y[i] = vty_val + dist_xy_desired * sa
- *     pos_z[i] = 50.0             # <<<<<<<<<<<<<<
+ *     pos_z[i] = vtz_val             # <<<<<<<<<<<<<<
  *
  *     # Initial Velocity: Slow speed (0-2 m/s)
 */
   __pyx_t_3 = __pyx_v_i;
-  *((float *) ( /* dim=0 */ (__pyx_v_pos_z.data + __pyx_t_3 * __pyx_v_pos_z.strides[0]) )) = 50.0;
+  *((float *) ( /* dim=0 */ (__pyx_v_pos_z.data + __pyx_t_3 * __pyx_v_pos_z.strides[0]) )) = __pyx_v_vtz_val;
 
   /* "drone_env/drone_cython.pyx":569
  *
@@ -22673,21 +22673,21 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar_wrapper(int __
  *     roll[i] = 0.0
  *
  *     yaw[i] = atan2f(dy, dx)             # <<<<<<<<<<<<<<
- *     # Corrected: Pitch DOWN (+30 deg) to compensate for Camera Up (30 deg)
- *     pitch[i] = -atan2f(dz, dist_xy) + 0.5235987756
+ *     # Initialize Pitch to 0 (Level Flight)
+ *     pitch[i] = 0.0
 */
   __pyx_t_3 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_yaw.data + __pyx_t_3 * __pyx_v_yaw.strides[0]) )) = atan2f(__pyx_v_dy, __pyx_v_dx);
 
   /* "drone_env/drone_cython.pyx":587
  *     yaw[i] = atan2f(dy, dx)
- *     # Corrected: Pitch DOWN (+30 deg) to compensate for Camera Up (30 deg)
- *     pitch[i] = -atan2f(dz, dist_xy) + 0.5235987756             # <<<<<<<<<<<<<<
+ *     # Initialize Pitch to 0 (Level Flight)
+ *     pitch[i] = 0.0             # <<<<<<<<<<<<<<
  *
  *     # Populate Obs
 */
   __pyx_t_3 = __pyx_v_i;
-  *((float *) ( /* dim=0 */ (__pyx_v_pitch.data + __pyx_t_3 * __pyx_v_pitch.strides[0]) )) = ((-atan2f(__pyx_v_dz, __pyx_v_dist_xy)) + 0.5235987756);
+  *((float *) ( /* dim=0 */ (__pyx_v_pitch.data + __pyx_t_3 * __pyx_v_pitch.strides[0]) )) = 0.0;
 
   /* "drone_env/drone_cython.pyx":590
  *

@@ -563,7 +563,7 @@ cdef void _reset_agent_scalar_wrapper(
 
     pos_x[i] = vtx_val + dist_xy_desired * ca
     pos_y[i] = vty_val + dist_xy_desired * sa
-    pos_z[i] = 50.0
+    pos_z[i] = vtz_val
 
     # Initial Velocity: Slow speed (0-2 m/s)
     cdef float speed = rand_float() * 2.0
@@ -583,8 +583,8 @@ cdef void _reset_agent_scalar_wrapper(
     roll[i] = 0.0
 
     yaw[i] = atan2f(dy, dx)
-    # Corrected: Pitch DOWN (+30 deg) to compensate for Camera Up (30 deg)
-    pitch[i] = -atan2f(dz, dist_xy) + 0.5235987756
+    # Initialize Pitch to 0 (Level Flight)
+    pitch[i] = 0.0
 
     # Populate Obs
     cdef float rvx = vtvx_val - vel_x[i]
