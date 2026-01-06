@@ -22673,21 +22673,21 @@ static void __pyx_f_9drone_env_12drone_cython__reset_agent_scalar_wrapper(int __
  *     roll[i] = 0.0
  *
  *     yaw[i] = atan2f(dy, dx)             # <<<<<<<<<<<<<<
- *     # Initialize Pitch to 0 (Level Flight)
- *     pitch[i] = 0.0
+ *     # Initialize Pitch to 0.1 (Small Forward Tilt)
+ *     pitch[i] = 0.1
 */
   __pyx_t_3 = __pyx_v_i;
   *((float *) ( /* dim=0 */ (__pyx_v_yaw.data + __pyx_t_3 * __pyx_v_yaw.strides[0]) )) = atan2f(__pyx_v_dy, __pyx_v_dx);
 
   /* "drone_env/drone_cython.pyx":587
  *     yaw[i] = atan2f(dy, dx)
- *     # Initialize Pitch to 0 (Level Flight)
- *     pitch[i] = 0.0             # <<<<<<<<<<<<<<
+ *     # Initialize Pitch to 0.1 (Small Forward Tilt)
+ *     pitch[i] = 0.1             # <<<<<<<<<<<<<<
  *
  *     # Populate Obs
 */
   __pyx_t_3 = __pyx_v_i;
-  *((float *) ( /* dim=0 */ (__pyx_v_pitch.data + __pyx_t_3 * __pyx_v_pitch.strides[0]) )) = 0.0;
+  *((float *) ( /* dim=0 */ (__pyx_v_pitch.data + __pyx_t_3 * __pyx_v_pitch.strides[0]) )) = 0.1;
 
   /* "drone_env/drone_cython.pyx":590
  *
