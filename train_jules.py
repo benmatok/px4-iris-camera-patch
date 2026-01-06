@@ -150,8 +150,8 @@ class OracleController:
         dir_z = dz * inv_dist
 
         # Cruise Parameters
-        CRUISE_DIST = 20.0 # Meters
-        CRUISE_SPEED = 5.0 # m/s
+        CRUISE_DIST = 30.0 # Meters
+        CRUISE_SPEED = 8.0 # m/s
 
         # Virtual Waypoint
         pfx_plan = p0x + dir_x * CRUISE_DIST
@@ -673,6 +673,9 @@ def evaluate_rrt():
         pos_x = env.data_dictionary['pos_x']
         pos_y = env.data_dictionary['pos_y']
         pos_z = env.data_dictionary['pos_z']
+        vel_x = env.data_dictionary['vel_x']
+        vel_y = env.data_dictionary['vel_y']
+        vel_z = env.data_dictionary['vel_z']
 
         actual_traj.append([pos_x[0], pos_y[0], pos_z[0]])
 
@@ -782,8 +785,9 @@ def evaluate_rrt():
 
     gif_path = viz.save_episode_gif(0, actual_traj[0], target_traj[0], tracker_data[0], filename_suffix="_rrt", optimal_trajectory=optimal_traj)
     if os.path.exists(gif_path):
-        os.rename(gif_path, "rrt_trajectory.gif")
-        logging.info("Renamed RRT GIF to rrt_trajectory.gif")
+        new_name = "rrt_trajectory_verified.gif"
+        os.rename(gif_path, new_name)
+        logging.info(f"Renamed RRT GIF to {new_name}")
 
 if __name__ == "__main__":
     train(epochs=15)
