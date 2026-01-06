@@ -385,13 +385,13 @@ def generate_data(num_episodes=20, num_agents=50, future_steps=10):
     """
     env = DroneEnv(num_agents=num_agents, episode_length=100)
     oracle = OracleController(num_agents)
-    planner = GradientController(env, oracle, horizon_steps=future_steps, iterations=3)
+    planner = GradientController(env, horizon_steps=future_steps, iterations=3)
 
     cheb_hist = Chebyshev(30, 3, device='cpu')
 
     # We need a cheb_future locally just to evaluate the first step action if needed,
     # or we can rely on planner's internal logic. But here we get coefficients.
-    cheb_future = Chebyshev(future_steps, 2, device='cpu')
+    cheb_future = Chebyshev(future_steps, 4, device='cpu')
 
     data_hist = []
     data_aux = []
@@ -649,7 +649,7 @@ def evaluate_rrt():
     env = DroneEnv(num_agents=num_agents, episode_length=100)
     oracle = OracleController(num_agents)
     # Planner for inference
-    planner = GradientController(env, oracle, horizon_steps=10, iterations=3)
+    planner = GradientController(env, horizon_steps=10, iterations=3)
     viz = Visualizer()
 
     env.reset_all_envs()
