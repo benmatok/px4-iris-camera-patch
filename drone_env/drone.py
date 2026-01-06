@@ -466,9 +466,10 @@ def reset_cpu(
 
     # Point Drone at Target
     yaw[:] = np.arctan2(dy, dx)
-    # Initialize Pitch to 0 (Level Flight) to match "Parallel to ground" requirement.
+    # Initialize Pitch to 0.1 (Small Forward Tilt) to match "Parallel to ground" requirement
+    # while allowing immediate acceleration towards target (preventing climb).
     # Target will be visible at bottom of frame (approx -30 deg) due to Camera Up 30 deg.
-    pitch[:] = 0.0
+    pitch[:] = 0.1
 
     # Populate Obs
     rvx = vtvx_val - vel_x

@@ -583,8 +583,8 @@ cdef void _reset_agent_scalar_wrapper(
     roll[i] = 0.0
 
     yaw[i] = atan2f(dy, dx)
-    # Initialize Pitch to 0 (Level Flight)
-    pitch[i] = 0.0
+    # Initialize Pitch to 0.1 (Small Forward Tilt)
+    pitch[i] = 0.1
 
     # Populate Obs
     cdef float rvx = vtvx_val - vel_x[i]
