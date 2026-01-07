@@ -139,6 +139,7 @@ def evaluate_oracle():
 
     distances = []
     velocities = []
+    altitude_diffs = []
 
     traj_params = env.data_dictionary['traj_params']
 
@@ -162,6 +163,9 @@ def evaluate_oracle():
         speed = np.sqrt(vel_x[0]**2 + vel_y[0]**2 + vel_z[0]**2)
         distances.append(dist)
         velocities.append(speed)
+
+        # Altitude Diff = Drone Z - Target Z. Should be >= 0.
+        altitude_diffs.append(pos_z[0] - vt_z)
 
         tracker_data.append(obs[0, 304:308].copy())
 
@@ -241,6 +245,17 @@ def evaluate_oracle():
     plt.grid(True)
     plt.savefig('speed_vs_time.png')
     logging.info("Saved speed_vs_time.png")
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(time_steps, altitude_diffs, label='Altitude Diff (Drone - Target)')
+    plt.axhline(y=0.0, color='r', linestyle='--', label='Same Height')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Delta Z (m)')
+    plt.title('Agent 0: Altitude Difference (Positive = Above)')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig('altitude_vs_time.png')
+    logging.info("Saved altitude_vs_time.png")
 
 if __name__ == "__main__":
     evaluate_oracle()

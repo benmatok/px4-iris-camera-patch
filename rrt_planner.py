@@ -60,7 +60,8 @@ class AggressiveOracle:
         self.W_anchor = 10.0
         self.W_jerk = 2.5
         self.V_min = 1.0
-        self.W_terminal_vel = 2.0 # New weight for terminal velocity matching
+        self.W_terminal_vel = 2.0
+        self.W_altitude = 5.0 # New weight for attacking from above
 
         # Persistent Coeffs for Warm Start (num_agents, num_params)
         # Initialize with None
@@ -216,9 +217,15 @@ class AggressiveOracle:
             V_dist_T = torch.norm(V_diff_T, dim=2)
             J_terminal_vel = self.W_terminal_vel * V_dist_T
 
+            # F. Altitude Cost (Attack from Above)
+            # Penalize if Drone Z < Target Z
+            # P_t[..., 2] is Z
+            diff_z = P_target[:, :, :, 2] - P_t[:, :, :, 2]
+            J_altitude = self.W_altitude * torch.relu(diff_z)
+
             # Total Cost
             # Sum instantaneous costs over time
-            J_inst = torch.sum(J_pos + J_shark, dim=2) # (N, K)
+            J_inst = torch.sum(J_pos + J_shark + J_altitude, dim=2) # (N, K)
 
             J_total = J_inst + J_anchor + J_smooth + J_terminal_vel # (N, K)
 
