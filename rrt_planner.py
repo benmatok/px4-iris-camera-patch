@@ -56,12 +56,12 @@ class AggressiveOracle:
         # Weights & Constants
         self.W_near = 2.0
         self.W_far = 4.0
-        self.W_shark = 10.0
+        self.W_shark = 5.0
         self.W_anchor = 10.0
         self.W_jerk = 2.5
         self.V_min = 1.0
         self.W_terminal_vel = 2.0
-        self.W_altitude = 5.0 # New weight for attacking from above
+        self.W_altitude = 20.0 # New weight for attacking from above
 
         # Persistent Coeffs for Warm Start (num_agents, num_params)
         # Initialize with None
