@@ -54,15 +54,13 @@ class AggressiveOracle:
         self.learning_rate = 0.05
 
         # Weights & Constants
-        self.W_near = 1.0 # Implicit in formulation? Spec says: J_pos = dist * (W_near + ...)
-                          # Ah, spec says J_pos = ||...|| * (W_near + ...)
-                          # But W_near is not given a value in table. Usually 1.0 or small.
-                          # Let's assume W_near = 1.0 based on "Standard linear distance cost creates constant urgency".
+        self.W_near = 2.0
         self.W_far = 4.0
         self.W_shark = 10.0
-        self.W_anchor = 5.0
+        self.W_anchor = 10.0
         self.W_jerk = 2.5
-        self.V_min = 3.0 # m/s
+        self.V_min = 1.0
+        self.W_terminal_vel = 2.0 # New weight for terminal velocity matching
 
         # Persistent Coeffs for Warm Start (num_agents, num_params)
         # Initialize with None
@@ -94,18 +92,8 @@ class AggressiveOracle:
             # Fit Chebyshev
             init_actions_torch = torch.from_numpy(init_actions).float()
             current_coeffs = self.cheb_future.fit(init_actions_torch).view(self.num_main_agents, self.num_params)
-
-            # If we were strictly following "Shift" logic, we might not have a prev solution.
         else:
-            # Warm Start: Shift logic
-            # However, coefficients represent the polynomial over [0, T].
-            # At next step, the plan is over [dt, T+dt].
-            # But the polynomial domain is relative time [0, T].
-            # Ideally, we shift the time domain?
-            # Spec says: "Shift: Take the optimal coefficients C*_{t-1} from the previous solution. Reuse: Apply them as the initial guess for time t."
-            # This implies direct reuse (maybe slight degradation in optimality but good enough as guess).
-            # If we wanted to be precise, we'd resample the polynomial from t=dt to T, extrapolate to T+dt, and re-fit.
-            # But "Take ... Apply them" suggests direct copy is the intended "Shift" (meaning shift in time index, but reuse coeffs).
+            # Warm Start: Reuse previous coefficients
             current_coeffs = self.previous_coeffs.clone()
 
         # ---------------------------------------------------------------------
@@ -113,18 +101,14 @@ class AggressiveOracle:
         # ---------------------------------------------------------------------
 
         # Target Trajectory State for Cost Calculation
-        # We need Target Pos at each step of the horizon.
-        # current_traj_params: (10, N)
-        # We need to compute target pos for t_start + [0...horizon_steps*dt]
-
-        # Precompute Target Trajectory for the horizon
-        target_pos_horizon = self._compute_target_trajectory(current_traj_params, t_start, self.horizon_steps)
+        target_pos_horizon, target_vel_horizon = self._compute_target_trajectory(current_traj_params, t_start, self.horizon_steps)
         # Shape: (N, Steps, 3)
 
         target_pos_horizon_torch = torch.from_numpy(target_pos_horizon).float()
+        target_vel_horizon_torch = torch.from_numpy(target_vel_horizon).float()
 
         # Terminal Target (for Anchor)
-        target_pos_T = target_pos_horizon_torch[:, -1, :] # (N, 3)
+        # target_pos_T = target_pos_horizon_torch[:, -1, :] # (N, 3) # Unused var
 
         for itr in range(self.iterations):
             # 1. Expand Coeffs (N, K, num_params)
@@ -192,6 +176,7 @@ class AggressiveOracle:
 
             # Target Pos needs expansion: (N, S, 3) -> (N, K, S, 3)
             P_target = target_pos_horizon_torch.unsqueeze(1).expand(-1, self.k_sims, -1, -1)
+            V_target = target_vel_horizon_torch.unsqueeze(1).expand(-1, self.k_sims, -1, -1)
 
             # -----------------------------------------------------------------
             # COST CALCULATION
@@ -204,31 +189,20 @@ class AggressiveOracle:
             J_pos = dist * (self.W_near + self.W_far * torch.log(1 + dist))
 
             # B. Shark Constraint (Velocity Floor)
-            # V_closing = V_t dot (P_target - P_t) / ||P_target - P_t||
-            # J_shark = W_shark * max(0, V_min - V_closing)
-
             # Normalized direction to target
             dist_safe = dist + 1e-6
-            dir_to_target = diff / dist_safe.unsqueeze(3) # (N, K, S, 3) -- Wait, P_target - P_t is -diff
-            # actually dir = (P_target - P_t) / dist = -diff / dist
+            dir_to_target = diff / dist_safe.unsqueeze(3) # (N, K, S, 3)
 
-            # Dot product
             # V_closing = sum(V_t * (-dir), dim=3)
             V_closing = torch.sum(V_t * (-dir_to_target), dim=3)
 
             J_shark = self.W_shark * torch.relu(self.V_min - V_closing)
 
             # C. Terminal Anchor
-            # J_anchor = W_anchor * ||P_T - P_target||
-            # P_T is last step: P_t[:, :, -1, :]
-            # P_target_T is last step: P_target[:, :, -1, :]
             dist_T = dist[:, :, -1]
             J_anchor = self.W_anchor * dist_T
 
             # D. Smoothness (Jerk)
-            # J_smooth = W_jerk * ||u_t - u_{t-1}||^2
-            # approximate jerk sum
-            # U_t: (N, K, S, 4)
             if self.horizon_steps > 1:
                 u_diff = U_t[:, :, 1:, :] - U_t[:, :, :-1, :]
                 jerk_sq = torch.sum(u_diff**2, dim=3) # Sum over control dims -> (N, K, S-1)
@@ -236,11 +210,17 @@ class AggressiveOracle:
             else:
                 J_smooth = torch.zeros((self.num_main_agents, self.k_sims), device=dist.device)
 
+            # E. Terminal Velocity Cost
+            # Penalize velocity difference at the last step
+            V_diff_T = V_t[:, :, -1, :] - V_target[:, :, -1, :]
+            V_dist_T = torch.norm(V_diff_T, dim=2)
+            J_terminal_vel = self.W_terminal_vel * V_dist_T
+
             # Total Cost
             # Sum instantaneous costs over time
             J_inst = torch.sum(J_pos + J_shark, dim=2) # (N, K)
 
-            J_total = J_inst + J_anchor + J_smooth # (N, K)
+            J_total = J_inst + J_anchor + J_smooth + J_terminal_vel # (N, K)
 
             # -----------------------------------------------------------------
             # GRADIENT ESTIMATION & UPDATE
@@ -280,6 +260,8 @@ class AggressiveOracle:
         # In train_jules it converts: t_steps = t / dt)
         t_in_steps = t / self.dt
 
+        freq_scale = 1.0 / self.dt
+
         Ax, Fx, Px = params[0], params[1], params[2]
         Ay, Fy, Py = params[3], params[4], params[5]
         Az, Fz, Pz, Oz = params[6], params[7], params[8], params[9]
@@ -288,9 +270,15 @@ class AggressiveOracle:
         y = Ay * np.sin(Fy * t_in_steps + Py)
         z = Oz + Az * np.sin(Fz * t_in_steps + Pz)
 
+        # Velocity
+        vx = Ax * Fx * freq_scale * np.cos(Fx * t_in_steps + Px)
+        vy = Ay * Fy * freq_scale * np.cos(Fy * t_in_steps + Py)
+        vz = Az * Fz * freq_scale * np.cos(Fz * t_in_steps + Pz)
+
         # (N, Steps, 3)
         pos = np.stack([x, y, z], axis=2)
-        return pos
+        vel = np.stack([vx, vy, vz], axis=2)
+        return pos, vel
 
     def _sync_state(self, main_state, traj_params):
         """
@@ -336,6 +324,3 @@ class AggressiveOracle:
             elif k == "episode_length":
                 step_args[k] = env.episode_length
         return step_args
-
-# Alias for backward compatibility if needed, or replace
-GradientController = AggressiveOracle
