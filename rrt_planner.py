@@ -72,6 +72,10 @@ class AggressiveOracle:
         """
         Plans using Gradient Descent on the Cost Function.
         """
+        # Auto-reset warm start if we are at the beginning of an episode
+        if t_start < self.dt:
+             self.previous_coeffs = None
+
         # 1. Initialization / Warm Start
         if self.previous_coeffs is None:
             # Cold Start: Initialize with zero actions (Hover/Fall) or a guess?
