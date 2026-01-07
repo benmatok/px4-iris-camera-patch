@@ -12,22 +12,22 @@ try:
     _HAS_CYTHON_HELPER = True
 except ImportError:
     _HAS_CYTHON_HELPER = False
-    logging.warning("update_target_trajectory_from_params not found in Cython ext. Falling back to what?")
+    logging.warning("update_target_trajectory_from_params not found in Cython ext. Falling back to python.")
 
-class GradientController:
+class AggressiveOracle:
     """
-    Refines the trajectory using Gradient Descent (Levenberg-Marquardt) on the
-    Chebyshev coefficients, using the simulation as the forward model and
-    Finite Differences for gradient estimation.
+    Aggressive Oracle Specification (v1.2) - Trajectory Optimizer
+    Generates "expert" reference trajectories prioritizing high-speed interception
+    and avoiding local minima (hovering) through aggressive potential field shaping.
+    Includes Braking Logic (Adaptive Shark) and Terminal Velocity Anchor.
     """
-    def __init__(self, main_env, oracle, horizon_steps=10, iterations=3):
+    def __init__(self, main_env, horizon_steps=10, iterations=5):
         self.main_env = main_env
-        self.oracle = oracle
-        self.horizon_steps = horizon_steps
-        self.iterations = iterations
+        self.horizon_steps = horizon_steps # T = 10 steps (0.5s)
+        self.iterations = iterations # <5 iterations recommended
         self.dt = 0.05
 
-        # Action space: 4 dims. Degree: 2 (Quadratic) -> 3 coeffs.
+        # Action space: 4 dims. Degree: 4 (Quartic) -> 5 coeffs.
         self.action_dim = 4
         self.degree = 4
         self.num_params = self.action_dim * (self.degree + 1) # 20 parameters
@@ -36,11 +36,12 @@ class GradientController:
 
         self.num_main_agents = main_env.num_agents
 
+        # Finite Difference Setup
         # We need 1 base + num_params perturbations per agent
-        self.k_sims = 1 + self.num_params # 13
+        self.k_sims = 1 + self.num_params # 21
         self.total_sim_agents = self.num_main_agents * self.k_sims
 
-        logging.info(f"Initializing GradientController with {self.total_sim_agents} sim slots ({self.iterations} iters)...")
+        logging.info(f"Initializing AggressiveOracle with {self.total_sim_agents} sim slots ({self.iterations} iters)...")
 
         # Create Sim Env
         self.max_sim_steps = main_env.episode_length + horizon_steps + 10
@@ -50,72 +51,79 @@ class GradientController:
         # Perturbation scale for Finite Difference
         self.epsilon = 0.01
 
-        # Damping for LM
-        self.lambda_damping = 0.1
+        # Optimization Step Size
+        self.learning_rate = 0.05
+
+        # Weights & Constants
+        self.W_near = 1.0
+        self.W_far = 4.0
+        self.W_shark = 10.0
+        self.W_anchor = 5.0
+        self.W_jerk = 2.5
+        self.V_min = 3.0 # m/s
+
+        # Braking Logic
+        self.braking_distance = 6.0 # meters
+
+        # Velocity Anchor
+        self.W_vel_anchor = 2.0
+
+        # Persistent Coeffs for Warm Start (num_agents, num_params)
+        # Initialize with None
+        self.previous_coeffs = None
 
     def plan(self, current_state_dict, current_obs, current_traj_params, t_start):
         """
-        Plans using Gradient Refinement.
+        Plans using Gradient Descent on the Cost Function.
         """
-        # 1. Oracle Initialization
-        oracle_actions, oracle_planned_pos, oracle_planned_att = self.oracle.compute_trajectory(
-            current_traj_params, t_start, self.horizon_steps, current_state_dict
-        )
+        # Auto-reset warm start if we are at the beginning of an episode
+        if t_start < self.dt:
+             self.previous_coeffs = None
 
-        # Oracle Coeffs: (N, 4, degree+1)
-        oracle_actions_torch = torch.from_numpy(oracle_actions).float()
-        current_coeffs = self.cheb_future.fit(oracle_actions_torch) # (N, 4, 5)
-        current_coeffs = current_coeffs.view(self.num_main_agents, self.num_params)
+        # 1. Initialization / Warm Start
+        if self.previous_coeffs is None:
+            # Cold Start: Initialize with zero actions (Hover/Fall) or a guess?
+            # Better to init with hover thrust.
 
-        # ---------------------------------------------------------------------
-        # SCANNING CHECK
-        # ---------------------------------------------------------------------
-        conf = current_obs[:, 307]
-        lost_mask = conf < 0.1
-        scanning_coeffs = None
-
-        if np.any(lost_mask):
-             # Calculate Scanning Coeffs (Same as RRT)
+            # Hover Thrust Guess
             g = 9.81
             masses = current_state_dict['masses']
             thrust_coeffs = current_state_dict['thrust_coeffs']
             hover_thrust = (g * masses) / (20.0 * thrust_coeffs)
             hover_thrust = np.clip(hover_thrust, 0.0, 1.0)
 
-            t_grid = t_start + np.arange(self.horizon_steps) * self.dt
-            scan_yaw_rate = np.sin(t_grid) + t_grid * np.cos(t_grid)
-            scan_yaw_rate = np.clip(scan_yaw_rate, -2.0, 2.0)
+            init_actions = np.zeros((self.num_main_agents, 4, self.horizon_steps))
+            init_actions[:, 0, :] = hover_thrust[:, np.newaxis]
 
-            scan_actions = np.zeros_like(oracle_actions)
-            scan_actions[:, 0, :] = hover_thrust[:, np.newaxis]
-            scan_actions[:, 1, :] = 0.0
-            scan_actions[:, 2, :] = 0.0
-            scan_actions[:, 3, :] = scan_yaw_rate[np.newaxis, :]
+            # Fit Chebyshev
+            init_actions_torch = torch.from_numpy(init_actions).float()
+            current_coeffs = self.cheb_future.fit(init_actions_torch).view(self.num_main_agents, self.num_params)
 
-            scan_actions_torch = torch.from_numpy(scan_actions).float()
-            scanning_coeffs = self.cheb_future.fit(scan_actions_torch).view(self.num_main_agents, self.num_params)
+            # If we were strictly following "Shift" logic, we might not have a prev solution.
+        else:
+            current_coeffs = self.previous_coeffs.clone()
 
         # ---------------------------------------------------------------------
         # OPTIMIZATION LOOP
         # ---------------------------------------------------------------------
-        # Target Trajectory for residuals:
-        # 1. Position: Oracle Planned Pos (N, Steps, 3)
-        # 2. Attitude: Oracle Planned Att (N, Steps, 3)
-        # Combine: (N, Steps, 6) -> (N, Steps*6)
 
-        # Weight for Attitude Residuals
-        w_att = 5.0
+        # Target Trajectory State for Cost Calculation
+        # We need Target Pos AND Vel at each step of the horizon.
 
-        Y_pos_tgt = torch.from_numpy(oracle_planned_pos).float() # (N, S, 3)
-        Y_att_tgt = torch.from_numpy(oracle_planned_att).float() # (N, S, 3)
+        target_pos_horizon, target_vel_horizon = self._compute_target_trajectory(current_traj_params, t_start, self.horizon_steps)
+        # Shape: (N, Steps, 3)
 
-        # Flatten
-        Y_pos_tgt_flat = Y_pos_tgt.reshape(self.num_main_agents, -1)
-        Y_att_tgt_flat = Y_att_tgt.reshape(self.num_main_agents, -1) * w_att
+        target_pos_horizon_torch = torch.from_numpy(target_pos_horizon).float()
+        target_vel_horizon_torch = torch.from_numpy(target_vel_horizon).float()
 
-        Y_target = torch.cat([Y_pos_tgt_flat, Y_att_tgt_flat], dim=1) # (N, S*6)
+        # Terminal Target (for Anchor)
+        # target_pos_T = target_pos_horizon_torch[:, -1, :] # Not strictly needed if J_pos covers T
+        target_vel_T = target_vel_horizon_torch[:, -1, :] # (N, 3)
 
         for itr in range(self.iterations):
+            # Sync Sim Env at start of each iteration to ensure valid rollouts from current state
+            self._sync_state(current_state_dict, current_traj_params)
+
             # 1. Expand Coeffs (N, K, num_params)
             # Slot 0: Base
             # Slot 1..N: Base + epsilon * e_j
@@ -124,8 +132,6 @@ class GradientController:
             coeffs_expanded = coeffs_base.unsqueeze(1).repeat(1, self.k_sims, 1) # (N, K, num_params)
 
             # Apply perturbations
-            # We want coeffs_expanded[i, j+1, j] += epsilon
-            # Create identity perturbation matrix
             perturbations = torch.eye(self.num_params) * self.epsilon
             # Broadcast
             coeffs_expanded[:, 1:, :] += perturbations.unsqueeze(0)
@@ -135,18 +141,15 @@ class GradientController:
             sim_coeffs = coeffs_expanded.view(-1, 4, self.degree + 1)
             sim_controls = self.cheb_future.evaluate(sim_coeffs)
 
-            # Clip
-            sim_controls[:, 0, :] = torch.clamp(sim_controls[:, 0, :], 0.0, 1.0)
-            sim_controls[:, 1:, :] = torch.clamp(sim_controls[:, 1:, :], -10.0, 10.0)
+            # Clip Controls (Actuator Constraints)
+            sim_controls[:, 0, :] = torch.clamp(sim_controls[:, 0, :], 0.0, 1.0) # Thrust
+            sim_controls[:, 1:, :] = torch.clamp(sim_controls[:, 1:, :], -10.0, 10.0) # Rates
 
             sim_controls_np = sim_controls.numpy()
 
-            # Sync Sim Env
-            self._sync_state(current_state_dict, current_traj_params)
-
             # Rollout
             rollout_pos = []
-            rollout_att = []
+            rollout_vel = []
 
             for step in range(self.horizon_steps):
                 step_actions = sim_controls_np[:, :, step]
@@ -160,132 +163,147 @@ class GradientController:
                 pz = self.sim_env.data_dictionary['pos_z'].copy()
                 rollout_pos.append(np.stack([px, py, pz], axis=1))
 
-                r = self.sim_env.data_dictionary['roll'].copy()
-                p = self.sim_env.data_dictionary['pitch'].copy()
-                y = self.sim_env.data_dictionary['yaw'].copy()
-                rollout_att.append(np.stack([r, p, y], axis=1))
+                vx = self.sim_env.data_dictionary['vel_x'].copy()
+                vy = self.sim_env.data_dictionary['vel_y'].copy()
+                vz = self.sim_env.data_dictionary['vel_z'].copy()
+                rollout_vel.append(np.stack([vx, vy, vz], axis=1))
 
-            # Pos: (Steps, N*13, 3) -> (N*13, Steps*3)
-            rollout_pos = np.stack(rollout_pos, axis=0)
-            rollout_pos = rollout_pos.transpose(1, 0, 2).reshape(self.total_sim_agents, -1)
+            # Pos: (Steps, N*K, 3) -> (N, K, Steps, 3)
+            rollout_pos = np.stack(rollout_pos, axis=0).transpose(1, 0, 2)
+            rollout_pos = rollout_pos.reshape(self.num_main_agents, self.k_sims, self.horizon_steps, 3)
 
-            # Att: (Steps, N*13, 3) -> (N*13, Steps*3)
-            rollout_att = np.stack(rollout_att, axis=0)
-            rollout_att = rollout_att.transpose(1, 0, 2).reshape(self.total_sim_agents, -1)
+            # Vel: (N, K, Steps, 3)
+            rollout_vel = np.stack(rollout_vel, axis=0).transpose(1, 0, 2)
+            rollout_vel = rollout_vel.reshape(self.num_main_agents, self.k_sims, self.horizon_steps, 3)
 
-            # Combine to Y_sim (matching Y_target structure)
-            # Need to process Att to match Target Att (Yaw wrapping) before simple subtraction?
-            # Actually, we do residuals = Y_base - Y_target.
-            # Y_sim should just be the raw values.
-            # However, for Jacobian estimation (perturbation), raw values are fine as long as perturbation is small.
-            # But for the Base Residual, we need to handle wrapping.
+            # Convert to Torch
+            P_t = torch.from_numpy(rollout_pos).float() # (N, K, S, 3)
+            V_t = torch.from_numpy(rollout_vel).float() # (N, K, S, 3)
+            U_t = sim_controls.view(self.num_main_agents, self.k_sims, 4, self.horizon_steps).permute(0, 1, 3, 2) # (N, K, S, 4)
 
-            # Let's assemble Y_sim as concatenation first
-            Y_pos_sim_t = torch.from_numpy(rollout_pos).float() # (N*13, S*3)
-            Y_att_sim_t = torch.from_numpy(rollout_att).float() * w_att # (N*13, S*3)
+            # Target Pos/Vel needs expansion: (N, S, 3) -> (N, K, S, 3)
+            P_target = target_pos_horizon_torch.unsqueeze(1).expand(-1, self.k_sims, -1, -1)
+            # We don't need V_target everywhere, just for Velocity Anchor (T) and potentially calculating relative vel if we wanted.
 
-            # Reshape to (N, 13, M)
-            Y_pos_sim = Y_pos_sim_t.view(self.num_main_agents, self.k_sims, -1)
-            Y_att_sim = Y_att_sim_t.view(self.num_main_agents, self.k_sims, -1)
+            # -----------------------------------------------------------------
+            # COST CALCULATION
+            # -----------------------------------------------------------------
 
-            # 3. Compute Jacobian & Residuals
+            # A. Gravity Well (Pos Cost)
+            # J_pos = ||Pt - Ptarget|| * (W_near + W_far * log(1 + ||Pt - Ptarget||))
+            diff = P_t - P_target
+            dist = torch.norm(diff, dim=3) # (N, K, S)
+            J_pos = dist * (self.W_near + self.W_far * torch.log(1 + dist))
 
-            # Position Part
-            Y_pos_base = Y_pos_sim[:, 0, :]
-            res_pos = Y_pos_base - Y_pos_tgt_flat
+            # B. Adaptive Shark Constraint (Velocity Floor with Braking)
+            # V_closing = V_t dot (P_target - P_t) / ||P_target - P_t||
+            # J_shark = W_shark * max(0, V_req - V_closing)
 
-            # Attitude Part
-            # We need to handle Yaw wrapping for Residuals
-            # Y_att_sim structure: [r0, p0, y0, r1, p1, y1, ...]
-            # We can just subtract and then wrap the specific indices?
-            # Or simpler: Unpack, wrap, Repack.
+            # Adaptive V_req
+            # V_req = V_min * min(1.0, dist / braking_distance)
+            gain = torch.clamp(dist / self.braking_distance, 0.0, 1.0)
+            V_req = self.V_min * gain
 
-            # Target Att (unflattened for math): (N, S, 3)
-            # Base Att (unflattened): (N, S, 3)
-            att_base_raw = Y_att_sim[:, 0, :].view(self.num_main_agents, self.horizon_steps, 3) / w_att
-            att_tgt_raw = Y_att_tgt # (N, S, 3)
+            # Normalized direction to target
+            dist_safe = dist + 1e-6
+            dir_to_target = diff / dist_safe.unsqueeze(3) # (N, K, S, 3) -- Wait, P_target - P_t is -diff
+            # actually dir = (P_target - P_t) / dist = -diff / dist
 
-            diff_att = att_base_raw - att_tgt_raw
-            # Wrap Yaw (Index 2)
-            diff_att[:, :, 2] = (diff_att[:, :, 2] + np.pi) % (2 * np.pi) - np.pi
+            # Dot product
+            # V_closing = sum(V_t * (-dir), dim=3)
+            V_closing = torch.sum(V_t * (-dir_to_target), dim=3)
 
-            # Flatten and Apply Weight
-            res_att = diff_att.view(self.num_main_agents, -1) * w_att
+            J_shark = self.W_shark * torch.relu(V_req - V_closing)
 
-            # Combined Residuals
-            residuals = torch.cat([res_pos, res_att], dim=1) # (N, M_pos + M_att)
+            # C. Terminal Anchor (Pos)
+            dist_T = dist[:, :, -1]
+            J_anchor = self.W_anchor * dist_T
 
-            # Jacobian Calculation
-            # J = (Y_perturbed - Y_base) / epsilon
+            # D. Terminal Velocity Anchor (Vel)
+            # J_vel = W_vel_anchor * ||V_T - V_target_T||
+            V_T = V_t[:, :, -1, :] # (N, K, 3)
+            V_target_T_expanded = target_vel_T.unsqueeze(1).expand(-1, self.k_sims, -1)
+            diff_vel_T = V_T - V_target_T_expanded
+            dist_vel_T = torch.norm(diff_vel_T, dim=2)
+            J_vel_anchor = self.W_vel_anchor * dist_vel_T
 
-            # For Attitude Jacobian, simple difference is usually fine for small epsilon,
-            # assuming we don't cross the wrap boundary with epsilon.
-            # Epsilon is small (0.01).
+            # E. Smoothness (Jerk)
+            if self.horizon_steps > 1:
+                u_diff = U_t[:, :, 1:, :] - U_t[:, :, :-1, :]
+                jerk_sq = torch.sum(u_diff**2, dim=3) # Sum over control dims -> (N, K, S-1)
+                J_smooth = self.W_jerk * torch.sum(jerk_sq, dim=2) # Sum over time
+            else:
+                J_smooth = torch.zeros((self.num_main_agents, self.k_sims), device=dist.device)
 
-            Y_sim_combined = torch.cat([Y_pos_sim, Y_att_sim], dim=2)
+            # Total Cost
+            # Sum instantaneous costs over time
+            J_inst = torch.sum(J_pos + J_shark, dim=2) # (N, K)
 
-            Y_base_combined = Y_sim_combined[:, 0, :]
-            Y_perturbed_combined = Y_sim_combined[:, 1:, :]
+            J_total = J_inst + J_anchor + J_vel_anchor + J_smooth # (N, K)
 
-            # Note: residuals calculated above use wrapped yaw difference.
-            # The Jacobian uses direct difference of perturbed vs base.
-            # This is correct because locally J = d(Obs)/d(Action).
+            # -----------------------------------------------------------------
+            # GRADIENT ESTIMATION & UPDATE
+            # -----------------------------------------------------------------
 
-            J = (Y_perturbed_combined - Y_base_combined.unsqueeze(1)) / self.epsilon
+            # We have J_total for Base (idx 0) and Perturbed (idx 1..20)
+            J_base = J_total[:, 0] # (N,)
+            J_perturbed = J_total[:, 1:] # (N, num_params)
 
-            # Jacobian: J = (Y_perturbed - Y_base) / epsilon
-            # Y_perturbed: (N, num_params, M) -> indices 1..
-            # Use Y_sim_combined from above
-            Y_perturbed = Y_sim_combined[:, 1:, :]
-            Y_base = Y_sim_combined[:, 0, :]
+            # Gradient approx: dJ/dTheta_i = (J(theta + eps*e_i) - J(theta)) / eps
+            grad_J = (J_perturbed - J_base.unsqueeze(1)) / self.epsilon # (N, num_params)
 
-            J = (Y_perturbed - Y_base.unsqueeze(1)) / self.epsilon # (N, num_params, M)
-            # We need J in shape (N, M, num_params) for standard notation J*delta = -r
-            J = J.transpose(1, 2) # (N, M, num_params)
+            # Clamp gradients to avoid explosions
+            grad_J = torch.clamp(grad_J, -10.0, 10.0)
 
-            # 4. Levenberg-Marquardt Update
-            # delta = -(J^T J + lambda I)^-1 J^T r
+            # Update: Theta = Theta - lr * grad
+            current_coeffs = current_coeffs - self.learning_rate * grad_J
 
-            # J_T: (N, num_params, M)
-            J_T = J.transpose(1, 2)
-
-            # J^T J: (N, num_params, num_params)
-            JTJ = torch.bmm(J_T, J)
-
-            # Damping
-            diag_idx = torch.arange(self.num_params)
-            JTJ[:, diag_idx, diag_idx] += self.lambda_damping
-
-            # J^T r: (N, num_params, 1)
-            # r: (N, M) -> (N, M, 1)
-            JTr = torch.bmm(J_T, residuals.unsqueeze(2))
-
-            # Solve linear system
-            # Use torch.linalg.solve(A, B) -> X
-            try:
-                # delta: (N, num_params, 1)
-                delta = torch.linalg.solve(JTJ, -JTr)
-                delta = delta.squeeze(2) # (N, num_params)
-
-                # Update
-                current_coeffs = current_coeffs + delta
-
-                # Check convergence? (Optional, skipping for fixed iter)
-
-            except RuntimeError as e:
-                logging.warning(f"LM Solve failed: {e}. Skipping update.")
-                break
-
-        # ---------------------------------------------------------------------
-        # FINALIZE
-        # ---------------------------------------------------------------------
-        # Apply lost mask
-        if np.any(lost_mask):
-            # Replace coeffs for lost agents
-            current_coeffs[lost_mask] = scanning_coeffs[lost_mask]
+        # Save for next time
+        self.previous_coeffs = current_coeffs.detach()
 
         return current_coeffs
 
+    def _compute_target_trajectory(self, traj_params, t_start, steps):
+        """
+        Computes Target Position AND Velocity for the horizon analytically.
+        Matches OracleController logic.
+        """
+        t_out = np.arange(steps) * self.dt + t_start
+        # t_out shape: (steps,)
+
+        # Params: (10, N)
+        params = traj_params[:, :, np.newaxis] # (10, N, 1)
+        t = t_out[np.newaxis, :] # (1, steps)
+
+        # Convert to steps for formula (assuming params are defined per step or sec?
+        # In train_jules it converts: t_steps = t / dt)
+        t_in_steps = t / self.dt
+
+        Ax, Fx, Px = params[0], params[1], params[2]
+        Ay, Fy, Py = params[3], params[4], params[5]
+        Az, Fz, Pz, Oz = params[6], params[7], params[8], params[9]
+
+        # Freq scale for velocity derivative
+        # x = Ax * sin(Fx * t_steps + Px)
+        # dx/dt_steps = Ax * Fx * cos(...)
+        # dx/dt = dx/dt_steps * dt_steps/dt = Ax * Fx * cos(...) * (1/dt)
+        freq_scale = 1.0 / self.dt
+
+        # Pos
+        x = Ax * np.sin(Fx * t_in_steps + Px)
+        y = Ay * np.sin(Fy * t_in_steps + Py)
+        z = Oz + Az * np.sin(Fz * t_in_steps + Pz)
+
+        # Vel
+        vx = Ax * Fx * freq_scale * np.cos(Fx * t_in_steps + Px)
+        vy = Ay * Fy * freq_scale * np.cos(Fy * t_in_steps + Py)
+        vz = Az * Fz * freq_scale * np.cos(Fz * t_in_steps + Pz)
+
+        # (N, Steps, 3)
+        pos = np.stack([x, y, z], axis=2)
+        vel = np.stack([vx, vy, vz], axis=2)
+
+        return pos, vel
 
     def _sync_state(self, main_state, traj_params):
         """
@@ -331,3 +349,6 @@ class GradientController:
             elif k == "episode_length":
                 step_args[k] = env.episode_length
         return step_args
+
+# Alias for backward compatibility if needed, or replace
+GradientController = AggressiveOracle
