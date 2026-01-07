@@ -386,11 +386,11 @@ def reset_cpu(
     traj_params[4] = 0.01 + np.random.rand(num_agents) * 0.03 # Fy (reduced)
     traj_params[5] = np.random.rand(num_agents) * 2 * np.pi # Py
 
-    traj_params[6] = 1.0 + np.random.rand(num_agents) * 2.0 # Az
+    traj_params[6] = 0.0 + np.random.rand(num_agents) * 0.1 # Az (Minimimal oscillation)
     traj_params[7] = 0.01 + np.random.rand(num_agents) * 0.05 # Fz (reduced)
     traj_params[8] = np.random.rand(num_agents) * 2 * np.pi # Pz
-    # Oz range [9.0, 12.0]. Az range [1.0, 3.0]. Min Z = 9-3=6.0. Max Terrain = 5.0.
-    traj_params[9] = 9.0 + np.random.rand(num_agents) * 3.0 # Oz
+    # Limit target height above ground to 2m. We set Mean Z (Oz) to 2.0.
+    traj_params[9] = 2.0 # Oz
 
     rnd_cmd = np.random.rand(num_agents)
 
@@ -433,13 +433,9 @@ def reset_cpu(
     vt_y[:] = vty_val
     vt_z[:] = vtz_val
 
-    # Initial Position: 100m from target
-    # We place drone at random angle at 100m distance? Or just X-offset?
-    # User said "init the drone 100m from target".
-    # Let's place it at (-100, 0) relative to target in XY plane to start.
-    # Actually, let's just create a random angle and place it 100m away horizontally.
+    # Initial Position: From 5m to 200m from target
     init_angle = np.random.rand(num_agents) * 2 * np.pi
-    dist_xy_desired = 40.0
+    dist_xy_desired = 5.0 + np.random.rand(num_agents) * 195.0
 
     pos_x[:] = vtx_val + dist_xy_desired * np.cos(init_angle)
     pos_y[:] = vty_val + dist_xy_desired * np.sin(init_angle)
