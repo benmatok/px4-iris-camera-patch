@@ -496,11 +496,11 @@ cdef void _reset_agent_scalar_wrapper(
     traj_params[4, i] = 0.01 + rand_float() * 0.03 # Fy reduced
     traj_params[5, i] = rand_float() * 6.28318
 
-    traj_params[6, i] = 1.0 + rand_float() * 2.0
+    traj_params[6, i] = 0.0 + rand_float() * 0.1
     traj_params[7, i] = 0.01 + rand_float() * 0.05 # Fz reduced
     traj_params[8, i] = rand_float() * 6.28318
-    # Oz range [9.0, 12.0]. Az range [1.0, 3.0]. Min Z = 9-3=6.0. Max Terrain = 5.0.
-    traj_params[9, i] = 9.0 + rand_float() * 3.0
+    # Limit target height above ground to 2m. We set Mean Z (Oz) to 2.0.
+    traj_params[9, i] = 2.0
 
     rnd_cmd = rand_float()
     tvx=0.0; tvy=0.0; tvz=0.0; tyr=0.0
@@ -555,9 +555,9 @@ cdef void _reset_agent_scalar_wrapper(
     vt_y[i] = vty_val
     vt_z[i] = vtz_val
 
-    # Initial Position: 100m from target
+    # Initial Position: From 5m to 200m from target
     cdef float init_angle = rand_float() * 6.2831853
-    cdef float dist_xy_desired = 40.0
+    cdef float dist_xy_desired = 5.0 + rand_float() * 195.0
     cdef float sa, ca
     sincosf(init_angle, &sa, &ca)
 
