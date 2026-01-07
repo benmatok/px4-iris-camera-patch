@@ -19,3 +19,4 @@ training_log_final.txt
 jules_trajectory.gif
 rrt_trajectory_verified.gif
 jules_model.pth
+validation_artifacts/
