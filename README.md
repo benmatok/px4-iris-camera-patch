@@ -99,6 +99,18 @@ The optimization using `sincos` for trigonometric calculations significantly imp
 
 To verify correctness, `train_ae.py` confirms that the physics simulation produces valid data for learning, as evidenced by decreasing loss during training.
 
+### Current Oracle (Validation Strategy)
+
+For validation and training reference, the system currently employs a **2-Step Linear Planner** (implemented in `train_jules.py` as `LinearPlanner`). This approach replaces the legacy `AggressiveOracle` (gradient-based) strategy to ensure robust, simple tracking behavior.
+
+**Logic:**
+The planner computes control actions (Thrust, Roll Rate, Pitch Rate, Yaw Rate) using **Inverse Dynamics** to follow a specific path:
+1.  **Elevation Check:** Calculates the elevation angle of the drone relative to the target.
+2.  **Step 1 (Climb):** If the elevation is less than **10 degrees**, the planner creates a virtual waypoint at a 15-degree glide slope above the target to force the drone to climb.
+3.  **Step 2 (Intercept):** Once the safety altitude is reached (or if already sufficient), the planner commands a direct linear interception path at a constant cruise speed (e.g., 10 m/s).
+
+This strategy ensures the drone attacks from above, maintaining visibility and avoiding ground clutter, while simplifying the trajectory for easier learning and debugging.
+
 ### Autoencoder Training
 
 A separate script `train_ae.py` is provided to train the IMU Autoencoder independently using data generated from large-scale simulations. This script uses the Cython-optimized CPU environment to generate diverse flight trajectories (using a proportional controller) and trains the `Autoencoder1D` model using KFAC optimization.
