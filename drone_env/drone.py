@@ -51,6 +51,7 @@ def step_cpu(
     vel_x, vel_y, vel_z,
     roll, pitch, yaw,
     masses, drag_coeffs, thrust_coeffs,
+    wind_x, wind_y, wind_z, # New
     target_vx, target_vy, target_vz, target_yaw_rate,
     vt_x, vt_y, vt_z,
     traj_params, # Shape: (10, num_agents)
@@ -58,10 +59,13 @@ def step_cpu(
     pos_history, # Shape: (episode_length, num_agents, 3)
     observations,
     rewards,
-    reward_components, # New: Shape (num_agents, 8)
+    reward_components, # Shape (num_agents, 8)
     done_flags,
     step_counts,
     actions,
+    action_buffer, # New: (num_agents, 11, 4)
+    delays,        # New: (num_agents,)
+    rng_states,    # Needed for noise
     num_agents,
     episode_length,
     env_ids,
@@ -71,32 +75,54 @@ def step_cpu(
 
     # Reshape actions for easier access: (num_agents, 4)
     actions_reshaped = actions.reshape(num_agents, 4)
-    thrust_cmd = actions_reshaped[:, 0]
-    roll_rate = actions_reshaped[:, 1]
-    pitch_rate = actions_reshaped[:, 2]
-    yaw_rate = actions_reshaped[:, 3]
 
-    dt = 0.05 # Increased step size
+    # -------------------------------------------------------------------------
+    # Delay Logic
+    # -------------------------------------------------------------------------
+    # Shift Buffer: (N, 11, 4) -> (N, 10, 4) moved to indices 1..10
+    # We want index 0 to be newest.
+    action_buffer[:, 1:] = action_buffer[:, :-1]
+    action_buffer[:, 0] = actions_reshaped
+
+    # Select effective action
+    # effective[i] = action_buffer[i, delays[i]]
+    # Fancy indexing
+    rows = np.arange(num_agents)
+    eff_actions = action_buffer[rows, delays, :] # (num_agents, 4)
+
+    thrust_cmd = eff_actions[:, 0]
+    roll_rate = eff_actions[:, 1]
+    pitch_rate = eff_actions[:, 2]
+    yaw_rate = eff_actions[:, 3]
+
+    dt = 0.05
     g = 9.81
-    substeps = 2 # Reduced substeps
+    substeps = 2
 
     # Local copies of state (NumPy arrays)
     px, py, pz = pos_x, pos_y, pos_z
     vx, vy, vz = vel_x, vel_y, vel_z
     r, p, y_ang = roll, pitch, yaw
 
+    # Wind Update (Random Walk)
+    # Add small random noise to wind
+    wind_noise = np.random.normal(0, 0.1, (num_agents, 3))
+    wind_x += wind_noise[:, 0]
+    wind_y += wind_noise[:, 1]
+    wind_z += wind_noise[:, 2]
+    # Decay slightly to keep bounded? Or clamp?
+    # Let's simple clamp for stability
+    wind_x[:] = np.clip(wind_x, -10.0, 10.0)
+    wind_y[:] = np.clip(wind_y, -10.0, 10.0)
+    wind_z[:] = np.clip(wind_z, -5.0, 5.0)
+
     # Update Virtual Target using Trajectory Params
-    # traj_params: (10, num_agents)
-    # 0:Ax, 1:Fx, 2:Px, 3:Ay, 4:Fy, 5:Py, 6:Az, 7:Fz, 8:Pz, 9:Oz
     t = step_counts[0] + 1
     t_f = float(t)
 
-    # Use rows
     # x = Ax * sin(Fx * t + Px)
     vtx_val = traj_params[0] * np.sin(traj_params[1] * t_f + traj_params[2])
-    # y = Ay * sin(Fy * t + Py)
     vty_val = traj_params[3] * np.sin(traj_params[4] * t_f + traj_params[5])
-    # z = Oz + Az * sin(Fz * t + Pz)
     vtz_val = traj_params[9] + traj_params[6] * np.sin(traj_params[7] * t_f + traj_params[8])
 
     vt_x[:] = vtx_val
@@ -104,7 +130,6 @@ def step_cpu(
     vt_z[:] = vtz_val
 
     # Shift History
-    # Total obs 308. History 0-300.
     observations[:, 0:290] = observations[:, 10:300]
 
     for s in range(substeps):
@@ -126,9 +151,14 @@ def step_cpu(
 
         az_gravity = -g
 
-        ax_drag = -drag_coeffs * vx
-        ay_drag = -drag_coeffs * vy
-        az_drag = -drag_coeffs * vz
+        # Drag relative to wind
+        rel_vx = vx - wind_x
+        rel_vy = vy - wind_y
+        rel_vz = vz - wind_z
+
+        ax_drag = -drag_coeffs * rel_vx
+        ay_drag = -drag_coeffs * rel_vy
+        az_drag = -drag_coeffs * rel_vz
 
         ax = ax_thrust + ax_drag
         ay = ay_thrust + ay_drag
@@ -174,9 +204,7 @@ def step_cpu(
     t = step_counts[0]
 
     # Store Position History
-    # shape: (episode_length, num_agents, 3) flattened
     if t <= episode_length:
-        # Reshape to (episode_length, num_agents, 3) for easy indexing
         ph_view = pos_history.reshape(episode_length, num_agents, 3)
         ph_view[t-1, :, 0] = px
         ph_view[t-1, :, 1] = py
@@ -187,7 +215,6 @@ def step_cpu(
     dy_w = vty_val - py
     dz_w = vtz_val - pz
 
-    # Recompute R for current state
     sr, cr = np.sin(r), np.cos(r)
     sp, cp = np.sin(p), np.cos(p)
     sy, cy = np.sin(y_ang), np.cos(y_ang)
@@ -216,21 +243,26 @@ def step_cpu(
     zc_safe = np.maximum(zc, 0.1)
     u = xc / zc_safe
     v = yc / zc_safe
+
+    # Add Noise to Tracking
+    u_noise = np.random.normal(0, 0.05, num_agents) # 5% noise roughly?
+    v_noise = np.random.normal(0, 0.05, num_agents)
+    u += u_noise
+    v += v_noise
+
     u = np.clip(u, -1.732, 1.732)
     v = np.clip(v, -1.732, 1.732)
 
     size = 10.0 / (zc*zc + 1.0)
+    # Noise on size
+    size += np.random.normal(0, 0.01, num_agents)
 
     w2 = roll_rate**2 + pitch_rate**2 + yaw_rate**2
     conf = np.exp(-0.1 * w2)
-    # Behind camera check (zc < 0)
     conf = np.where((c30 * xb + s30 * zb) < 0.0, 0.0, conf)
-    # Strictly behind check
     conf = np.where(xb < 0.0, 0.0, conf)
 
-    # Capture History Samples (1 per step, 10 features)
-    # Features: roll, pitch, yaw, z, thrust, roll_rate, pitch_rate, yaw_rate, u, v
-    # Updated AFTER dynamics to match AVX implementation
+    # Capture History Samples
     new_features = np.zeros((num_agents, 10), dtype=np.float32)
     new_features[:, 0] = r
     new_features[:, 1] = p
@@ -252,8 +284,6 @@ def step_cpu(
     observations[:, 307] = conf
 
     # Calculate Relative Velocity
-    # vtvx, vtvy, vtvz needed.
-    # From traj_params
     vtvx = traj_params[0] * traj_params[1] * np.cos(traj_params[1] * t_f + traj_params[2])
     vtvy = traj_params[3] * traj_params[4] * np.cos(traj_params[4] * t_f + traj_params[5])
     vtvz = traj_params[6] * traj_params[7] * np.cos(traj_params[7] * t_f + traj_params[8])
@@ -276,62 +306,37 @@ def step_cpu(
     observations[:, 302] = rvz_b
     observations[:, 303] = dist
 
-    # -------------------------------------------------------------------------
-    # Homing Reward (Master Equation)
-    # -------------------------------------------------------------------------
-    # 1. Guidance (PN)
+    # Rewards (Same as before)
     rvel_sq = rvx**2 + rvy**2 + rvz**2
     r_dot_v = dx_w*rvx + dy_w*rvy + dz_w*rvz
-
-    # Safe division for omega_sq
-    dist_sq_safe = np.maximum(dist_sq, 0.01) # Avoid division by zero
-
+    dist_sq_safe = np.maximum(dist_sq, 0.01)
     omega_sq = (rvel_sq / dist_sq_safe) - (r_dot_v**2 / (dist_sq_safe**2))
     omega_sq = np.maximum(omega_sq, 0.0)
-    rew_pn = -2.0 * omega_sq # k1=2.0
-
-    # 2. Closing Speed
+    rew_pn = -2.0 * omega_sq
     vd_dot_r = vx*dx_w + vy*dy_w + vz*dz_w
     closing = vd_dot_r / dist_safe
-    rew_closing = 0.5 * closing # k2=0.5
-
-    # 3. Vision (Gaze)
+    rew_closing = 0.5 * closing
     vx_b = r11 * vx + r12 * vy + r13 * vz
     v_ideal = 0.1 * vx_b
     v_err = v - v_ideal
     gaze_err = u**2 + v_err**2
-    rew_gaze = -0.01 * gaze_err # k3=0.01
-
-    # Funnel
+    rew_gaze = -0.01 * gaze_err
     funnel = 1.0 / (dist + 1.0)
     rew_guidance = (rew_pn + rew_gaze + rew_closing) * funnel
-
-    # 4. Stability
-    rew_rate = -1.0 * w2 # k4=1.0
-    # Upright r33
+    rew_rate = -1.0 * w2
     upright_err = 1.0 - r33
-    rew_upright = -5.0 * upright_err**2 # k5=5.0
-
-    # Thrust Penalty
+    rew_upright = -5.0 * upright_err**2
     diff_thrust = np.maximum(0.4 - thrust_cmd, 0.0)
     rew_eff = -10.0 * diff_thrust
-
     rew = rew_guidance + rew_rate + rew_upright + rew_eff
-
-    # Terminations
     bonus = np.where(dist < 0.2, 10.0, 0.0)
     rew += bonus
-
     penalty = np.zeros(num_agents, dtype=np.float32)
-    penalty = np.where(r33 < 0.5, penalty + 10.0, penalty) # Tilt > 60
+    penalty = np.where(r33 < 0.5, penalty + 10.0, penalty)
     penalty = np.where(collision, penalty + 10.0, penalty)
-
     rew -= penalty
-
     rewards[:] = rew
 
-    # Store Reward Components
-    # 0:pn, 1:closing, 2:gaze, 3:rate, 4:upright, 5:eff, 6:penalty, 7:bonus
     reward_components[:, 0] = rew_pn
     reward_components[:, 1] = rew_closing
     reward_components[:, 2] = rew_gaze
@@ -341,13 +346,11 @@ def step_cpu(
     reward_components[:, 6] = -penalty
     reward_components[:, 7] = bonus
 
-    # Done Flags
     d_flag = np.zeros(num_agents, dtype=np.float32)
     d_flag = np.where(t >= episode_length, 1.0, d_flag)
     d_flag = np.where(dist < 0.2, 1.0, d_flag)
     d_flag = np.where(r33 < 0.5, 1.0, d_flag)
     d_flag = np.where(collision, 1.0, d_flag)
-
     done_flags[:] = d_flag
 
 def reset_cpu(
@@ -355,46 +358,53 @@ def reset_cpu(
     vel_x, vel_y, vel_z,
     roll, pitch, yaw,
     masses, drag_coeffs, thrust_coeffs,
+    wind_x, wind_y, wind_z, # New
     target_vx, target_vy, target_vz, target_yaw_rate,
     vt_x, vt_y, vt_z,
-    traj_params, # New shape (10, num_agents)
+    traj_params,
     target_trajectory,
     pos_history,
     observations,
     rng_states,
     step_counts,
     num_agents,
-    reset_indices
+    reset_indices,
+    action_buffer, # New
+    delays         # New
 ):
     # Vectorized Reset
-    masses[:] = 0.5 + np.random.rand(num_agents) * 1.0
-    drag_coeffs[:] = 0.05 + np.random.rand(num_agents) * 0.1
-    thrust_coeffs[:] = 0.8 + np.random.rand(num_agents) * 0.4
+    # Wider Randomization
+    # Mass: 0.5 to 2.5 kg
+    masses[:] = 0.5 + np.random.rand(num_agents) * 2.0
+    # Drag: 0.05 to 0.2
+    drag_coeffs[:] = 0.05 + np.random.rand(num_agents) * 0.15
+    # Thrust: 0.5 to 1.5 (Engines)
+    thrust_coeffs[:] = 0.5 + np.random.rand(num_agents) * 1.0
 
-    # Initialize Trajectory Parameters (Lissajous / Complex)
-    # 0:Ax, 1:Fx, 2:Px, 3:Ay, 4:Fy, 5:Py, 6:Az, 7:Fz, 8:Pz, 9:Oz
-    # Slow target down: no more than 1m/s.
-    # V_max = A * F. If A=7, F must be < 1/7 ~ 0.14.
-    # Current F was 0.03-0.1.
-    # User requested very slow. Let's reduce F.
-    traj_params[0] = 3.0 + np.random.rand(num_agents) * 4.0 # Ax
-    traj_params[1] = 0.01 + np.random.rand(num_agents) * 0.03 # Fx (reduced)
-    # Ensure starting in front (Positive X)
-    traj_params[2] = np.random.rand(num_agents) * np.pi # Px [0, pi]
+    # Wind: Random vector, magnitude 0-5m/s
+    wind_x[:] = (np.random.rand(num_agents) - 0.5) * 10.0
+    wind_y[:] = (np.random.rand(num_agents) - 0.5) * 10.0
+    wind_z[:] = (np.random.rand(num_agents) - 0.5) * 2.0 # Less vertical wind
 
-    traj_params[3] = 3.0 + np.random.rand(num_agents) * 4.0 # Ay
-    traj_params[4] = 0.01 + np.random.rand(num_agents) * 0.03 # Fy (reduced)
-    traj_params[5] = np.random.rand(num_agents) * 2 * np.pi # Py
+    # Delays: 0 to 10 steps (0-500ms)
+    delays[:] = np.random.randint(0, 11, size=num_agents)
 
-    traj_params[6] = 0.0 + np.random.rand(num_agents) * 0.1 # Az (Minimimal oscillation)
-    traj_params[7] = 0.01 + np.random.rand(num_agents) * 0.05 # Fz (reduced)
-    traj_params[8] = np.random.rand(num_agents) * 2 * np.pi # Pz
-    # Limit target height above ground to 2m. We set Mean Z (Oz) to 2.0.
-    traj_params[9] = 2.0 # Oz
+    # Clear Action Buffer
+    action_buffer[:] = 0.0
+
+    # Initialize Trajectory Parameters
+    traj_params[0] = 3.0 + np.random.rand(num_agents) * 4.0
+    traj_params[1] = 0.01 + np.random.rand(num_agents) * 0.03
+    traj_params[2] = np.random.rand(num_agents) * np.pi
+    traj_params[3] = 3.0 + np.random.rand(num_agents) * 4.0
+    traj_params[4] = 0.01 + np.random.rand(num_agents) * 0.03
+    traj_params[5] = np.random.rand(num_agents) * 2 * np.pi
+    traj_params[6] = 0.0 + np.random.rand(num_agents) * 0.1
+    traj_params[7] = 0.01 + np.random.rand(num_agents) * 0.05
+    traj_params[8] = np.random.rand(num_agents) * 2 * np.pi
+    traj_params[9] = 2.0
 
     rnd_cmd = np.random.rand(num_agents)
-
-    # Vectorized conditions for targets
     tvx = np.zeros(num_agents, dtype=np.float32)
     tvy = np.zeros(num_agents, dtype=np.float32)
     tvz = np.zeros(num_agents, dtype=np.float32)
@@ -414,38 +424,27 @@ def reset_cpu(
     target_vz[:] = tvz
     target_yaw_rate[:] = tyr
 
-    # Reset Observations (Size 308)
     observations[:] = 0.0
 
-    # Calculate Initial Target State (t=0) FIRST so we can place drone relative to it
-    # traj_params: (10, num_agents)
     vtx_val = traj_params[0] * np.sin(traj_params[2])
     vtvx_val = traj_params[0] * traj_params[1] * np.cos(traj_params[2])
-
     vty_val = traj_params[3] * np.sin(traj_params[5])
     vtvy_val = traj_params[3] * traj_params[4] * np.cos(traj_params[5])
-
     vtz_val = traj_params[9] + traj_params[6] * np.sin(traj_params[8])
     vtvz_val = traj_params[6] * traj_params[7] * np.cos(traj_params[8])
 
-    # Store Initial Target Position
     vt_x[:] = vtx_val
     vt_y[:] = vty_val
     vt_z[:] = vtz_val
 
-    # Initial Position: From 5m to 200m from target
     init_angle = np.random.rand(num_agents) * 2 * np.pi
     dist_xy_desired = 5.0 + np.random.rand(num_agents) * 195.0
 
     pos_x[:] = vtx_val + dist_xy_desired * np.cos(init_angle)
     pos_y[:] = vty_val + dist_xy_desired * np.sin(init_angle)
-    # Initialize at target altitude to ensure visibility with Camera Up 30
     pos_z[:] = vtz_val
 
-    # Initial Velocity: Slow speed (0-2 m/s)
     speed = np.random.rand(num_agents) * 2.0
-    # Point velocity towards target approximately
-    # Vector to target
     dx = vtx_val - pos_x
     dy = vty_val - pos_y
     dz = vtz_val - pos_z
@@ -460,50 +459,56 @@ def reset_cpu(
 
     roll[:] = 0.0
 
-    # Point Drone at Target
-    yaw[:] = np.arctan2(dy, dx)
-    # Initialize Pitch to 0.1 (Small Forward Tilt) to match "Parallel to ground" requirement
-    # while allowing immediate acceleration towards target (preventing climb).
-    # Target will be visible at bottom of frame (approx -30 deg) due to Camera Up 30 deg.
-    pitch[:] = 0.1
+    # Yaw towards target but with offset (+/- 45 deg)
+    yaw[:] = np.arctan2(dy, dx) + (np.random.rand(num_agents) - 0.5) * (np.pi / 2)
+    # Pitch initial offset (+/- 20 deg)
+    pitch[:] = 0.1 + (np.random.rand(num_agents) - 0.5) * (40 * np.pi / 180)
 
-    # Populate Obs
     rvx = vtvx_val - vel_x
     rvy = vtvy_val - vel_y
     rvz = vtvz_val - vel_z
 
-    # Body Frame Rel Vel (R=Identity at t=0)
     observations[:, 300] = rvx
     observations[:, 301] = rvy
     observations[:, 302] = rvz
 
-    dx = vtx_val - pos_x
-    dy = vty_val - pos_y
-    dz = vtz_val - pos_z
     dist = np.sqrt(dx*dx + dy*dy + dz*dz)
     observations[:, 303] = dist
 
-    # Initial Tracker Features
-    # R=I
-    xb = dx
-    yb = dy
-    zb = dz
+    # Calc initial u/v for obs
+    # For CPU reset we can just compute it.
+    # Note: R is not identity anymore due to random yaw/pitch
+    sr, cr = np.sin(roll), np.cos(roll)
+    sp, cp = np.sin(pitch), np.cos(pitch)
+    sy, cy = np.sin(yaw), np.cos(yaw)
+
+    r11 = cy * cp
+    r12 = sy * cp
+    r13 = -sp
+    r21 = cy * sp * sr - sy * cr
+    r22 = sy * sp * sr + cy * cr
+    r23 = cp * sr
+    r31 = cy * sp * cr + sy * sr
+    r32 = sy * sp * cr - cy * sr
+    r33 = cp * cr
+
+    xb = r11 * dx + r12 * dy + r13 * dz
+    yb = r21 * dx + r22 * dy + r23 * dz
+    zb = r31 * dx + r32 * dy + r33 * dz
+
     s30 = 0.5
     c30 = 0.866025
     xc = yb
-    yc = s30 * xb + c30 * zb
-    zc = c30 * xb - s30 * zb
+    yc = -s30 * xb + c30 * zb
+    zc = c30 * xb + s30 * zb
 
     zc_safe = np.maximum(zc, 0.1)
     u = xc / zc_safe
     v = yc / zc_safe
 
-    # Clamp u and v to [-1.732, 1.732] (120 deg FOV)
     u = np.clip(u, -1.732, 1.732)
     v = np.clip(v, -1.732, 1.732)
-
     size = 10.0 / (zc*zc + 1.0)
-
     conf = np.ones(num_agents, dtype=np.float32)
     conf = np.where((c30 * xb + s30 * zb) < 0, 0.0, conf)
 
@@ -524,15 +529,12 @@ class DroneEnv(CUDAEnvironmentState):
         self.use_cuda = _HAS_PYCUDA and kwargs.get("use_cuda", True)
 
         if self.use_cuda:
-             # CUDA not supported in this version
              logging.warning("CUDA backend requested but not supported in this patch. Falling back to CPU.")
              self.use_cuda = False
 
-        # Explicitly initialize mock CUDAEnvironmentState behavior for CPU mode
         if not hasattr(self, "cuda_data_manager"):
              self.cuda_data_manager = self
 
-        # Now init data
         self.init_data_manager()
 
         if _HAS_CYTHON:
@@ -551,23 +553,19 @@ class DroneEnv(CUDAEnvironmentState):
         return self._data_dictionary
 
     def init_data_manager(self):
-        # Allocate data based on get_data_dictionary
         dd = self.get_data_dictionary()
         for name, meta in dd.items():
             shape = meta["shape"]
             dtype = meta["dtype"]
             self.data_dictionary[name] = np.zeros(shape, dtype=dtype)
 
-        # Ensure reset_indices is available (shared buffer)
         if "reset_indices" not in self.data_dictionary:
             self.data_dictionary["reset_indices"] = np.zeros((self.num_agents,), dtype=np.int32)
 
     def reset_all_envs(self):
-        # Populate reset_indices with all agents
         all_indices = np.arange(self.num_agents, dtype=np.int32)
         self.data_dictionary["reset_indices"][:] = all_indices
 
-        # Resolve args
         kwargs = self.get_reset_function_kwargs()
         args = {}
         for k, v in kwargs.items():
@@ -575,20 +573,12 @@ class DroneEnv(CUDAEnvironmentState):
                 args[k] = self.data_dictionary[v]
             elif k == "num_agents":
                 args[k] = self.num_agents
-            elif k == "episode_length":
-                args[k] = self.episode_length
             else:
-                # Should not happen for arrays, but maybe for constants passed as args?
-                # Cython signature expects int for num_agents, episode_length
                 pass
 
         self.reset_function(**args)
 
     def update_target_trajectory(self):
-        """
-        Updates the precomputed target trajectory based on current traj_params.
-        This is necessary if traj_params are modified after reset when using the Cython backend.
-        """
         if _HAS_CYTHON:
              traj_params = self.data_dictionary["traj_params"]
              target_trajectory = self.data_dictionary["target_trajectory"]
@@ -604,22 +594,26 @@ class DroneEnv(CUDAEnvironmentState):
                 "vel_x", "vel_y", "vel_z",
                 "roll", "pitch", "yaw",
                 "masses", "drag_coeffs", "thrust_coeffs",
+                "wind_x", "wind_y", "wind_z",
                 "target_vx", "target_vy", "target_vz", "target_yaw_rate",
                 "vt_x", "vt_y", "vt_z",
-                "traj_params", # New
+                "traj_params",
                 "target_trajectory",
                 "pos_history",
                 "rng_states",
-                "step_counts"
+                "step_counts",
+                "action_buffer", "delays"
             ],
         }
 
     def get_data_dictionary(self):
-        # Explicitly define data shapes and types for allocation
         return {
             "masses": {"shape": (self.num_agents,), "dtype": np.float32},
             "drag_coeffs": {"shape": (self.num_agents,), "dtype": np.float32},
             "thrust_coeffs": {"shape": (self.num_agents,), "dtype": np.float32},
+            "wind_x": {"shape": (self.num_agents,), "dtype": np.float32}, # New
+            "wind_y": {"shape": (self.num_agents,), "dtype": np.float32}, # New
+            "wind_z": {"shape": (self.num_agents,), "dtype": np.float32}, # New
             "target_vx": {"shape": (self.num_agents,), "dtype": np.float32},
             "target_vy": {"shape": (self.num_agents,), "dtype": np.float32},
             "target_vz": {"shape": (self.num_agents,), "dtype": np.float32},
@@ -627,9 +621,9 @@ class DroneEnv(CUDAEnvironmentState):
             "vt_x": {"shape": (self.num_agents,), "dtype": np.float32},
             "vt_y": {"shape": (self.num_agents,), "dtype": np.float32},
             "vt_z": {"shape": (self.num_agents,), "dtype": np.float32},
-            "traj_params": {"shape": (10, self.num_agents), "dtype": np.float32}, # Optimized Shape
+            "traj_params": {"shape": (10, self.num_agents), "dtype": np.float32},
             "target_trajectory": {"shape": (self.episode_length + 1, self.num_agents, 3), "dtype": np.float32},
-            "pos_history": {"shape": (self.episode_length, self.num_agents, 3), "dtype": np.float32}, # Optimized Shape
+            "pos_history": {"shape": (self.episode_length, self.num_agents, 3), "dtype": np.float32},
             "rng_states": {"shape": (self.num_agents,), "dtype": np.int32},
              "pos_x": {"shape": (self.num_agents,), "dtype": np.float32},
              "pos_y": {"shape": (self.num_agents,), "dtype": np.float32},
@@ -643,18 +637,19 @@ class DroneEnv(CUDAEnvironmentState):
              "step_counts": {"shape": (self.num_agents,), "dtype": np.int32},
              "done_flags": {"shape": (self.num_agents,), "dtype": np.float32},
              "rewards": {"shape": (self.num_agents,), "dtype": np.float32},
-             "reward_components": {"shape": (self.num_agents, 8), "dtype": np.float32}, # New
+             "reward_components": {"shape": (self.num_agents, 8), "dtype": np.float32},
              "observations": {"shape": (self.num_agents, 308), "dtype": np.float32},
-             "reset_indices": {"shape": (self.num_agents,), "dtype": np.int32}, # Added for safety
-             "actions": {"shape": (self.num_agents * 4,), "dtype": np.float32}, # Also needed for step
+             "reset_indices": {"shape": (self.num_agents,), "dtype": np.int32},
+             "actions": {"shape": (self.num_agents * 4,), "dtype": np.float32},
              "env_ids": {"shape": (self.num_agents,), "dtype": np.int32},
+             "action_buffer": {"shape": (self.num_agents, 11, 4), "dtype": np.float32}, # New
+             "delays": {"shape": (self.num_agents,), "dtype": np.int32}, # New
         }
 
     def get_action_space(self):
         return (self.num_agents, 4)
 
     def get_observation_space(self):
-        # 30 * 10 + 4 + 4 = 308
         return (self.num_agents, 308)
 
     def get_reward_signature(self): return (self.num_agents,)
@@ -665,6 +660,7 @@ class DroneEnv(CUDAEnvironmentState):
                 "vel_x", "vel_y", "vel_z",
                 "roll", "pitch", "yaw",
                 "masses", "drag_coeffs", "thrust_coeffs",
+                "wind_x", "wind_y", "wind_z",
                 "target_vx", "target_vy", "target_vz", "target_yaw_rate",
                 "vt_x", "vt_y", "vt_z",
                 "traj_params",
@@ -672,7 +668,7 @@ class DroneEnv(CUDAEnvironmentState):
                 "pos_history",
                 "rng_states",
                 "observations", "rewards", "reward_components", "done_flags",
-                "step_counts"
+                "step_counts", "action_buffer", "delays"
         ]
 
     def get_constants(self):
@@ -690,17 +686,21 @@ class DroneEnv(CUDAEnvironmentState):
             "vel_x": "vel_x", "vel_y": "vel_y", "vel_z": "vel_z",
             "roll": "roll", "pitch": "pitch", "yaw": "yaw",
             "masses": "masses", "drag_coeffs": "drag_coeffs", "thrust_coeffs": "thrust_coeffs",
+            "wind_x": "wind_x", "wind_y": "wind_y", "wind_z": "wind_z",
             "target_vx": "target_vx", "target_vy": "target_vy", "target_vz": "target_vz", "target_yaw_rate": "target_yaw_rate",
             "vt_x": "vt_x", "vt_y": "vt_y", "vt_z": "vt_z",
-            "traj_params": "traj_params", # New
+            "traj_params": "traj_params",
             "target_trajectory": "target_trajectory",
             "pos_history": "pos_history",
             "observations": "observations",
             "rewards": "rewards",
-            "reward_components": "reward_components", # New
+            "reward_components": "reward_components",
             "done_flags": "done_flags",
             "step_counts": "step_counts",
             "actions": "actions",
+            "action_buffer": "action_buffer",
+            "delays": "delays",
+            "rng_states": "rng_states",
             "num_agents": "num_agents",
             "episode_length": "episode_length",
             "env_ids": "env_ids",
@@ -712,14 +712,17 @@ class DroneEnv(CUDAEnvironmentState):
             "vel_x": "vel_x", "vel_y": "vel_y", "vel_z": "vel_z",
             "roll": "roll", "pitch": "pitch", "yaw": "yaw",
             "masses": "masses", "drag_coeffs": "drag_coeffs", "thrust_coeffs": "thrust_coeffs",
+            "wind_x": "wind_x", "wind_y": "wind_y", "wind_z": "wind_z",
             "target_vx": "target_vx", "target_vy": "target_vy", "target_vz": "target_vz", "target_yaw_rate": "target_yaw_rate",
             "vt_x": "vt_x", "vt_y": "vt_y", "vt_z": "vt_z",
-            "traj_params": "traj_params", # New
+            "traj_params": "traj_params",
             "target_trajectory": "target_trajectory",
             "pos_history": "pos_history",
             "observations": "observations",
             "rng_states": "rng_states",
             "step_counts": "step_counts",
             "num_agents": "num_agents",
-            "reset_indices": "reset_indices"
+            "reset_indices": "reset_indices",
+            "action_buffer": "action_buffer",
+            "delays": "delays"
         }

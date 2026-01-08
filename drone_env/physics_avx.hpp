@@ -12,17 +12,44 @@ static const float DT = 0.05f;
 static const float GRAVITY = 9.81f;
 static const int SUBSTEPS = 2;
 
+// LCG RNG Helper
+// Updates state and returns uniform float [0, 1]
+inline __m256 avx_rng_float(__m256i& state) {
+    __m256i A = _mm256_set1_epi32(1103515245);
+    __m256i C = _mm256_set1_epi32(12345);
+    state = _mm256_add_epi32(_mm256_mullo_epi32(state, A), C);
+
+    // Use high bits for better randomness? Standard LCG usually takes bits 30..16
+    // But float conversion usually wants 0..INT_MAX
+    __m256i mask = _mm256_set1_epi32(0x7FFFFFFF);
+    __m256i val_int = _mm256_and_si256(state, mask);
+    __m256 val_f = _mm256_cvtepi32_ps(val_int);
+    return _mm256_mul_ps(val_f, _mm256_set1_ps(4.65661287e-10f)); // 1.0 / 2147483647
+}
+
+// Approximate Normal Distribution (Mean 0, Std 1) using Sum of 4 Uniforms
+// Variance of U[0,1] is 1/12. Sum of 4 has variance 4/12 = 1/3.
+// We want variance 1.
+// Let S = U1 + U2 + U3 + U4 - 2.0. Mean 0. Var 1/3.
+// Multiply by sqrt(3) ~= 1.732 to get Std 1.
+inline __m256 avx_rng_normal(__m256i& state) {
+    __m256 u1 = avx_rng_float(state);
+    __m256 u2 = avx_rng_float(state);
+    __m256 u3 = avx_rng_float(state);
+    __m256 u4 = avx_rng_float(state);
+
+    __m256 sum = _mm256_add_ps(_mm256_add_ps(u1, u2), _mm256_add_ps(u3, u4));
+    __m256 centered = _mm256_sub_ps(sum, _mm256_set1_ps(2.0f));
+    return _mm256_mul_ps(centered, _mm256_set1_ps(1.73205f));
+}
+
 // Helper: Custom Memmove using AVX for new obs size (308)
-// Shift 0..290 <- 10..300
-// 290 floats shift.
 inline void shift_observations_avx(float* observations, int i) {
     for (int k = 0; k < 8; k++) {
         float* ptr = &observations[(i + k) * 308];
-        float* src = ptr + 10; // Shift by 10 (one step history)
+        float* src = ptr + 10;
         float* dst = ptr;
-
         // Copy 290 floats
-        // 290 / 8 = 36 blocks + 2 remainder
         for (int j = 0; j < 36; j++) {
             __m256 v = _mm256_loadu_ps(src + j * 8);
             _mm256_storeu_ps(dst + j * 8, v);
@@ -39,21 +66,27 @@ inline void step_agents_avx2(
     float* vel_x, float* vel_y, float* vel_z,
     float* roll, float* pitch, float* yaw,
     float* masses, float* drag_coeffs, float* thrust_coeffs,
+    float* wind_x, float* wind_y, float* wind_z, // New
     float* target_vx, float* target_vy, float* target_vz, float* target_yaw_rate,
-    float* vt_x, float* vt_y, float* vt_z, // Virtual Target Position (Output)
-    float* target_trajectory, // Precomputed Trajectory: Shape (episode_length+1, num_agents, 3)
-    float* pos_history, // Shape (episode_length, num_agents, 3)
-    float* observations, // stride 308
+    float* vt_x, float* vt_y, float* vt_z,
+    float* target_trajectory,
+    float* pos_history,
+    float* observations,
     float* rewards,
-    float* reward_components, // New: stride 8 (num_agents, 8)
+    float* reward_components,
     float* done_flags,
-    float* actions, // stride 4
+    float* actions,
+    float* action_buffer, // stride 44 (11*4)
+    int* delays,          // stride 1
+    int* rng_states,      // stride 1
     int episode_length,
     int t,
     int num_agents
 ) {
-    // Check if we can process 8 agents
     if (i + 8 > num_agents) return;
+
+    // Load RNG State
+    __m256i rng_state = _mm256_loadu_si256((__m256i*)&rng_states[i]);
 
     // Load State
     __m256 px = _mm256_loadu_ps(&pos_x[i]);
@@ -70,17 +103,101 @@ inline void step_agents_avx2(
     __m256 drag = _mm256_loadu_ps(&drag_coeffs[i]);
     __m256 t_coeff = _mm256_loadu_ps(&thrust_coeffs[i]);
 
-    // Actions
+    __m256 wx = _mm256_loadu_ps(&wind_x[i]);
+    __m256 wy = _mm256_loadu_ps(&wind_y[i]);
+    __m256 wz = _mm256_loadu_ps(&wind_z[i]);
+
+    // ------------------------------------------------------------------------
+    // Action Buffer & Delay Logic
+    // ------------------------------------------------------------------------
+    // 1. Shift buffer for each agent (Manual loop as it's scattered in memory)
+    // 2. Insert new action at index 0
+
+    // Gather current actions first
     __m256i idx_base = _mm256_set_epi32(7*4, 6*4, 5*4, 4*4, 3*4, 2*4, 1*4, 0);
     __m256i idx_0 = _mm256_add_epi32(idx_base, _mm256_set1_epi32(i*4));
     __m256i idx_1 = _mm256_add_epi32(idx_0, _mm256_set1_epi32(1));
     __m256i idx_2 = _mm256_add_epi32(idx_0, _mm256_set1_epi32(2));
     __m256i idx_3 = _mm256_add_epi32(idx_0, _mm256_set1_epi32(3));
 
-    __m256 thrust_cmd = _mm256_i32gather_ps(actions, idx_0, 4);
-    __m256 roll_rate_cmd = _mm256_i32gather_ps(actions, idx_1, 4);
-    __m256 pitch_rate_cmd = _mm256_i32gather_ps(actions, idx_2, 4);
-    __m256 yaw_rate_cmd = _mm256_i32gather_ps(actions, idx_3, 4);
+    __m256 act_0 = _mm256_i32gather_ps(actions, idx_0, 4);
+    __m256 act_1 = _mm256_i32gather_ps(actions, idx_1, 4);
+    __m256 act_2 = _mm256_i32gather_ps(actions, idx_2, 4);
+    __m256 act_3 = _mm256_i32gather_ps(actions, idx_3, 4);
+
+    // Store back to temporary arrays to handle shifting
+    float tmp_act[4][8];
+    _mm256_storeu_ps(tmp_act[0], act_0);
+    _mm256_storeu_ps(tmp_act[1], act_1);
+    _mm256_storeu_ps(tmp_act[2], act_2);
+    _mm256_storeu_ps(tmp_act[3], act_3);
+
+    for(int k=0; k<8; k++) {
+        int agent_idx = i + k;
+        float* buf = &action_buffer[agent_idx * 44];
+        // Shift 0..9 (40 floats) to 1..10
+        // Use memmove for safety (overlapping)
+        std::memmove(buf + 4, buf, 40 * sizeof(float));
+        // Insert new
+        buf[0] = tmp_act[0][k];
+        buf[1] = tmp_act[1][k];
+        buf[2] = tmp_act[2][k];
+        buf[3] = tmp_act[3][k];
+    }
+
+    // Load Delays
+    __m256i delay_vals = _mm256_loadu_si256((__m256i*)&delays[i]);
+    // Clamp delays to [0, 10]
+    delay_vals = _mm256_max_epi32(delay_vals, _mm256_setzero_si256());
+    delay_vals = _mm256_min_epi32(delay_vals, _mm256_set1_epi32(10));
+
+    // Compute gather offsets for Action Buffer
+    // Base ptr: action_buffer
+    // For agent k (0..7): Offset = (i+k)*44 + delay[k]*4 + comp
+
+    // We construct the indices manually
+    __m256i stride_44 = _mm256_set1_epi32(44);
+    __m256i stride_4 = _mm256_set1_epi32(4);
+
+    __m256i agent_indices = _mm256_set_epi32(i+7, i+6, i+5, i+4, i+3, i+2, i+1, i);
+    __m256i base_offsets = _mm256_mullo_epi32(agent_indices, stride_44);
+    __m256i delay_offsets = _mm256_mullo_epi32(delay_vals, stride_4);
+
+    __m256i total_offset_base = _mm256_add_epi32(base_offsets, delay_offsets);
+
+    __m256 thrust_cmd = _mm256_i32gather_ps(action_buffer, total_offset_base, 4);
+    __m256 roll_rate_cmd = _mm256_i32gather_ps(action_buffer, _mm256_add_epi32(total_offset_base, _mm256_set1_epi32(1)), 4);
+    __m256 pitch_rate_cmd = _mm256_i32gather_ps(action_buffer, _mm256_add_epi32(total_offset_base, _mm256_set1_epi32(2)), 4);
+    __m256 yaw_rate_cmd = _mm256_i32gather_ps(action_buffer, _mm256_add_epi32(total_offset_base, _mm256_set1_epi32(3)), 4);
+
+    // ------------------------------------------------------------------------
+    // Wind Update
+    // ------------------------------------------------------------------------
+    // Random Walk: +/- 0.2
+    __m256 w_n1 = avx_rng_float(rng_state);
+    __m256 w_n2 = avx_rng_float(rng_state);
+    __m256 w_n3 = avx_rng_float(rng_state);
+
+    __m256 c_w_scale = _mm256_set1_ps(0.2f);
+    __m256 c_w_off = _mm256_set1_ps(0.5f);
+
+    wx = _mm256_add_ps(wx, _mm256_mul_ps(_mm256_sub_ps(w_n1, c_w_off), c_w_scale));
+    wy = _mm256_add_ps(wy, _mm256_mul_ps(_mm256_sub_ps(w_n2, c_w_off), c_w_scale));
+    wz = _mm256_add_ps(wz, _mm256_mul_ps(_mm256_sub_ps(w_n3, c_w_off), c_w_scale));
+
+    // Clamp Wind
+    __m256 w_max_xy = _mm256_set1_ps(10.0f);
+    __m256 w_max_z = _mm256_set1_ps(5.0f);
+    __m256 w_min_xy = _mm256_set1_ps(-10.0f);
+    __m256 w_min_z = _mm256_set1_ps(-5.0f);
+
+    wx = _mm256_max_ps(w_min_xy, _mm256_min_ps(wx, w_max_xy));
+    wy = _mm256_max_ps(w_min_xy, _mm256_min_ps(wy, w_max_xy));
+    wz = _mm256_max_ps(w_min_z, _mm256_min_ps(wz, w_max_z));
+
+    _mm256_storeu_ps(&wind_x[i], wx);
+    _mm256_storeu_ps(&wind_y[i], wy);
+    _mm256_storeu_ps(&wind_z[i], wz);
 
     // Constants
     __m256 dt_v = _mm256_set1_ps(DT);
@@ -92,16 +209,13 @@ inline void step_agents_avx2(
     __m256 c01 = _mm256_set1_ps(0.1f);
     __m256 c10 = _mm256_set1_ps(10.0f);
     __m256 c05 = _mm256_set1_ps(0.5f);
-    __m256 c_fov = _mm256_set1_ps(1.732f); // tan(60) for 120 deg FOV
+    __m256 c_fov = _mm256_set1_ps(1.732f);
 
-    // ------------------------------------------------------------------------
-    // Lookup Virtual Target Position from Precomputed Trajectory
-    // ------------------------------------------------------------------------
+    // Lookup Virtual Target
     int step_idx = t;
-    if (step_idx > episode_length) step_idx = episode_length; // Clamp
+    if (step_idx > episode_length) step_idx = episode_length;
 
     float* traj_base = &target_trajectory[step_idx * num_agents * 3];
-
     __m256i idx_x = _mm256_set_epi32(7*3, 6*3, 5*3, 4*3, 3*3, 2*3, 1*3, 0);
     __m256i idx_y = _mm256_add_epi32(idx_x, _mm256_set1_epi32(1));
     __m256i idx_z = _mm256_add_epi32(idx_x, _mm256_set1_epi32(2));
@@ -119,7 +233,6 @@ inline void step_agents_avx2(
     __m256 vtz_n = _mm256_i32gather_ps(&traj_next[i*3], idx_z, 4);
 
     __m256 inv_dt = _mm256_set1_ps(1.0f / DT);
-
     __m256 vtvx = _mm256_mul_ps(_mm256_sub_ps(vtx_n, vtx), inv_dt);
     __m256 vtvy = _mm256_mul_ps(_mm256_sub_ps(vty_n, vty), inv_dt);
     __m256 vtvz = _mm256_mul_ps(_mm256_sub_ps(vtz_n, vtz), inv_dt);
@@ -128,33 +241,10 @@ inline void step_agents_avx2(
     _mm256_storeu_ps(&vt_y[i], vty);
     _mm256_storeu_ps(&vt_z[i], vtz);
 
-    // ------------------------------------------------------------------------
-    // Tracker / UV features needed for History
-    // ------------------------------------------------------------------------
-    // Calculate these based on CURRENT state (before dynamics update)
-    // Or should it be after? User said "History of last 3 seconds".
-    // Usually state is recorded before action applied or after?
-    // In step_cpu, we record history at the end of the step.
-    // BUT we need `u` and `v` to put into history.
-    // If we calculate `u, v` at end of step, we put that into history.
-    // The history shift happens at START of step usually?
-    // In step_cpu: shift happens, then new data appended.
-    // So we need to calculate features, then shift & append.
-    // But we need the features of the *previous* step?
-    // No, standard is: Action -> New State -> Observation.
-    // Observation includes current state.
-    // So we should:
-    // 1. Shift history (dropping oldest).
-    // 2. Run Dynamics -> New State.
-    // 3. Calc Features (u, v, etc).
-    // 4. Append New State to History.
-    // 5. Update Obs buffer.
-
     shift_observations_avx(observations, i);
 
     // Substeps
     for (int s = 0; s < SUBSTEPS; s++) {
-        // Dynamics
         r = _mm256_add_ps(r, _mm256_mul_ps(roll_rate_cmd, dt_v));
         p = _mm256_add_ps(p, _mm256_mul_ps(pitch_rate_cmd, dt_v));
         y = _mm256_add_ps(y, _mm256_mul_ps(yaw_rate_cmd, dt_v));
@@ -162,7 +252,6 @@ inline void step_agents_avx2(
         __m256 max_thrust = _mm256_mul_ps(c20, t_coeff);
         __m256 thrust_force = _mm256_mul_ps(thrust_cmd, max_thrust);
 
-        // Dynamics Sincos (LUT)
         __m256 sr = lut_sin256_ps(r);
         __m256 cr = lut_cos256_ps(r);
         __m256 sp = lut_sin256_ps(p);
@@ -181,9 +270,14 @@ inline void step_agents_avx2(
         __m256 az_thrust = _mm256_div_ps(_mm256_mul_ps(thrust_force, _mm256_mul_ps(cp, cr)), mass);
         __m256 az_gravity = _mm256_sub_ps(c0, g_v);
 
-        __m256 ax_drag = _mm256_mul_ps(_mm256_sub_ps(c0, drag), vx);
-        __m256 ay_drag = _mm256_mul_ps(_mm256_sub_ps(c0, drag), vy);
-        __m256 az_drag = _mm256_mul_ps(_mm256_sub_ps(c0, drag), vz);
+        // Relative Velocity for Drag
+        __m256 rvx_a = _mm256_sub_ps(vx, wx);
+        __m256 rvy_a = _mm256_sub_ps(vy, wy);
+        __m256 rvz_a = _mm256_sub_ps(vz, wz);
+
+        __m256 ax_drag = _mm256_mul_ps(_mm256_sub_ps(c0, drag), rvx_a);
+        __m256 ay_drag = _mm256_mul_ps(_mm256_sub_ps(c0, drag), rvy_a);
+        __m256 az_drag = _mm256_mul_ps(_mm256_sub_ps(c0, drag), rvz_a);
 
         __m256 ax = _mm256_add_ps(ax_thrust, ax_drag);
         __m256 ay = _mm256_add_ps(ay_thrust, ay_drag);
@@ -197,7 +291,6 @@ inline void step_agents_avx2(
         py = _mm256_add_ps(py, _mm256_mul_ps(vy, dt_v));
         pz = _mm256_add_ps(pz, _mm256_mul_ps(vz, dt_v));
 
-        // Terrain Sincos (LUT)
         __m256 sin_px = lut_sin256_ps(_mm256_mul_ps(c01, px));
         __m256 cos_py = lut_cos256_ps(_mm256_mul_ps(c01, py));
         __m256 terr_z = _mm256_mul_ps(c5, _mm256_mul_ps(sin_px, cos_py));
@@ -219,11 +312,9 @@ inline void step_agents_avx2(
     _mm256_storeu_ps(&pitch[i], p);
     _mm256_storeu_ps(&yaw[i], y);
 
-    // Final terrain check with LUT
     __m256 sin_px_f = lut_sin256_ps(_mm256_mul_ps(c01, px));
     __m256 cos_py_f = lut_cos256_ps(_mm256_mul_ps(c01, py));
     __m256 terr_z_final = _mm256_mul_ps(c5, _mm256_mul_ps(sin_px_f, cos_py_f));
-
     __m256 mask_coll = _mm256_cmp_ps(pz, terr_z_final, _CMP_LT_OQ);
 
     if (t <= episode_length) {
@@ -240,14 +331,11 @@ inline void step_agents_avx2(
         }
     }
 
-    // ------------------------------------------------------------------------
-    // Calculate Augmented Features & Update History
-    // ------------------------------------------------------------------------
+    // Augmented Features
     __m256 dx_w = _mm256_sub_ps(vtx, px);
     __m256 dy_w = _mm256_sub_ps(vty, py);
     __m256 dz_w = _mm256_sub_ps(vtz, pz);
 
-    // Rotation Matrix (LUT)
     __m256 sr = lut_sin256_ps(r);
     __m256 cr = lut_cos256_ps(r);
     __m256 sp = lut_sin256_ps(p);
@@ -273,9 +361,6 @@ inline void step_agents_avx2(
     __m256 c30 = _mm256_set1_ps(0.866025f);
 
     __m256 xc = yb;
-    // Camera Up 30 deg:
-    // yc = -s30 * xb + c30 * zb
-    // zc = c30 * xb + s30 * zb
     __m256 yc = _mm256_add_ps(_mm256_mul_ps(_mm256_sub_ps(c0, s30), xb), _mm256_mul_ps(c30, zb));
     __m256 zc = _mm256_add_ps(_mm256_mul_ps(c30, xb), _mm256_mul_ps(s30, zb));
 
@@ -283,11 +368,26 @@ inline void step_agents_avx2(
     __m256 u = _mm256_div_ps(xc, zc_safe);
     __m256 v = _mm256_div_ps(yc, zc_safe);
 
+    // ------------------------------------------------------------------------
+    // Noise on Tracking (u, v)
+    // ------------------------------------------------------------------------
+    // Add noise: ~5%? or fixed std dev?
+    // Using Normal Distribution approx std=0.05
+    __m256 u_noise = avx_rng_normal(rng_state);
+    __m256 v_noise = avx_rng_normal(rng_state);
+    __m256 c_noise_scale = _mm256_set1_ps(0.05f);
+
+    u = _mm256_add_ps(u, _mm256_mul_ps(u_noise, c_noise_scale));
+    v = _mm256_add_ps(v, _mm256_mul_ps(v_noise, c_noise_scale));
+
     __m256 c_fov_neg = _mm256_sub_ps(c0, c_fov);
     u = _mm256_max_ps(c_fov_neg, _mm256_min_ps(u, c_fov));
     v = _mm256_max_ps(c_fov_neg, _mm256_min_ps(v, c_fov));
 
     __m256 rel_size = _mm256_div_ps(c10, _mm256_add_ps(_mm256_mul_ps(zc, zc), c1));
+    // Noise on size
+    __m256 s_noise = avx_rng_normal(rng_state);
+    rel_size = _mm256_add_ps(rel_size, _mm256_mul_ps(s_noise, _mm256_set1_ps(0.01f)));
 
     __m256 w2 = _mm256_add_ps(
         _mm256_mul_ps(roll_rate_cmd, roll_rate_cmd),
@@ -297,12 +397,12 @@ inline void step_agents_avx2(
         )
     );
     __m256 conf = exp256_ps(_mm256_mul_ps(_mm256_set1_ps(-0.1f), w2));
-    // Behind camera if zc < 0 (using new zc)
     __m256 mask_behind = _mm256_cmp_ps(zc, c0, _CMP_LT_OQ);
     conf = _mm256_blendv_ps(conf, c0, mask_behind);
 
-    // Update History (last 10 slots)
-    // Features: r, p, y, pz, thrust, rr, pr, yr, u, v
+    // Save RNG State
+    _mm256_storeu_si256((__m256i*)&rng_states[i], rng_state);
+
     float tmp_r[8], tmp_p[8], tmp_y[8], tmp_pz[8];
     float tmp_th[8], tmp_rr[8], tmp_pr[8], tmp_yr[8];
     float tmp_u[8], tmp_v[8];
@@ -320,7 +420,7 @@ inline void step_agents_avx2(
 
     for (int k=0; k<8; k++) {
         int agent_idx = i+k;
-        int off = agent_idx*308 + 290; // Last 10 of 300
+        int off = agent_idx*308 + 290;
         observations[off+0] = tmp_r[k];
         observations[off+1] = tmp_p[k];
         observations[off+2] = tmp_y[k];
@@ -333,7 +433,6 @@ inline void step_agents_avx2(
         observations[off+9] = tmp_v[k];
     }
 
-    // Update Aux Features (300-308)
     __m256 rvx = _mm256_sub_ps(vtvx, vx);
     __m256 rvy = _mm256_sub_ps(vtvy, vy);
     __m256 rvz = _mm256_sub_ps(vtvz, vz);
@@ -371,22 +470,17 @@ inline void step_agents_avx2(
         observations[off+7] = tmp_conf[k];
     }
 
-    // Rewards with Optimized Division (Newton-Raphson)
+    // Rewards
     __m256 rvel_sq = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(rvx, rvx), _mm256_mul_ps(rvy, rvy)), _mm256_mul_ps(rvz, rvz));
     __m256 r_dot_v = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(rx, rvx), _mm256_mul_ps(ry, rvy)), _mm256_mul_ps(rz, rvz));
     __m256 dist_sq_safe = _mm256_max_ps(dist_sq, _mm256_set1_ps(0.01f));
 
-    // rcp_dist_sq = 1.0 / dist_sq_safe (Approx)
     __m256 rcp_dist_sq = _mm256_rcp_ps(dist_sq_safe);
-    // Refinement: y = y * (2 - x * y)
     rcp_dist_sq = _mm256_mul_ps(rcp_dist_sq, _mm256_sub_ps(_mm256_set1_ps(2.0f), _mm256_mul_ps(dist_sq_safe, rcp_dist_sq)));
 
-    // term1 = rvel_sq / dist_sq_safe
     __m256 term1 = _mm256_mul_ps(rvel_sq, rcp_dist_sq);
-
-    // term2 = (r_dot_v / dist_sq_safe)^2
     __m256 r_dot_v_scaled = _mm256_mul_ps(r_dot_v, rcp_dist_sq);
-    __m256 term2 = _mm256_mul_ps(r_dot_v_scaled, r_dot_v_scaled); // Slightly different algebraic expansion, but equivalent: (r.v)^2 / d^4 = (r.v/d^2)^2. Correct.
+    __m256 term2 = _mm256_mul_ps(r_dot_v_scaled, r_dot_v_scaled);
 
     __m256 omega_sq = _mm256_sub_ps(term1, term2);
     omega_sq = _mm256_max_ps(omega_sq, c0);
