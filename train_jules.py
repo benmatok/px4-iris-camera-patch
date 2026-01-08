@@ -48,15 +48,54 @@ class LinearPlanner:
         dx = tx - px
         dy = ty - py
         dz = tz - pz
-        dist = np.sqrt(dx**2 + dy**2 + dz**2) + 1e-6
+        dist_xy = np.sqrt(dx**2 + dy**2) + 1e-6
+
+        # Elevation Angle Check
+        # angle = arctan(dz / dist_xy)
+        # If we are "above", dz (target - pos) is negative.
+        # "Above by 10 degrees" means angle of drone seen from target is > 10?
+        # Or angle of target seen from drone is < -10?
+        # User said: "if we are above the object by at least 10 degrees"
+        # Relative vector from Target to Drone: V = P - T = -D.
+        # Elevation of Drone w.r.t Target: arctan((Pz-Tz)/dist_xy).
+        # We want Elevation >= 10 degrees.
+
+        rel_h = pz - tz
+        elevation_rad = np.arctan2(rel_h, dist_xy)
+        threshold_rad = np.deg2rad(10.0)
+
+        # Virtual Target Logic
+        # If elevation < 10 deg, aim higher.
+        # We need to aim for a point that satisfies the condition.
+        # "imagine 2 steps: 1. go to altitude... 2. linear path"
+        # We set a virtual target that forces a climb.
+        # Target Z should be such that angle is comfortable (say 15 deg).
+        # T_virtual_z = Tz + dist_xy * tan(15 deg).
+        # If we fly to T_virtual, we climb.
+
+        target_z_eff = tz.copy()
+        mask_low = elevation_rad < threshold_rad
+
+        # For low agents, set target Z higher
+        target_angle_rad = np.deg2rad(15.0)
+        req_h = dist_xy * np.tan(target_angle_rad)
+        # We want Pz - Tz >= req_h eventually.
+        # Flying towards (Tx, Ty, Tz + req_h) will guide us there?
+        # Yes, linear path to a point above target.
+
+        target_z_eff[mask_low] = tz[mask_low] + req_h[mask_low]
+
+        # Recalculate Delta with effective target
+        dz_eff = target_z_eff - pz
+        dist_eff = np.sqrt(dx**2 + dy**2 + dz_eff**2) + 1e-6
 
         # Desired Velocity (Linear Cruise)
         # Scale speed by distance? If close, slow down.
-        speed_ref = np.minimum(self.cruise_speed, dist * 1.0) # V = d * k (Proportional approach)
+        speed_ref = np.minimum(self.cruise_speed, dist_eff * 1.0)
 
-        vx_des = (dx / dist) * speed_ref
-        vy_des = (dy / dist) * speed_ref
-        vz_des = (dz / dist) * speed_ref
+        vx_des = (dx / dist_eff) * speed_ref
+        vy_des = (dy / dist_eff) * speed_ref
+        vz_des = (dz_eff / dist_eff) * speed_ref
 
         # Velocity Error
         evx = vx_des - vx
@@ -331,34 +370,52 @@ def evaluate_oracle():
             'thrust_coeffs': env.data_dictionary['thrust_coeffs']
         }
 
-        # Compute Linear Trajectory (Reference) for Visualization
-        # Just a straight line from current pos to target pos
-        # Steps = 10
-        # (N, Steps, 3)
+        # Compute Reference Trajectory for Visualization
+        # Should reflect the 2-step logic if active
         planned_pos_linear = np.zeros((num_agents, 10, 3))
+
+        # Snapshot current state for projection
+        px_sim = env.data_dictionary['pos_x'].copy()
+        py_sim = env.data_dictionary['pos_y'].copy()
+        pz_sim = env.data_dictionary['pos_z'].copy()
+
+        tx = env.data_dictionary['vt_x']
+        ty = env.data_dictionary['vt_y']
+        tz = env.data_dictionary['vt_z']
+
+        # Simulate the logic for 10 steps roughly
+        # This is just for visualization, simple Euler integration of the planner logic
+        sim_dt = 0.05
+
         for step_idx in range(10):
-            # Interpolate
-            alpha = (step_idx + 1) / 10.0
-            # Target at horizon?
-            # Let's just project current velocity
-            # Or simplified: Line to target
+            dx_s = tx - px_sim
+            dy_s = ty - py_sim
+            dist_xy_s = np.sqrt(dx_s**2 + dy_s**2) + 1e-6
 
-            # Use same logic as planner: V_des
-            # But visualization expects a path.
-            # Let's just project a straight line to target.
+            rel_h_s = pz_sim - tz
+            elev_s = np.arctan2(rel_h_s, dist_xy_s)
 
-            tx = env.data_dictionary['vt_x']
-            ty = env.data_dictionary['vt_y']
-            tz = env.data_dictionary['vt_z']
+            tz_eff_s = tz.copy()
+            mask_s = elev_s < np.deg2rad(10.0)
+            req_h_s = dist_xy_s * np.tan(np.deg2rad(15.0))
+            tz_eff_s[mask_s] = tz[mask_s] + req_h_s[mask_s]
 
-            px = env.data_dictionary['pos_x']
-            py = env.data_dictionary['pos_y']
-            pz = env.data_dictionary['pos_z']
+            dz_s = tz_eff_s - pz_sim
+            dist_s = np.sqrt(dx_s**2 + dy_s**2 + dz_s**2) + 1e-6
 
-            # Simple interpolation towards target
-            planned_pos_linear[:, step_idx, 0] = px + (tx - px) * alpha
-            planned_pos_linear[:, step_idx, 1] = py + (ty - py) * alpha
-            planned_pos_linear[:, step_idx, 2] = pz + (tz - pz) * alpha
+            speed_s = 10.0 # Approx cruise
+
+            vx_s = (dx_s / dist_s) * speed_s
+            vy_s = (dy_s / dist_s) * speed_s
+            vz_s = (dz_s / dist_s) * speed_s
+
+            px_sim += vx_s * sim_dt
+            py_sim += vy_s * sim_dt
+            pz_sim += vz_s * sim_dt
+
+            planned_pos_linear[:, step_idx, 0] = px_sim
+            planned_pos_linear[:, step_idx, 1] = py_sim
+            planned_pos_linear[:, step_idx, 2] = pz_sim
 
         for i in range(3):
             optimal_traj[i].append(planned_pos_linear[i])
