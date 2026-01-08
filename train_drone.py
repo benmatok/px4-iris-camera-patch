@@ -65,12 +65,14 @@ class CPUTrainer:
         # Step Signature:
         # pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, roll, pitch, yaw,
         # masses, drag_coeffs, thrust_coeffs,
+        # wind_x, wind_y, wind_z,
         # target_vx, target_vy, target_vz, target_yaw_rate,
         # vt_x, vt_y, vt_z,
         # traj_params, target_trajectory,
         # pos_history, observations,
         # rewards, reward_components,
         # done_flags, step_counts, actions,
+        # action_buffer, delays, rng_states,
         # num_agents, episode_length, env_ids
 
         d = self.env.data_dictionary
@@ -79,12 +81,14 @@ class CPUTrainer:
             d["vel_x"], d["vel_y"], d["vel_z"],
             d["roll"], d["pitch"], d["yaw"],
             d["masses"], d["drag_coeffs"], d["thrust_coeffs"],
+            d["wind_x"], d["wind_y"], d["wind_z"],
             d["target_vx"], d["target_vy"], d["target_vz"], d["target_yaw_rate"],
             d["vt_x"], d["vt_y"], d["vt_z"],
             d["traj_params"], d["target_trajectory"],
             d["pos_history"], d["observations"],
             d["rewards"], d["reward_components"],
             d["done_flags"], d["step_counts"], d["actions"],
+            d["action_buffer"], d["delays"], d["rng_states"],
             self.num_agents, self.episode_length, d["env_ids"]
         ]
 

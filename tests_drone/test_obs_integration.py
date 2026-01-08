@@ -66,8 +66,20 @@ class TestObsIntegration(unittest.TestCase):
         self.assertNotEqual(size, 0.0)
 
         # Test large angular rate -> low confidence
+        # NOTE: With delay logic, the action applied at Step 2 is determined by `delays`.
+        # If `delays[0] > 0`, the high roll rate won't be applied immediately.
+        # We need to force `delays` to 0 for this test.
+        data["delays"][0] = 0
+
         actions[0, 1] = 10.0 # High roll rate
         step_kwargs["actions"] = actions.flatten()
+
+        # Also need to clear action_buffer or ensure it's not overriding if delay=0?
+        # If delay=0, effective action is the current one.
+        # But wait, logic is:
+        # Shift buffer. Insert new at 0. Read from buffer[delay].
+        # So yes, if delay=0, we read from index 0 which is new action.
+
         env.step_function(**step_kwargs)
         obs = data["observations"][0]
         conf_high_motion = obs[307]
