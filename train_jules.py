@@ -11,116 +11,175 @@ import matplotlib.pyplot as plt
 # Configure Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-class OracleController:
+class LinearPlanner:
     """
-    Computes optimal controls (Thrust, RollRate, PitchRate, YawRate)
-    using a Feedback Controller (PD + Feedforward) to track the Lissajous trajectory.
+    Plans a linear path to the target and outputs control actions (Thrust, Rates)
+    to track it. Uses an Inverse Dynamics approach assuming constant velocity cruise.
     """
     def __init__(self, num_agents, dt=0.05):
         self.num_agents = num_agents
         self.dt = dt
         self.g = 9.81
-        self.planning_horizon = 5.0
+        self.cruise_speed = 10.0 # m/s
 
-    def solve_min_jerk(self, p0, v0, a0, pf, vf, af, T):
-        c0 = p0
-        c1 = v0
-        c2 = 0.5 * a0
-        T2 = T*T; T3 = T2*T; T4 = T3*T; T5 = T4*T
-        DeltaP = pf - (c0 + c1*T + c2*T2)
-        DeltaV = vf - (c1 + 2*c2*T)
-        DeltaA = af - (2*c2)
-        c3 = (10*DeltaP - 4*DeltaV*T + 0.5*DeltaA*T2) / T3
-        c4 = (-15*DeltaP + 7*DeltaV*T - DeltaA*T2) / T4
-        c5 = (6*DeltaP - 3*DeltaV*T + 0.5*DeltaA*T2) / T5
-        return c0, c1, c2, c3, c4, c5
+    def compute_actions(self, current_state, target_pos):
+        # Current State
+        px = current_state['pos_x']
+        py = current_state['pos_y']
+        pz = current_state['pos_z']
+        vx = current_state['vel_x']
+        vy = current_state['vel_y']
+        vz = current_state['vel_z']
+        roll = current_state['roll']
+        pitch = current_state['pitch']
+        yaw = current_state['yaw']
 
-    def eval_quintic(self, coeffs, t):
-        c0, c1, c2, c3, c4, c5 = coeffs
-        t2 = t*t; t3 = t2*t; t4 = t3*t; t5 = t4*t
-        p = c0 + c1*t + c2*t2 + c3*t3 + c4*t4 + c5*t5
-        return p
+        # Params
+        mass = current_state['masses']
+        drag = current_state['drag_coeffs']
+        thrust_coeff = current_state['thrust_coeffs']
+        max_thrust_force = 20.0 * thrust_coeff
 
-    def compute_trajectory(self, traj_params, t_start, steps, current_state=None):
-        t_out = np.arange(steps) * self.dt
+        # Target Vector
+        tx = target_pos[:, 0]
+        ty = target_pos[:, 1]
+        tz = target_pos[:, 2]
 
-        def get_target_state(time_scalar):
-            t_steps = time_scalar / self.dt
-            params = traj_params[:, :, np.newaxis]
-            Ax, Fx, Px = params[0], params[1], params[2]
-            Ay, Fy, Py = params[3], params[4], params[5]
-            Az, Fz, Pz, Oz = params[6], params[7], params[8], params[9]
-            ph_x = Fx * t_steps + Px
-            ph_y = Fy * t_steps + Py
-            ph_z = Fz * t_steps + Pz
-            freq_scale = 1.0 / self.dt
-            tx = Ax * np.sin(ph_x)
-            ty = Ay * np.sin(ph_y)
-            tz = Oz + Az * np.sin(ph_z)
-            tvx = Ax * Fx * freq_scale * np.cos(ph_x)
-            tvy = Ay * Fy * freq_scale * np.cos(ph_y)
-            tvz = Az * Fz * freq_scale * np.cos(ph_z)
-            tax = -Ax * (Fx * freq_scale)**2 * np.sin(ph_x)
-            tay = -Ay * (Fy * freq_scale)**2 * np.sin(ph_y)
-            taz = -Az * (Fz * freq_scale)**2 * np.sin(ph_z)
-            return (tx, ty, tz), (tvx, tvy, tvz), (tax, tay, taz)
+        dx = tx - px
+        dy = ty - py
+        dz = tz - pz
+        dist = np.sqrt(dx**2 + dy**2 + dz**2) + 1e-6
 
-        if current_state is not None:
-            p0x = current_state['pos_x'][:, np.newaxis]
-            p0y = current_state['pos_y'][:, np.newaxis]
-            p0z = current_state['pos_z'][:, np.newaxis]
-            v0x = current_state['vel_x'][:, np.newaxis]
-            v0y = current_state['vel_y'][:, np.newaxis]
-            v0z = current_state['vel_z'][:, np.newaxis]
-            a0x = np.zeros_like(p0x)
-            a0y = np.zeros_like(p0y)
-            a0z = np.zeros_like(p0z)
-        else:
-            (p0x, p0y, p0z), (v0x, v0y, v0z), (a0x, a0y, a0z) = get_target_state(t_start)
+        # Desired Velocity (Linear Cruise)
+        # Scale speed by distance? If close, slow down.
+        speed_ref = np.minimum(self.cruise_speed, dist * 1.0) # V = d * k (Proportional approach)
 
-        t_end = t_start + self.planning_horizon
-        (pfx, pfy, pfz), _, (afx, afy, afz) = get_target_state(t_end)
+        vx_des = (dx / dist) * speed_ref
+        vy_des = (dy / dist) * speed_ref
+        vz_des = (dz / dist) * speed_ref
 
-        dx = pfx - p0x
-        dy = pfy - p0y
-        dz = pfz - p0z
-        dist_full = np.sqrt(dx*dx + dy*dy + dz*dz)
-        inv_dist = 1.0 / (dist_full + 1e-6)
-        dir_x = dx * inv_dist
-        dir_y = dy * inv_dist
-        dir_z = dz * inv_dist
+        # Velocity Error
+        evx = vx_des - vx
+        evy = vy_des - vy
+        evz = vz_des - vz
 
-        CRUISE_DIST = 30.0
-        CRUISE_SPEED = 8.0
-        pfx_plan = p0x + dir_x * CRUISE_DIST
-        pfy_plan = p0y + dir_y * CRUISE_DIST
-        pfz_plan = p0z + dir_z * CRUISE_DIST
-        vfx_plan = dir_x * CRUISE_SPEED
-        vfy_plan = dir_y * CRUISE_SPEED
-        vfz_plan = dir_z * CRUISE_SPEED
-        afx_plan = np.zeros_like(afx)
-        afy_plan = np.zeros_like(afy)
-        afz_plan = np.zeros_like(afz)
+        # PID for Acceleration Command
+        # Kp * error
+        Kp = 2.0
+        ax_cmd = Kp * evx
+        ay_cmd = Kp * evy
+        az_cmd = Kp * evz
 
-        cx = self.solve_min_jerk(p0x, v0x, a0x, pfx_plan, vfx_plan, afx_plan, self.planning_horizon)
-        cy = self.solve_min_jerk(p0y, v0y, a0y, pfy_plan, vfy_plan, afy_plan, self.planning_horizon)
-        cz = self.solve_min_jerk(p0z, v0z, a0z, pfz_plan, vfz_plan, afz_plan, self.planning_horizon)
+        # Inverse Dynamics to get Thrust Vector
+        # F_net = m * a
+        # F_thrust + F_drag + F_gravity = m * a
+        # F_thrust = m*a - F_drag - F_gravity
+        # F_drag = -drag * v
+        # F_gravity = [0, 0, -mg]
 
-        t_eval = t_out[np.newaxis, :]
-        px = self.eval_quintic(cx, t_eval)
-        py = self.eval_quintic(cy, t_eval)
-        pz = self.eval_quintic(cz, t_eval)
+        # F_thrust_req_x = m*ax - (-drag*vx) - 0
+        # F_thrust_req_y = m*ay - (-drag*vy) - 0
+        # F_thrust_req_z = m*az - (-drag*vz) - (-mg)
 
-        planned_pos = np.stack([px, py, pz], axis=2)
-        return None, planned_pos, None
+        Fx_req = mass * ax_cmd + drag * vx
+        Fy_req = mass * ay_cmd + drag * vy
+        Fz_req = mass * az_cmd + drag * vz + mass * self.g
+
+        # Compute Thrust Magnitude
+        F_total = np.sqrt(Fx_req**2 + Fy_req**2 + Fz_req**2) + 1e-6
+        thrust_cmd = F_total / max_thrust_force
+        thrust_cmd = np.clip(thrust_cmd, 0.0, 1.0)
+
+        # Compute Desired Attitude (Z-axis alignment)
+        # Body Z axis should point along F_req
+        # zb_des = F_req / |F_req|
+        zbx = Fx_req / F_total
+        zby = Fy_req / F_total
+        zbz = Fz_req / F_total
+
+        # Yaw Alignment: Point nose at target (xy plane)
+        yaw_des = np.arctan2(dy, dx)
+
+        # We need to construct a Rotation Matrix R_des = [xb, yb, zb]
+        # We know zb. We know yaw_des.
+        # Construct yb_des approx (Unit Y rotated by yaw)?
+        # Standard approach:
+        # xc_des = [cos(yaw), sin(yaw), 0]
+        # yb_des = cross(zb_des, xc_des).normalize
+        # xb_des = cross(yb_des, zb_des)
+
+        yc_des_x = -np.sin(yaw_des)
+        yc_des_y = np.cos(yaw_des)
+        yc_des_z = np.zeros_like(yaw_des)
+
+        # If zb is parallel to z (hover), cross product singularity.
+        # But here yaw defines X/Y orientation.
+
+        # Better:
+        # xb_temp = [cos(yaw), sin(yaw), 0]
+        # yb = cross(zb, xb_temp)
+        # xb = cross(yb, zb)
+
+        xb_temp_x = np.cos(yaw_des)
+        xb_temp_y = np.sin(yaw_des)
+        xb_temp_z = np.zeros_like(yaw_des)
+
+        # yb = cross(zb, xb_temp)
+        yb_x = zby * xb_temp_z - zbz * xb_temp_y
+        yb_y = zbz * xb_temp_x - zbx * xb_temp_z
+        yb_z = zbx * xb_temp_y - zby * xb_temp_x
+
+        norm_yb = np.sqrt(yb_x**2 + yb_y**2 + yb_z**2) + 1e-6
+        yb_x /= norm_yb
+        yb_y /= norm_yb
+        yb_z /= norm_yb
+
+        # xb = cross(yb, zb)
+        xb_x = yb_y * zbz - yb_z * zby
+        xb_y = yb_z * zbx - yb_x * zbz
+        xb_z = yb_x * zby - yb_y * zbx
+
+        # Extract Roll/Pitch from R = [xb, yb, zb]
+        # R31 = -sin(pitch) -> xb_z
+        # pitch = -asin(xb_z)
+        # R32 = sin(roll)cos(pitch) -> yb_z
+        # R33 = cos(roll)cos(pitch) -> zb_z
+        # roll = atan2(yb_z, zb_z)
+
+        pitch_des = -np.arcsin(np.clip(xb_z, -1.0, 1.0))
+        roll_des = np.arctan2(yb_z, zbz)
+
+        # Rate P-Controller
+        Kp_att = 5.0
+
+        # Shortest angular distance
+        roll_err = roll_des - roll
+        roll_err = (roll_err + np.pi) % (2 * np.pi) - np.pi
+
+        pitch_err = pitch_des - pitch
+        pitch_err = (pitch_err + np.pi) % (2 * np.pi) - np.pi
+
+        yaw_err = yaw_des - yaw
+        yaw_err = (yaw_err + np.pi) % (2 * np.pi) - np.pi
+
+        roll_rate_cmd = Kp_att * roll_err
+        pitch_rate_cmd = Kp_att * pitch_err
+        yaw_rate_cmd = Kp_att * yaw_err
+
+        actions = np.zeros((self.num_agents, 4))
+        actions[:, 0] = thrust_cmd
+        actions[:, 1] = np.clip(roll_rate_cmd, -10.0, 10.0)
+        actions[:, 2] = np.clip(pitch_rate_cmd, -10.0, 10.0)
+        actions[:, 3] = np.clip(yaw_rate_cmd, -10.0, 10.0)
+
+        return actions
 
 def evaluate_oracle():
-    logging.info("Starting Evaluation (AggressiveOracle)...")
+    logging.info("Starting Evaluation (LinearPlanner)...")
 
     num_agents = 10
     env = DroneEnv(num_agents=num_agents, episode_length=100)
-    oracle = OracleController(num_agents)
-    planner = AggressiveOracle(env, horizon_steps=10, iterations=3)
+    planner = LinearPlanner(num_agents)
     viz = Visualizer()
 
     env.reset_all_envs()
@@ -272,20 +331,49 @@ def evaluate_oracle():
             'thrust_coeffs': env.data_dictionary['thrust_coeffs']
         }
 
-        _, planned_pos_oracle, _ = oracle.compute_trajectory(traj_params, t_current, 10, current_state)
+        # Compute Linear Trajectory (Reference) for Visualization
+        # Just a straight line from current pos to target pos
+        # Steps = 10
+        # (N, Steps, 3)
+        planned_pos_linear = np.zeros((num_agents, 10, 3))
+        for step_idx in range(10):
+            # Interpolate
+            alpha = (step_idx + 1) / 10.0
+            # Target at horizon?
+            # Let's just project current velocity
+            # Or simplified: Line to target
+
+            # Use same logic as planner: V_des
+            # But visualization expects a path.
+            # Let's just project a straight line to target.
+
+            tx = env.data_dictionary['vt_x']
+            ty = env.data_dictionary['vt_y']
+            tz = env.data_dictionary['vt_z']
+
+            px = env.data_dictionary['pos_x']
+            py = env.data_dictionary['pos_y']
+            pz = env.data_dictionary['pos_z']
+
+            # Simple interpolation towards target
+            planned_pos_linear[:, step_idx, 0] = px + (tx - px) * alpha
+            planned_pos_linear[:, step_idx, 1] = py + (ty - py) * alpha
+            planned_pos_linear[:, step_idx, 2] = pz + (tz - pz) * alpha
 
         for i in range(3):
-            optimal_traj[i].append(planned_pos_oracle[i])
+            optimal_traj[i].append(planned_pos_linear[i])
 
-        future_coeffs = planner.plan(current_state, obs, traj_params, t_current)
+        # Compute Actions using LinearPlanner
+        # Target Pos
+        target_pos_current = np.stack([
+            env.data_dictionary['vt_x'],
+            env.data_dictionary['vt_y'],
+            env.data_dictionary['vt_z']
+        ], axis=1)
 
-        fc_reshaped = future_coeffs.view(num_agents, 4, 5)
-        current_action = fc_reshaped[:, :, 0] - fc_reshaped[:, :, 1] + fc_reshaped[:, :, 2] - fc_reshaped[:, :, 3] + fc_reshaped[:, :, 4]
+        current_action_np = planner.compute_actions(current_state, target_pos_current)
 
-        current_action[:, 0] = torch.clamp(current_action[:, 0], 0.0, 1.0)
-        current_action[:, 1:] = torch.clamp(current_action[:, 1:], -10.0, 10.0)
-
-        env.data_dictionary['actions'][:] = current_action.numpy().reshape(-1)
+        env.data_dictionary['actions'][:] = current_action_np.reshape(-1)
 
         step_kwargs = env.get_step_function_kwargs()
         step_args = {}
