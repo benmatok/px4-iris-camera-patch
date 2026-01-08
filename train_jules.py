@@ -330,7 +330,8 @@ def evaluate_oracle():
 
     traj_params = env.data_dictionary['traj_params']
 
-    for step in range(100):
+    max_steps = 400
+    for step in range(max_steps):
         obs = env.data_dictionary['observations']
         pos_x = env.data_dictionary['pos_x']
         pos_y = env.data_dictionary['pos_y']
@@ -340,6 +341,7 @@ def evaluate_oracle():
         vt_y_all = env.data_dictionary['vt_y']
         vt_z_all = env.data_dictionary['vt_z']
 
+        current_distances = []
         # Collect for Agents 0, 1, 2
         for i in range(3):
             actual_traj[i].append([pos_x[i], pos_y[i], pos_z[i]])
@@ -348,11 +350,17 @@ def evaluate_oracle():
 
             d = np.sqrt((pos_x[i]-vt_x_all[i])**2 + (pos_y[i]-vt_y_all[i])**2 + (pos_z[i]-vt_z_all[i])**2)
             distances[i].append(d)
+            current_distances.append(d)
 
         # Agent 0 Data for plotting (Legacy support)
         # Altitude Diff = Drone Z - Target Z. Should be >= 0.
         altitude_diffs.append(pos_z[0] - vt_z_all[0])
         velocities.append(np.sqrt(env.data_dictionary['vel_x'][0]**2 + env.data_dictionary['vel_y'][0]**2 + env.data_dictionary['vel_z'][0]**2))
+
+        # Check Termination
+        if all(d < 0.05 for d in current_distances):
+            logging.info(f"All 3 agents reached within 0.05m at step {step}. Terminating.")
+            break
 
         t_current = float(step) * 0.05
         current_state = {
