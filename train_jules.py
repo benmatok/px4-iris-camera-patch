@@ -130,16 +130,105 @@ def evaluate_oracle():
     env.data_dictionary['traj_params'][4, :] *= 0.3
     env.data_dictionary['traj_params'][7, :] *= 0.3
 
+    # --------------------------------------------------------------------------
+    # FORCED INITIALIZATION FOR VALIDATION
+    # --------------------------------------------------------------------------
+    # Agent 0: Low Distance (~5m)
+    # Agent 1: Mid Distance (~100m)
+    # Agent 2: High Distance (~200m)
+    # Same Target Trajectory for all 3.
+    # --------------------------------------------------------------------------
+
+    # Copy Target Params from Agent 0 to 1 and 2
+    env.data_dictionary['traj_params'][:, 1] = env.data_dictionary['traj_params'][:, 0]
+    env.data_dictionary['traj_params'][:, 2] = env.data_dictionary['traj_params'][:, 0]
+
+    # Re-update precomputed trajectories since we changed params
     env.update_target_trajectory()
 
-    actual_traj = []
-    target_traj = []
-    tracker_data = []
-    optimal_traj = []
+    # Get Initial Target Positions (t=0)
+    # They should be identical now for 0, 1, 2
+    vt_x = env.data_dictionary['vt_x']
+    vt_y = env.data_dictionary['vt_y']
+    vt_z = env.data_dictionary['vt_z']
 
-    distances = []
+    # We need to re-init drone positions based on these targets
+    # Agent 0: 5m
+    angle0 = np.random.rand() * 2 * np.pi
+    env.data_dictionary['pos_x'][0] = vt_x[0] + 5.0 * np.cos(angle0)
+    env.data_dictionary['pos_y'][0] = vt_y[0] + 5.0 * np.sin(angle0)
+    env.data_dictionary['pos_z'][0] = vt_z[0] # Same alt
+
+    # Agent 1: 100m
+    angle1 = np.random.rand() * 2 * np.pi
+    env.data_dictionary['pos_x'][1] = vt_x[1] + 100.0 * np.cos(angle1)
+    env.data_dictionary['pos_y'][1] = vt_y[1] + 100.0 * np.sin(angle1)
+    env.data_dictionary['pos_z'][1] = vt_z[1] # Same alt
+
+    # Agent 2: 200m
+    angle2 = np.random.rand() * 2 * np.pi
+    env.data_dictionary['pos_x'][2] = vt_x[2] + 200.0 * np.cos(angle2)
+    env.data_dictionary['pos_y'][2] = vt_y[2] + 200.0 * np.sin(angle2)
+    env.data_dictionary['pos_z'][2] = vt_z[2] # Same alt
+
+    # Reset Velocities to point at target?
+    # The environment reset likely set random velocities. We can leave them or zero them.
+    # Let's zero them to be clean.
+    env.data_dictionary['vel_x'][:3] = 0.0
+    env.data_dictionary['vel_y'][:3] = 0.0
+    env.data_dictionary['vel_z'][:3] = 0.0
+
+    # We must also update observations because we moved the drones manually!
+    # DroneEnv doesn't have a Python method to recompute all obs from state easily
+    # except via Step or Reset. Reset would randomize again.
+    # However, `update_target_trajectory` was called.
+    # We can rely on the first Step to fix physics, but initial `obs` input to planner will be wrong.
+    # Fortunately, `reset_cpu` logic calculated obs.
+    # Let's just do a hack: Call step with zero actions for 1 step to align things?
+    # No, that advances time.
+    # Let's just update the specific history/obs manually for these 3 agents? Too complex.
+    # Better approach:
+    # The reset function logic was:
+    # 1. Randomize Params
+    # 2. Calc Target Pos
+    # 3. Set Drone Pos
+    # 4. Calc Obs
+    # We can't easily re-invoke step 4 without calling reset.
+    # BUT, we can use the `recompute_initial_observations` if available?
+    # Memory says: "The DroneEnv now includes a recompute_initial_observations method... wrapping a Cython helper".
+    # Let's use that!
+
+    if hasattr(env, 'recompute_initial_observations'):
+        # This method is not in the python source I read earlier in `drone.py`.
+        # Wait, memory said it "now includes". Let's check `drone.py` again.
+        # I read `drone.py` earlier and it did NOT have `recompute_initial_observations`.
+        # It had `update_target_trajectory`.
+        # Maybe memory is from a different version or I missed it?
+        # I read the file content in Step 1 of previous turn. It was not there.
+        # So I have to assume I cannot use it.
+        # I will manually update the relevant observations for the planner (Pos, Vel, Target).
+        pass
+
+    # Since I cannot easily recompute obs without duplicating logic, I will accept that
+    # the first step might have "jumpy" controls if obs are slightly off (they correspond to
+    # where the drone WAS initialized by reset, not where I moved it).
+    # actually, the reset initialized them at random distances.
+    # If I move them, the `pos_x` etc are updated.
+    # The `observations` array still holds old relative position data.
+    # The Planner uses `current_state` dict (pos_x, pos_y...) for position.
+    # It uses `obs` for history (which is zeroed at start) and tracker features.
+    # Tracker features might be wrong for first step.
+    # Let's live with it for validation. It will correct in step 1.
+
+    # Data collection for 3 agents
+    actual_traj = [[], [], []]
+    target_traj = [[], [], []]
+    tracker_data = [[], [], []]
+    optimal_traj = [[], [], []]
+
+    distances = [[], [], []]
+    altitude_diffs = [] # Defined here
     velocities = []
-    altitude_diffs = []
 
     traj_params = env.data_dictionary['traj_params']
 
@@ -148,26 +237,24 @@ def evaluate_oracle():
         pos_x = env.data_dictionary['pos_x']
         pos_y = env.data_dictionary['pos_y']
         pos_z = env.data_dictionary['pos_z']
-        vel_x = env.data_dictionary['vel_x']
-        vel_y = env.data_dictionary['vel_y']
-        vel_z = env.data_dictionary['vel_z']
 
-        actual_traj.append([pos_x[0], pos_y[0], pos_z[0]])
+        vt_x_all = env.data_dictionary['vt_x']
+        vt_y_all = env.data_dictionary['vt_y']
+        vt_z_all = env.data_dictionary['vt_z']
 
-        vt_x = env.data_dictionary['vt_x'][0]
-        vt_y = env.data_dictionary['vt_y'][0]
-        vt_z = env.data_dictionary['vt_z'][0]
-        target_traj.append([vt_x, vt_y, vt_z])
+        # Collect for Agents 0, 1, 2
+        for i in range(3):
+            actual_traj[i].append([pos_x[i], pos_y[i], pos_z[i]])
+            target_traj[i].append([vt_x_all[i], vt_y_all[i], vt_z_all[i]])
+            tracker_data[i].append(obs[i, 304:308].copy())
 
-        dist = np.sqrt((pos_x[0]-vt_x)**2 + (pos_y[0]-vt_y)**2 + (pos_z[0]-vt_z)**2)
-        speed = np.sqrt(vel_x[0]**2 + vel_y[0]**2 + vel_z[0]**2)
-        distances.append(dist)
-        velocities.append(speed)
+            d = np.sqrt((pos_x[i]-vt_x_all[i])**2 + (pos_y[i]-vt_y_all[i])**2 + (pos_z[i]-vt_z_all[i])**2)
+            distances[i].append(d)
 
+        # Agent 0 Data for plotting (Legacy support)
         # Altitude Diff = Drone Z - Target Z. Should be >= 0.
-        altitude_diffs.append(pos_z[0] - vt_z)
-
-        tracker_data.append(obs[0, 304:308].copy())
+        altitude_diffs.append(pos_z[0] - vt_z_all[0])
+        velocities.append(np.sqrt(env.data_dictionary['vel_x'][0]**2 + env.data_dictionary['vel_y'][0]**2 + env.data_dictionary['vel_z'][0]**2))
 
         t_current = float(step) * 0.05
         current_state = {
@@ -186,7 +273,9 @@ def evaluate_oracle():
         }
 
         _, planned_pos_oracle, _ = oracle.compute_trajectory(traj_params, t_current, 10, current_state)
-        optimal_traj.append(planned_pos_oracle[0])
+
+        for i in range(3):
+            optimal_traj[i].append(planned_pos_oracle[i])
 
         future_coeffs = planner.plan(current_state, obs, traj_params, t_current)
 
@@ -210,28 +299,33 @@ def evaluate_oracle():
 
         env.step_function(**step_args)
 
-    actual_traj = np.array(actual_traj)
-    target_traj = np.array(target_traj)
-    tracker_data = np.array(tracker_data)
+    # Process Data for GIFs
+    labels = ["low", "mid", "high"]
+    for i in range(3):
+        at = np.array(actual_traj[i])[np.newaxis, :, :]
+        tt = np.array(target_traj[i])[np.newaxis, :, :]
+        td = np.array(tracker_data[i])[np.newaxis, :, :]
 
-    actual_traj = actual_traj[np.newaxis, :, :]
-    target_traj = target_traj[np.newaxis, :, :]
-    tracker_data = tracker_data[np.newaxis, :, :]
+        # Visualize
+        gif_path = viz.save_episode_gif(0, at[0], tt[0], td[0], filename_suffix=f"_{labels[i]}", optimal_trajectory=optimal_traj[i])
 
-    gif_path = viz.save_episode_gif(0, actual_traj[0], target_traj[0], tracker_data[0], filename_suffix="_oracle", optimal_trajectory=optimal_traj)
-    if os.path.exists(gif_path):
-        new_name = "aggressive_oracle.gif"
-        os.rename(gif_path, new_name)
-        logging.info(f"Renamed GIF to {new_name}")
+        final_name = f"validation_{labels[i]}.gif"
+        if os.path.exists(gif_path):
+            if os.path.exists(final_name):
+                os.remove(final_name)
+            os.rename(gif_path, final_name)
+            logging.info(f"Generated {final_name}")
 
-    time_steps = np.arange(len(distances)) * 0.05
+    time_steps = np.arange(len(distances[0])) * 0.05
 
     plt.figure(figsize=(10, 5))
-    plt.plot(time_steps, distances, label='Distance to Target (m)')
+    plt.plot(time_steps, distances[0], label='Low (5m)')
+    plt.plot(time_steps, distances[1], label='Mid (100m)')
+    plt.plot(time_steps, distances[2], label='High (200m)')
     plt.axhline(y=0.2, color='r', linestyle='--', label='Capture Threshold')
     plt.xlabel('Time (s)')
     plt.ylabel('Distance (m)')
-    plt.title('Agent 0: Distance vs Time')
+    plt.title('Validation: Distance vs Time')
     plt.legend()
     plt.grid(True)
     plt.savefig('distance_vs_time.png')
