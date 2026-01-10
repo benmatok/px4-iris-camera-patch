@@ -119,6 +119,7 @@ class JulesPredictiveController(nn.Module):
         self.cheb_future = Chebyshev(future_len, self.output_degree)
 
         self.register_buffer('hist_fit_mat', self.cheb_hist.fit_mat)
+        self.register_buffer('future_fit_mat', self.cheb_future.fit_mat)
         self.register_buffer('future_T_eval_start', torch.tensor([1.0, -1.0, 1.0, -1.0, 1.0])) # T_n(-1) for n=0..4
 
     def fit_history(self, history):
@@ -147,6 +148,19 @@ class JulesPredictiveController(nn.Module):
         coeffs = torch.matmul(x, self.hist_fit_mat.t())
 
         return coeffs.reshape(batch_size, -1) # Flatten to (B, 40)
+
+    def fit_future(self, future_actions):
+        """
+        Fits Chebyshev coefficients to future actions.
+        future_actions: (Batch, 4, FutureLen)
+        Returns: (Batch, 20) flattened
+        """
+        # (B, 4, F) @ (F, D+1) -> (B, 4, D+1)
+        # fit_mat is (D+1, F)
+        # coeffs = actions @ fit_mat.T
+        batch_size = future_actions.shape[0]
+        coeffs = torch.matmul(future_actions, self.future_fit_mat.t())
+        return coeffs.reshape(batch_size, -1)
 
     def forward(self, hist_coeffs, aux_state):
         """
