@@ -7,7 +7,7 @@ import logging
 import time
 from drone_env.drone import DroneEnv
 from models.predictive_policy import JulesPredictiveController
-from models.oracle import LinearPlanner
+from train_jules import LinearPlanner
 from visualization import Visualizer
 
 # Configure Logging
