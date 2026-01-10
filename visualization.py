@@ -169,6 +169,90 @@ class Visualizer:
         print(f"Saved episode video: {gif_path}")
         return gif_path
 
+    def save_comparison_gif(self, iteration, student_traj, oracle_traj, targets=None, filename_suffix=""):
+        """
+        Generates a comparison GIF (Student vs Oracle).
+        student_traj: (T, 3)
+        oracle_traj: (T, 3)
+        targets: (T, 3)
+        """
+        episode_length = student_traj.shape[0]
+        step_size = max(1, episode_length // 100)
+        indices = range(0, episode_length, step_size)
+
+        images = []
+        temp_dir = os.path.join(self.output_dir, "temp_comp_frames")
+        os.makedirs(temp_dir, exist_ok=True)
+
+        pad = 2.0
+        vals_x = [student_traj[:,0], oracle_traj[:,0]]
+        vals_y = [student_traj[:,1], oracle_traj[:,1]]
+        vals_z = [student_traj[:,2], oracle_traj[:,2]]
+        if targets is not None:
+             vals_x.append(targets[:,0])
+             vals_y.append(targets[:,1])
+             vals_z.append(targets[:,2])
+
+        x_min, x_max = min([v.min() for v in vals_x]), max([v.max() for v in vals_x])
+        y_min, y_max = min([v.min() for v in vals_y]), max([v.max() for v in vals_y])
+        z_min, z_max = min([v.min() for v in vals_z]), max([v.max() for v in vals_z])
+
+        x_lim = (x_min - pad, x_max + pad)
+        y_lim = (y_min - pad, y_max + pad)
+        z_lim = (z_min - pad, z_max + pad)
+
+        for t in indices:
+            fig = plt.figure(figsize=(12, 6))
+
+            # Top Down
+            ax1 = fig.add_subplot(121)
+            ax1.plot(student_traj[:t+1, 0], student_traj[:t+1, 1], 'b-', label="Student")
+            ax1.plot(student_traj[t, 0], student_traj[t, 1], 'bo')
+
+            ax1.plot(oracle_traj[:t+1, 0], oracle_traj[:t+1, 1], 'g--', label="Oracle")
+            ax1.plot(oracle_traj[t, 0], oracle_traj[t, 1], 'g^')
+
+            if targets is not None:
+                ax1.plot(targets[:t+1, 0], targets[:t+1, 1], 'r:', alpha=0.5, label="Target")
+                ax1.plot(targets[t, 0], targets[t, 1], 'r*')
+
+            ax1.set_xlim(x_lim)
+            ax1.set_ylim(y_lim)
+            ax1.set_title(f"Comparison Top-Down (t={t})")
+            ax1.legend(loc='upper right')
+            ax1.grid(True)
+
+            # Side View
+            ax2 = fig.add_subplot(122)
+            ax2.plot(student_traj[:t+1, 0], student_traj[:t+1, 2], 'b-', label="Student")
+            ax2.plot(student_traj[t, 0], student_traj[t, 2], 'bo')
+
+            ax2.plot(oracle_traj[:t+1, 0], oracle_traj[:t+1, 2], 'g--', label="Oracle")
+            ax2.plot(oracle_traj[t, 0], oracle_traj[t, 2], 'g^')
+
+            if targets is not None:
+                ax2.plot(targets[:t+1, 0], targets[:t+1, 2], 'r:', alpha=0.5, label="Target")
+                ax2.plot(targets[t, 0], targets[t, 2], 'r*')
+
+            ax2.set_xlim(x_lim)
+            ax2.set_ylim(z_lim)
+            ax2.set_title(f"Comparison Side View (t={t})")
+            ax2.grid(True)
+
+            fname = os.path.join(temp_dir, f"frame_{t:04d}.png")
+            plt.savefig(fname)
+            plt.close()
+            images.append(imageio.imread(fname))
+
+        gif_name = f"comparison_{iteration}{filename_suffix}.gif"
+        gif_path = os.path.join(self.output_dir, gif_name)
+        imageio.mimsave(gif_path, images, fps=10)
+
+        for f in os.listdir(temp_dir):
+            os.remove(os.path.join(temp_dir, f))
+        os.rmdir(temp_dir)
+        print(f"Saved comparison video: {gif_path}")
+        return gif_path
 
     def plot_rewards(self):
         iterations, rewards = zip(*self.rewards_history)

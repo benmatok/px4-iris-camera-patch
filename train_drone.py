@@ -55,6 +55,87 @@ class SupervisedTrainer:
             self.num_agents, self.episode_length, d["env_ids"]
         ]
 
+    def collect_comparison_rollout(self):
+        """
+        Collects paired trajectories for visualization.
+        1. Resets env with known seed.
+        2. Runs Oracle (Teacher).
+        3. Resets env with SAME seed.
+        4. Runs Student.
+        Returns: (student_pos, oracle_pos, target_pos) for Agent 0
+        """
+        # We need to manually handle seeding to ensure identical initial conditions
+        # The Environment's reset logic uses np.random.
+        # We can seed np.random before reset.
+        seed = 42
+
+        # --- 1. Oracle Run ---
+        np.random.seed(seed)
+        self.env.reset_all_envs()
+        data = self.env.cuda_data_manager.data_dictionary
+        step_func = self.env.get_step_function()
+        step_args = self.step_args_list
+
+        oracle_pos_history = np.zeros((self.episode_length, 3), dtype=np.float32)
+        target_pos_history = np.zeros((self.episode_length, 3), dtype=np.float32)
+
+        obs = torch.from_numpy(data["observations"])
+        d_act = data["actions"]
+
+        for t in range(self.episode_length):
+            # Oracle Action
+            current_state = {
+                'pos_x': data['pos_x'], 'pos_y': data['pos_y'], 'pos_z': data['pos_z'],
+                'vel_x': data['vel_x'], 'vel_y': data['vel_y'], 'vel_z': data['vel_z'],
+                'roll': data['roll'], 'pitch': data['pitch'], 'yaw': data['yaw'],
+                'masses': data['masses'], 'drag_coeffs': data['drag_coeffs'], 'thrust_coeffs': data['thrust_coeffs']
+            }
+            target_pos = np.stack([data['vt_x'], data['vt_y'], data['vt_z']], axis=1)
+            action = self.oracle.compute_actions(current_state, target_pos)
+            action = np.clip(action, -1.0, 1.0)
+            d_act[:] = action.flatten()
+
+            step_func(*step_args)
+
+            # Record Agent 0
+            oracle_pos_history[t, 0] = data["pos_x"][0]
+            oracle_pos_history[t, 1] = data["pos_y"][0]
+            oracle_pos_history[t, 2] = data["pos_z"][0]
+            target_pos_history[t, 0] = data["vt_x"][0]
+            target_pos_history[t, 1] = data["vt_y"][0]
+            target_pos_history[t, 2] = data["vt_z"][0]
+
+        # --- 2. Student Run ---
+        np.random.seed(seed) # RESET SEED
+        self.env.reset_all_envs()
+        # Data dict is updated in place, so we reuse references
+
+        student_pos_history = np.zeros((self.episode_length, 3), dtype=np.float32)
+        obs = torch.from_numpy(data["observations"])
+
+        for t in range(self.episode_length):
+            # Student Action
+            with torch.no_grad():
+                history = obs[:, :300]
+                aux = obs[:, 300:]
+                hist_coeffs = self.agent.fit_history(history)
+                pred_coeffs = self.agent(hist_coeffs, aux)
+                student_action_tensor = self.agent.get_action_for_execution(pred_coeffs)
+                action = student_action_tensor.numpy()
+
+            action = np.clip(action, -1.0, 1.0)
+            d_act[:] = action.flatten()
+
+            step_func(*step_args)
+
+            student_pos_history[t, 0] = data["pos_x"][0]
+            student_pos_history[t, 1] = data["pos_y"][0]
+            student_pos_history[t, 2] = data["pos_z"][0]
+
+            obs = torch.from_numpy(data["observations"])
+
+        return student_pos_history, oracle_pos_history, target_pos_history
+
     def collect_rollout(self, use_student=False):
         """
         Runs an episode.
@@ -270,6 +351,11 @@ def main():
                 best_eval_dist = avg_dist
                 # Optional: Save best model
                 # torch.save(agent.state_dict(), "best_jules.pth")
+
+        # Visualization (Comparison)
+        if itr % 100 == 0:
+            s_traj, o_traj, t_traj = trainer.collect_comparison_rollout()
+            visualizer.save_comparison_gif(itr, s_traj, o_traj, targets=t_traj, filename_suffix="_comp")
 
     print("Training Complete.")
 
