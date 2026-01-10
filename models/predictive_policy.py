@@ -172,7 +172,7 @@ class JulesPredictiveController(nn.Module):
 
         # 3. Plan Future
         fusion = torch.cat([latent, aux_state], dim=1)
-        action_coeffs = self.decoder(fusion) # (B, 12)
+        action_coeffs = self.decoder(fusion) # (B, 20)
 
         return action_coeffs
 

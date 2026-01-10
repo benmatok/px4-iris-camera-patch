@@ -300,7 +300,7 @@ class SupervisedTrainer:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_agents", type=int, default=200)
-    parser.add_argument("--iterations", type=int, default=500) # 500 for validation proof
+    parser.add_argument("--iterations", type=int, default=2000)
     parser.add_argument("--episode_length", type=int, default=100)
     parser.add_argument("--load", type=str, default=None)
     parser.add_argument("--debug", action="store_true")
@@ -309,7 +309,7 @@ def main():
     # Environment
     env = DroneEnv(num_agents=args.num_agents, episode_length=args.episode_length, use_cuda=False)
 
-    # Agent (Jules)
+    # Agent (Jules) - Future Length 5
     agent = JulesPredictiveController(history_len=30, future_len=5, action_dim=4)
 
     # Oracle
@@ -327,7 +327,7 @@ def main():
     visualizer = Visualizer()
 
     print(f"Starting Supervised Training: {args.num_agents} Agents, {args.iterations} Iterations")
-    print(f"Metrics: Coefficient Loss (Training), Control MSE (Validation), Trajectory Dist (Validation)")
+    print(f"Oracle: LinearPlanner (from train_jules.py)")
 
     start_time = time.time()
     best_eval_dist = float('inf')
@@ -349,8 +349,7 @@ def main():
             # Save Checkpoint
             if avg_dist < best_eval_dist:
                 best_eval_dist = avg_dist
-                # Optional: Save best model
-                # torch.save(agent.state_dict(), "best_jules.pth")
+                torch.save(agent.state_dict(), "best_jules.pth")
 
         # Visualization (Comparison)
         if itr % 100 == 0:
