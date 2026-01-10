@@ -72,44 +72,44 @@ class SupervisedTrainer:
         d_act = data["actions"]
 
         # Track total reward/error for validation
-        total_error = 0.0
+        total_dist_error = 0.0
+        total_control_error = 0.0
 
         for t in range(self.episode_length):
-            # Decide Action
-            if use_student:
-                # Agent Drive
-                with torch.no_grad():
-                    # 1. Split Obs
-                    history = obs[:, :300]
-                    aux = obs[:, 300:]
-                    # 2. Fit History
-                    hist_coeffs = self.agent.fit_history(history)
-                    # 3. Predict Future Coeffs
-                    pred_coeffs = self.agent(hist_coeffs, aux)
-                    # 4. Extract Immediate Action
-                    action_tensor = self.agent.get_action_for_execution(pred_coeffs)
-                    action = action_tensor.numpy()
-            else:
-                # Oracle Drive
-                # Construct state dict for Oracle
-                current_state = {
-                    'pos_x': data['pos_x'],
-                    'pos_y': data['pos_y'],
-                    'pos_z': data['pos_z'],
-                    'vel_x': data['vel_x'],
-                    'vel_y': data['vel_y'],
-                    'vel_z': data['vel_z'],
-                    'roll': data['roll'],
-                    'pitch': data['pitch'],
-                    'yaw': data['yaw'],
-                    'masses': data['masses'],
-                    'drag_coeffs': data['drag_coeffs'],
-                    'thrust_coeffs': data['thrust_coeffs']
-                }
-                target_pos = np.stack([data['vt_x'], data['vt_y'], data['vt_z']], axis=1)
-                action = self.oracle.compute_actions(current_state, target_pos)
+            # 1. Oracle Action (Ground Truth)
+            current_state = {
+                'pos_x': data['pos_x'],
+                'pos_y': data['pos_y'],
+                'pos_z': data['pos_z'],
+                'vel_x': data['vel_x'],
+                'vel_y': data['vel_y'],
+                'vel_z': data['vel_z'],
+                'roll': data['roll'],
+                'pitch': data['pitch'],
+                'yaw': data['yaw'],
+                'masses': data['masses'],
+                'drag_coeffs': data['drag_coeffs'],
+                'thrust_coeffs': data['thrust_coeffs']
+            }
+            target_pos = np.stack([data['vt_x'], data['vt_y'], data['vt_z']], axis=1)
+            oracle_action = self.oracle.compute_actions(current_state, target_pos) # (N, 4)
 
-            # Store for Training (even if Student drove, we might want to analyze, but usually we train on Oracle drive)
+            # 2. Student Action
+            with torch.no_grad():
+                history = obs[:, :300]
+                aux = obs[:, 300:]
+                hist_coeffs = self.agent.fit_history(history)
+                pred_coeffs = self.agent(hist_coeffs, aux)
+                student_action_tensor = self.agent.get_action_for_execution(pred_coeffs)
+                student_action = student_action_tensor.numpy()
+
+            # Decide who drives
+            if use_student:
+                action = student_action
+            else:
+                action = oracle_action
+
+            # Store for Training
             # Clip Action
             action = np.clip(action, -1.0, 1.0)
             d_act[:] = action.flatten()
@@ -127,19 +127,31 @@ class SupervisedTrainer:
             self.target_history_buffer[t, :, 2] = data["vt_z"]
             self.tracker_history_buffer[t] = data["observations"][:, 304:308]
 
-            # Validation Metric: Distance to target
+            # Validation Metrics
             if use_student:
+                # 1. Distance Error
                 dx = data['pos_x'] - data['vt_x']
                 dy = data['pos_y'] - data['vt_y']
                 dz = data['pos_z'] - data['vt_z']
                 dist = np.sqrt(dx*dx + dy*dy + dz*dz)
-                total_error += dist.mean()
+                total_dist_error += dist.mean()
+
+                # 2. Control Deviation (MSE between Student and Oracle)
+                # Compare what student DID (action) vs what Oracle WOULD have done (oracle_action)
+                # Note: both based on SAME state (pre-step).
+                # IMPORTANT: Clip oracle action to [-1, 1] for fair comparison, as training data is clipped.
+                oracle_action_clipped = np.clip(oracle_action, -1.0, 1.0)
+                diff = action - oracle_action_clipped
+                control_mse = np.mean(diff**2)
+                total_control_error += control_mse
 
             # Next Obs
             obs = torch.from_numpy(data["observations"])
 
         if use_student:
-            return total_error / self.episode_length
+            avg_dist = total_dist_error / self.episode_length
+            avg_control = total_control_error / self.episode_length
+            return avg_dist, avg_control
         else:
             return self.obs_buffer, self.actions_buffer
 
@@ -150,40 +162,19 @@ class SupervisedTrainer:
         # act_seq: (T, N, 4)
 
         # 2. Prepare Training Batches
-        # We need samples (History, FutureActions)
-        # History comes from Obs. FutureActions comes from Actions.
-        # Future Horizon
         future_len = self.agent.future_len
         valid_steps = self.episode_length - future_len
 
         if valid_steps <= 0:
             print("Warning: Episode length too short for future horizon.")
-            return 0.0
+            return 0.0, 0.0
 
-        # Flatten Time and Agents?
-        # We iterate through valid time steps t
-        # Input: obs_seq[t]
-        # Target: act_seq[t : t+future] -> (Future, N, 4) -> Permute -> (N, 4, Future)
-
-        # To support mini-batching efficiently, let's construct big tensors
-        # Indices: [0, ..., valid_steps-1]
-
-        # We can shuffle agents and time?
-        # Total samples = valid_steps * num_agents
-        # Let's accumulate inputs and targets lists then stack
-
-        # Optimization: Process all 't' at once if memory allows, or loop 't' and accumulate gradients
-
-        loss_sum = 0.0
+        loss_coeff_sum = 0.0
+        loss_action_sum = 0.0
         batches = 0
 
-        # We'll shuffle time indices to break correlation
         t_indices = np.arange(valid_steps)
         np.random.shuffle(t_indices)
-
-        # For simplicity, we train on one time-slice at a time (Batch size = num_agents = 200)
-        # If num_agents is small, this might be noisy, but for 200 it's okay.
-        # Actually, let's accumulate a bit.
 
         for t in t_indices:
             # Inputs
@@ -191,14 +182,11 @@ class SupervisedTrainer:
             history = current_obs[:, :300]
             aux = current_obs[:, 300:]
 
-            # Targets
+            # Targets (Future Action Sequence)
             future_actions = act_seq[t : t+future_len] # (F, N, 4)
-            # Permute to (N, 4, F)
-            future_actions = future_actions.permute(1, 2, 0)
+            future_actions = future_actions.permute(1, 2, 0) # (N, 4, F)
 
-            # Fit Targets to Coeffs
-            # Note: Chebyshev fit expects (Batch, Channels, Points)
-            # Output: (N, 20)
+            # Fit Targets to Coeffs (N, 20)
             target_coeffs = self.agent.fit_future(future_actions)
 
             # Fit Inputs (History)
@@ -207,23 +195,32 @@ class SupervisedTrainer:
             # Forward
             pred_coeffs = self.agent(hist_coeffs, aux) # (N, 20)
 
-            # Loss
-            loss = self.criterion(pred_coeffs, target_coeffs)
+            # 1. Coefficient Loss (Optimization Objective)
+            loss_coeff = self.criterion(pred_coeffs, target_coeffs)
 
             self.optimizer.zero_grad()
-            loss.backward()
+            loss_coeff.backward()
             self.optimizer.step()
 
-            loss_sum += loss.item()
+            loss_coeff_sum += loss_coeff.item()
+
+            # 2. Action Loss (Validation Metric)
+            # Decode predicted coeffs back to actions
+            with torch.no_grad():
+                pred_actions = self.agent.decode_actions(pred_coeffs) # (N, 4, F)
+                # Compare with future_actions (N, 4, F)
+                loss_action = nn.MSELoss()(pred_actions, future_actions)
+                loss_action_sum += loss_action.item()
+
             batches += 1
 
-        return loss_sum / batches
+        return loss_coeff_sum / batches, loss_action_sum / batches
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_agents", type=int, default=200)
-    parser.add_argument("--iterations", type=int, default=20000) # Longer run
-    parser.add_argument("--episode_length", type=int, default=100) # Increased for better trajectory sampling
+    parser.add_argument("--iterations", type=int, default=500) # 500 for validation proof
+    parser.add_argument("--episode_length", type=int, default=100)
     parser.add_argument("--load", type=str, default=None)
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
@@ -232,7 +229,6 @@ def main():
     env = DroneEnv(num_agents=args.num_agents, episode_length=args.episode_length, use_cuda=False)
 
     # Agent (Jules)
-    # History 30, Future 5 (0.25s)
     agent = JulesPredictiveController(history_len=30, future_len=5, action_dim=4)
 
     # Oracle
@@ -250,42 +246,31 @@ def main():
     visualizer = Visualizer()
 
     print(f"Starting Supervised Training: {args.num_agents} Agents, {args.iterations} Iterations")
-    print(f"Teacher: LinearPlanner, Student: JulesPredictiveController")
+    print(f"Metrics: Coefficient Loss (Training), Control MSE (Validation), Trajectory Dist (Validation)")
 
     start_time = time.time()
-    best_eval_error = float('inf')
+    best_eval_dist = float('inf')
 
     for itr in range(1, args.iterations + 1):
-        # Train Step (Teacher Forcing)
-        loss = trainer.train_step()
+        # Train Step
+        loss_coeff, loss_action = trainer.train_step()
 
         # Logging
         if itr % 10 == 0:
             elapsed = time.time() - start_time
-            print(f"Iter {itr} | Loss: {loss:.6f} | Time: {elapsed:.2f}s")
+            print(f"Iter {itr:4d} | Coeff Loss: {loss_coeff:.6f} | Action MSE (Pred vs GT): {loss_action:.6f} | Time: {elapsed:.2f}s")
 
         # Validation (Student Drive)
         if itr % 50 == 0:
-            eval_error = trainer.collect_rollout(use_student=True)
-            print(f"   [Validation] Student Avg Dist Error: {eval_error:.4f} m")
+            avg_dist, avg_control_dev = trainer.collect_rollout(use_student=True)
+            print(f"   [Validation] Distance to Target: {avg_dist:.4f} m | Control Deviation (Student vs Oracle): {avg_control_dev:.6f}")
 
             # Save Checkpoint
-            torch.save(agent.state_dict(), "latest_jules.pth")
-            if eval_error < best_eval_error:
-                best_eval_error = eval_error
-                torch.save(agent.state_dict(), "best_jules.pth")
-                # Generate GIF for best
-                pos_hist = env.cuda_data_manager.data_dictionary["pos_history"]
-                targets = trainer.target_history_buffer
-                tracker = trainer.tracker_history_buffer
-                visualizer.save_episode_gif(itr, pos_hist[:, 0, :], targets[:, 0, :], tracker[:, 0, :], filename_suffix="_best")
+            if avg_dist < best_eval_dist:
+                best_eval_dist = avg_dist
+                # Optional: Save best model
+                # torch.save(agent.state_dict(), "best_jules.pth")
 
-        # Periodic Visualization of current behavior
-        if itr % 500 == 0:
-            pass
-
-    # Save Final
-    torch.save(agent.state_dict(), "final_jules.pth")
     print("Training Complete.")
 
 if __name__ == "__main__":

@@ -192,3 +192,18 @@ class JulesPredictiveController(nn.Module):
 
         current_action = torch.einsum('bck, k -> bc', coeffs_reshaped, self.future_T_eval_start)
         return current_action
+
+    def decode_actions(self, action_coeffs, time_points=None):
+        """
+        Decodes coefficients back into action sequences.
+        action_coeffs: (Batch, 20)
+        time_points: Optional tensor of points in [-1, 1]
+        Returns: (Batch, 4, NumPoints)
+        """
+        batch_size = action_coeffs.shape[0]
+        coeffs_reshaped = action_coeffs.view(batch_size, 4, self.output_degree + 1)
+        # (B, 4, D+1)
+
+        # evaluate needs (B, 4, D+1)
+        # returns (B, 4, N)
+        return self.cheb_future.evaluate(coeffs_reshaped, time_points)
