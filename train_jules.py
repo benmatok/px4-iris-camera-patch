@@ -400,8 +400,8 @@ def evaluate_oracle():
         dx6 = env.data_dictionary['pos_x'][6] - env.data_dictionary['vt_x'][6]
         dy6 = env.data_dictionary['pos_y'][6] - env.data_dictionary['vt_y'][6]
         dist6 = np.sqrt(dx6**2 + dy6**2) + 1e-6
-        # Peak 4.0 m/s
-        wind_mag = 4.0
+        # Peak 0.4 m/s (Toned down factor 10)
+        wind_mag = 0.4
         env.data_dictionary['wind_x'][6] = (dx6 / dist6) * wind_mag
         env.data_dictionary['wind_y'][6] = (dy6 / dist6) * wind_mag
 
@@ -410,7 +410,7 @@ def evaluate_oracle():
         dx7 = env.data_dictionary['pos_x'][7] - env.data_dictionary['vt_x'][7]
         dy7 = env.data_dictionary['pos_y'][7] - env.data_dictionary['vt_y'][7]
         dist7 = np.sqrt(dx7**2 + dy7**2) + 1e-6
-        wind_mag = 4.0
+        wind_mag = 0.4
         env.data_dictionary['wind_x'][7] = (-dy7 / dist7) * wind_mag
         env.data_dictionary['wind_y'][7] = (dx7 / dist7) * wind_mag
 
@@ -437,8 +437,9 @@ def evaluate_oracle():
         # Let's zero indices 0-7 only? Or save Agt 8 state before zeroing.
 
         # Update Agent 8 (Correlated)
-        noise_x = (np.random.rand() - 0.5) * 4.0 # Range -2 to 2
-        noise_y = (np.random.rand() - 0.5) * 4.0
+        # Noise Range scaled down for peak ~0.4
+        noise_x = (np.random.rand() - 0.5) * 0.4
+        noise_y = (np.random.rand() - 0.5) * 0.4
 
         # Bias towards mean 0 if magnitude gets large
         # soft clamp
@@ -446,9 +447,9 @@ def evaluate_oracle():
         w8_new_x = alpha * w8_prev_x + (1.0 - alpha) * noise_x * 5.0 # Scale noise up to drive change
         w8_new_y = alpha * w8_prev_y + (1.0 - alpha) * noise_y * 5.0
 
-        # Hard Clip to Peak 4.0
-        w8_new_x = np.clip(w8_new_x, -4.0, 4.0)
-        w8_new_y = np.clip(w8_new_y, -4.0, 4.0)
+        # Hard Clip to Peak 0.4
+        w8_new_x = np.clip(w8_new_x, -0.4, 0.4)
+        w8_new_y = np.clip(w8_new_y, -0.4, 0.4)
 
         env.data_dictionary['wind_x'][8] = w8_new_x
         env.data_dictionary['wind_y'][8] = w8_new_y
