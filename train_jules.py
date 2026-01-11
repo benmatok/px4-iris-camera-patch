@@ -237,15 +237,18 @@ def evaluate_oracle():
     # Same Target Trajectory for all 3.
     # --------------------------------------------------------------------------
 
-    # Copy Target Params from Agent 0 to 1 and 2
+    # Copy Target Params from Agent 0 to 1, 2, 3, 4, 5
     env.data_dictionary['traj_params'][:, 1] = env.data_dictionary['traj_params'][:, 0]
     env.data_dictionary['traj_params'][:, 2] = env.data_dictionary['traj_params'][:, 0]
+    env.data_dictionary['traj_params'][:, 3] = env.data_dictionary['traj_params'][:, 0]
+    env.data_dictionary['traj_params'][:, 4] = env.data_dictionary['traj_params'][:, 0]
+    env.data_dictionary['traj_params'][:, 5] = env.data_dictionary['traj_params'][:, 0]
 
     # Re-update precomputed trajectories since we changed params
     env.update_target_trajectory()
 
     # Get Initial Target Positions (t=0)
-    # They should be identical now for 0, 1, 2
+    # They should be identical now for 0, 1, 2, 3, 4, 5
     vt_x = env.data_dictionary['vt_x']
     vt_y = env.data_dictionary['vt_y']
     vt_z = env.data_dictionary['vt_z']
@@ -268,6 +271,24 @@ def evaluate_oracle():
     env.data_dictionary['pos_x'][2] = vt_x[2] + 200.0 * np.cos(angle2)
     env.data_dictionary['pos_y'][2] = vt_y[2] + 200.0 * np.sin(angle2)
     env.data_dictionary['pos_z'][2] = vt_z[2] # Same alt
+
+    # Agent 3: Alt Low (+5m)
+    angle3 = np.random.rand() * 2 * np.pi
+    env.data_dictionary['pos_x'][3] = vt_x[3] + 20.0 * np.cos(angle3)
+    env.data_dictionary['pos_y'][3] = vt_y[3] + 20.0 * np.sin(angle3)
+    env.data_dictionary['pos_z'][3] = vt_z[3] + 5.0
+
+    # Agent 4: Alt Mid (+20m)
+    angle4 = np.random.rand() * 2 * np.pi
+    env.data_dictionary['pos_x'][4] = vt_x[4] + 20.0 * np.cos(angle4)
+    env.data_dictionary['pos_y'][4] = vt_y[4] + 20.0 * np.sin(angle4)
+    env.data_dictionary['pos_z'][4] = vt_z[4] + 20.0
+
+    # Agent 5: Alt High (+50m)
+    angle5 = np.random.rand() * 2 * np.pi
+    env.data_dictionary['pos_x'][5] = vt_x[5] + 20.0 * np.cos(angle5)
+    env.data_dictionary['pos_y'][5] = vt_y[5] + 20.0 * np.sin(angle5)
+    env.data_dictionary['pos_z'][5] = vt_z[5] + 50.0
 
     # Reset Velocities to point at target?
     # The environment reset likely set random velocities. We can leave them or zero them.
@@ -318,13 +339,13 @@ def evaluate_oracle():
     # Tracker features might be wrong for first step.
     # Let's live with it for validation. It will correct in step 1.
 
-    # Data collection for 3 agents
-    actual_traj = [[], [], []]
-    target_traj = [[], [], []]
-    tracker_data = [[], [], []]
-    optimal_traj = [[], [], []]
+    # Data collection for 6 agents
+    actual_traj = [[], [], [], [], [], []]
+    target_traj = [[], [], [], [], [], []]
+    tracker_data = [[], [], [], [], [], []]
+    optimal_traj = [[], [], [], [], [], []]
 
-    distances = [[], [], []]
+    distances = [[], [], [], [], [], []]
     altitude_diffs = [] # Defined here
     velocities = []
 
@@ -342,8 +363,8 @@ def evaluate_oracle():
         vt_z_all = env.data_dictionary['vt_z']
 
         current_distances = []
-        # Collect for Agents 0, 1, 2
-        for i in range(3):
+        # Collect for Agents 0 to 5
+        for i in range(6):
             actual_traj[i].append([pos_x[i], pos_y[i], pos_z[i]])
             target_traj[i].append([vt_x_all[i], vt_y_all[i], vt_z_all[i]])
             tracker_data[i].append(obs[i, 304:308].copy())
@@ -357,9 +378,9 @@ def evaluate_oracle():
         altitude_diffs.append(pos_z[0] - vt_z_all[0])
         velocities.append(np.sqrt(env.data_dictionary['vel_x'][0]**2 + env.data_dictionary['vel_y'][0]**2 + env.data_dictionary['vel_z'][0]**2))
 
-        # Check Termination
+        # Check Termination (All tracked agents)
         if all(d < 0.05 for d in current_distances):
-            logging.info(f"All 3 agents reached within 0.05m at step {step}. Terminating.")
+            logging.info(f"All agents reached within 0.05m at step {step}. Terminating.")
             break
 
         t_current = float(step) * 0.05
@@ -425,7 +446,7 @@ def evaluate_oracle():
             planned_pos_linear[:, step_idx, 1] = py_sim
             planned_pos_linear[:, step_idx, 2] = pz_sim
 
-        for i in range(3):
+        for i in range(6):
             optimal_traj[i].append(planned_pos_linear[i])
 
         # Compute Actions using LinearPlanner
@@ -453,8 +474,8 @@ def evaluate_oracle():
         env.step_function(**step_args)
 
     # Process Data for GIFs
-    labels = ["low", "mid", "high"]
-    for i in range(3):
+    labels = ["low", "mid", "high", "alt_low", "alt_mid", "alt_high"]
+    for i in range(6):
         at = np.array(actual_traj[i])[np.newaxis, :, :]
         tt = np.array(target_traj[i])[np.newaxis, :, :]
         td = np.array(tracker_data[i])[np.newaxis, :, :]
