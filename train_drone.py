@@ -67,6 +67,10 @@ class SupervisedTrainer:
         d['masses'][:] = 1.0
         d['thrust_coeffs'][:] = 1.0
         d['drag_coeffs'][:] = 0.1
+        # Zero wind to ensure clean trajectories
+        d['wind_x'][:] = 0.0
+        d['wind_y'][:] = 0.0
+        d['wind_z'][:] = 0.0
 
     def collect_comparison_rollout(self):
         """
@@ -333,12 +337,12 @@ def main():
 
     for itr in range(1, args.iterations + 1):
         # Train Step
-        loss_coeff, loss_action = trainer.train_step()
+        loss_action, _ = trainer.train_step()
 
         # Logging
         if itr % 10 == 0:
             elapsed = time.time() - start_time
-            print(f"Iter {itr:4d} | Coeff Loss: {loss_coeff:.6f} | Action MSE (Pred vs GT): {loss_action:.6f} | Time: {elapsed:.2f}s")
+            print(f"Iter {itr:4d} | Action Loss: {loss_action:.6f} | Time: {elapsed:.2f}s")
 
         # Validation (Student Drive)
         if itr % 50 == 0:
