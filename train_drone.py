@@ -55,6 +55,19 @@ class SupervisedTrainer:
             self.num_agents, self.episode_length, d["env_ids"]
         ]
 
+    def sanitize_physics(self):
+        """
+        Overrides random physics parameters with 'safe' flyable values.
+        Ensures Thrust/Weight ratio > 2.0 to guarantee climbing capability.
+        Max Thrust = 20.0 * thrust_coeff
+        Weight = mass * 9.81
+        Sets: Mass=1.0, Tc=1.0 -> Max Thrust=20, Weight=9.8 -> Ratio=2.04
+        """
+        d = self.env.data_dictionary
+        d['masses'][:] = 1.0
+        d['thrust_coeffs'][:] = 1.0
+        d['drag_coeffs'][:] = 0.1
+
     def collect_comparison_rollout(self):
         """
         Collects paired trajectories for visualization.
@@ -72,6 +85,8 @@ class SupervisedTrainer:
         # --- 1. Oracle Run ---
         np.random.seed(seed)
         self.env.reset_all_envs()
+        self.sanitize_physics()
+
         data = self.env.cuda_data_manager.data_dictionary
         step_func = self.env.get_step_function()
         step_args = self.step_args_list
@@ -108,6 +123,7 @@ class SupervisedTrainer:
         # --- 2. Student Run ---
         np.random.seed(seed) # RESET SEED
         self.env.reset_all_envs()
+        self.sanitize_physics()
         # Data dict is updated in place, so we reuse references
 
         student_pos_history = np.zeros((self.episode_length, 3), dtype=np.float32)
@@ -143,6 +159,7 @@ class SupervisedTrainer:
         If use_student=True (Validation), uses Agent to drive.
         """
         self.env.reset_all_envs()
+        self.sanitize_physics()
         data = self.env.cuda_data_manager.data_dictionary
         step_func = self.env.get_step_function()
         step_args = self.step_args_list
