@@ -223,6 +223,18 @@ def evaluate_oracle():
 
     env.reset_all_envs()
 
+    # OVERRIDE PHYSICS FOR STABILITY (T/W > 2.0)
+    # Mass=1.0, Thrust=1.0 (Max 20N), Drag=0.1
+    # Gravity = 9.8N. Max Thrust = 20N. Ratio ~2.0.
+    env.data_dictionary['masses'][:] = 1.0
+    env.data_dictionary['thrust_coeffs'][:] = 1.0
+    env.data_dictionary['drag_coeffs'][:] = 0.1
+
+    # Zero out wind for validation
+    env.data_dictionary['wind_x'][:] = 0.0
+    env.data_dictionary['wind_y'][:] = 0.0
+    env.data_dictionary['wind_z'][:] = 0.0
+
     # SLOW DOWN TARGETS
     env.data_dictionary['traj_params'][1, :] *= 0.3
     env.data_dictionary['traj_params'][4, :] *= 0.3
