@@ -318,12 +318,23 @@ def evaluate_oracle():
     env.data_dictionary['pos_y'][8] = vt_y[8] + 20.0 * np.sin(angle8)
     env.data_dictionary['pos_z'][8] = vt_z[8] # Same alt
 
-    # Reset Velocities to point at target?
-    # The environment reset likely set random velocities. We can leave them or zero them.
-    # Let's zero them to be clean.
-    env.data_dictionary['vel_x'][:3] = 0.0
-    env.data_dictionary['vel_y'][:3] = 0.0
-    env.data_dictionary['vel_z'][:3] = 0.0
+    # --------------------------------------------------------------------------
+    # STABILIZE INITIAL CONDITIONS (ALL AGENTS)
+    # --------------------------------------------------------------------------
+    # Zero out velocities
+    env.data_dictionary['vel_x'][:] = 0.0
+    env.data_dictionary['vel_y'][:] = 0.0
+    env.data_dictionary['vel_z'][:] = 0.0
+
+    # Zero out angular rates (implicitly handled by physics, but ensure state is clean)
+    # (Not in state dict directly as rates? obs has them. resetting obs history)
+    env.data_dictionary['roll'][:] = 0.0
+    env.data_dictionary['pitch'][:] = 0.0
+
+    # Align Yaw to Target
+    dx_all = env.data_dictionary['vt_x'] - env.data_dictionary['pos_x']
+    dy_all = env.data_dictionary['vt_y'] - env.data_dictionary['pos_y']
+    env.data_dictionary['yaw'][:] = np.arctan2(dy_all, dx_all)
 
     # We must also update observations because we moved the drones manually!
     # DroneEnv doesn't have a Python method to recompute all obs from state easily
