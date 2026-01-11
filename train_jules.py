@@ -384,6 +384,10 @@ def evaluate_oracle():
         # ----------------------------------------------------------------------
         # Controlled Wind Update
         # ----------------------------------------------------------------------
+        # Save previous turbulent wind state (Agent 8)
+        w8_prev_x = env.data_dictionary['wind_x'][8]
+        w8_prev_y = env.data_dictionary['wind_y'][8]
+
         # Reset all to zero first
         env.data_dictionary['wind_x'][:] = 0.0
         env.data_dictionary['wind_y'][:] = 0.0
@@ -410,17 +414,44 @@ def evaluate_oracle():
         env.data_dictionary['wind_x'][7] = (-dy7 / dist7) * wind_mag
         env.data_dictionary['wind_y'][7] = (dx7 / dist7) * wind_mag
 
-        # Agent 8: Variable/Turbulent
-        # Mean 2.0, Peak 4.0.
-        # Sinusoid: 2.0 + 2.0 * sin(t) ? No that mean is 2.0, peak 4.0.
-        # Or just random walk bounded.
-        # Let's use deterministic sinusoid for reproducibility.
-        t_val = step * 0.05
-        # Wind X: 2.0 * sin(t) -> Mean 0, Peak 2.
-        # Wind Y: 2.0 * cos(t/2)
-        # Total Mag <= sqrt(4+4) = 2.8.
-        env.data_dictionary['wind_x'][8] = 2.5 * np.sin(t_val)
-        env.data_dictionary['wind_y'][8] = 2.5 * np.cos(t_val * 0.5)
+        # Agent 8: Variable/Turbulent (Correlated / Blurred)
+        # Use simple low-pass filter on random noise for strong temporal correlation
+        # W[t] = alpha * W[t-1] + (1-alpha) * Noise
+        # alpha = 0.95 gives strong correlation (blur).
+        alpha = 0.95
+        current_wx8 = env.data_dictionary['wind_x'][8]
+        current_wy8 = env.data_dictionary['wind_y'][8]
+
+        # Noise mean 0, scale 2.0?
+        # If W ~ N(0, S), Var(W) = alpha^2 Var(W) + (1-alpha)^2 Var(N)
+        # Var(W) (1 - alpha^2) = (1-alpha)^2 Var(N)
+        # Var(N) = Var(W) * (1+alpha)/(1-alpha) approx.
+        # We want peak ~4.0. Sigma approx 1.3?
+        # Let's just do an update towards a random target.
+
+        # New approach for loop:
+        # Update based on previous step value which is stored in env.data_dictionary
+        # Note: We zeroed it at start of loop! We must NOT zero Agent 8's wind if we want correlation!
+        # But we do zero all wind at top of loop.
+        # We need to maintain Agent 8's state externally or not zero it.
+        # Let's zero indices 0-7 only? Or save Agt 8 state before zeroing.
+
+        # Update Agent 8 (Correlated)
+        noise_x = (np.random.rand() - 0.5) * 4.0 # Range -2 to 2
+        noise_y = (np.random.rand() - 0.5) * 4.0
+
+        # Bias towards mean 0 if magnitude gets large
+        # soft clamp
+
+        w8_new_x = alpha * w8_prev_x + (1.0 - alpha) * noise_x * 5.0 # Scale noise up to drive change
+        w8_new_y = alpha * w8_prev_y + (1.0 - alpha) * noise_y * 5.0
+
+        # Hard Clip to Peak 4.0
+        w8_new_x = np.clip(w8_new_x, -4.0, 4.0)
+        w8_new_y = np.clip(w8_new_y, -4.0, 4.0)
+
+        env.data_dictionary['wind_x'][8] = w8_new_x
+        env.data_dictionary['wind_y'][8] = w8_new_y
 
         obs = env.data_dictionary['observations']
         pos_x = env.data_dictionary['pos_x']
