@@ -135,9 +135,8 @@ class SupervisedTrainer:
                 history = obs[:, :300]
                 aux = obs[:, 300:]
                 hist_coeffs = self.agent.fit_history(history)
-                pred_coeffs = self.agent(hist_coeffs, aux)
-                student_action_tensor = self.agent.get_action_for_execution(pred_coeffs)
-                action = student_action_tensor.numpy()
+                action_tensor = self.agent(hist_coeffs, aux)
+                action = action_tensor.numpy()
 
             action = np.clip(action, -1.0, 1.0)
             d_act[:] = action.flatten()
@@ -197,8 +196,7 @@ class SupervisedTrainer:
                 history = obs[:, :300]
                 aux = obs[:, 300:]
                 hist_coeffs = self.agent.fit_history(history)
-                pred_coeffs = self.agent(hist_coeffs, aux)
-                student_action_tensor = self.agent.get_action_for_execution(pred_coeffs)
+                student_action_tensor = self.agent(hist_coeffs, aux)
                 student_action = student_action_tensor.numpy()
 
             # Decide who drives
@@ -259,60 +257,44 @@ class SupervisedTrainer:
         # obs_seq: (T, N, 308)
         # act_seq: (T, N, 4)
 
-        # 2. Prepare Training Batches
-        future_len = self.agent.future_len
-        valid_steps = self.episode_length - future_len
-
-        if valid_steps <= 0:
-            print("Warning: Episode length too short for future horizon.")
-            return 0.0, 0.0
-
-        loss_coeff_sum = 0.0
-        loss_action_sum = 0.0
+        loss_sum = 0.0
         batches = 0
 
-        t_indices = np.arange(valid_steps)
-        np.random.shuffle(t_indices)
+        # Train on single step prediction: Input Obs[t] -> Target Act[t]
 
-        for t in t_indices:
-            # Inputs
-            current_obs = obs_seq[t] # (N, 308)
-            history = current_obs[:, :300]
-            aux = current_obs[:, 300:]
+        # Flatten
+        obs_flat = obs_seq.reshape(-1, 308)
+        act_flat = act_seq.reshape(-1, 4)
 
-            # Targets (Future Action Sequence)
-            future_actions = act_seq[t : t+future_len] # (F, N, 4)
-            future_actions = future_actions.permute(1, 2, 0) # (N, 4, F)
+        dataset_size = obs_flat.shape[0]
+        indices = np.arange(dataset_size)
+        np.random.shuffle(indices)
 
-            # Fit Targets to Coeffs (N, 20)
-            target_coeffs = self.agent.fit_future(future_actions)
+        for start in range(0, dataset_size, self.batch_size):
+            end = start + self.batch_size
+            idx = indices[start:end]
 
-            # Fit Inputs (History)
-            hist_coeffs = self.agent.fit_history(history) # (N, 40)
+            mb_obs = obs_flat[idx]
+            mb_act = act_flat[idx] # Ground Truth Action
 
-            # Forward
-            pred_coeffs = self.agent(hist_coeffs, aux) # (N, 20)
+            history = mb_obs[:, :300]
+            aux = mb_obs[:, 300:]
 
-            # 1. Coefficient Loss (Optimization Objective)
-            loss_coeff = self.criterion(pred_coeffs, target_coeffs)
+            hist_coeffs = self.agent.fit_history(history)
+
+            # Forward: predicts action directly
+            pred_action = self.agent(hist_coeffs, aux)
+
+            loss = self.criterion(pred_action, mb_act)
 
             self.optimizer.zero_grad()
-            loss_coeff.backward()
+            loss.backward()
             self.optimizer.step()
 
-            loss_coeff_sum += loss_coeff.item()
-
-            # 2. Action Loss (Validation Metric)
-            # Decode predicted coeffs back to actions
-            with torch.no_grad():
-                pred_actions = self.agent.decode_actions(pred_coeffs) # (N, 4, F)
-                # Compare with future_actions (N, 4, F)
-                loss_action = nn.MSELoss()(pred_actions, future_actions)
-                loss_action_sum += loss_action.item()
-
+            loss_sum += loss.item()
             batches += 1
 
-        return loss_coeff_sum / batches, loss_action_sum / batches
+        return loss_sum / batches, 0.0
 
 def main():
     parser = argparse.ArgumentParser()

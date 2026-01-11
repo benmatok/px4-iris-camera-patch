@@ -95,8 +95,8 @@ class JulesPredictiveController(nn.Module):
         # Aux Input: Target Error (rvx, rvy, rvz, dist) + Tracker (u, v, size, conf) = 8
         self.aux_dim = 8
 
-        # Output Size: 4 actions * 5 coeffs = 20
-        self.output_dim = self.action_dim * (self.output_degree + 1)
+        # Output Size: 4 actions directly
+        self.output_dim = self.action_dim
 
         # --- 1. THE ENCODER (The Past) ---
         self.encoder = nn.Sequential(
@@ -105,22 +105,20 @@ class JulesPredictiveController(nn.Module):
             nn.Linear(128, 64)
         )
 
-        # --- 2. THE DECODER (The Future) ---
-        self.decoder = nn.Sequential(
+        # --- 2. THE HEAD (The Action) ---
+        self.head = nn.Sequential(
             nn.Linear(64 + self.aux_dim, 64),
             nn.LeakyReLU(0.1),
-            nn.Linear(64, self.output_dim)
+            nn.Linear(64, self.output_dim),
+            nn.Tanh() # Bound actions to [-1, 1]
         )
 
         # Helpers for Chebyshev
         # We initialize them on CPU, they will be moved to device with the model if needed (buffers)
         # Note: We can't easily register 'Chebyshev' class as a buffer, so we store the matrices
         self.cheb_hist = Chebyshev(history_len, self.input_degree)
-        self.cheb_future = Chebyshev(future_len, self.output_degree)
 
         self.register_buffer('hist_fit_mat', self.cheb_hist.fit_mat)
-        self.register_buffer('future_fit_mat', self.cheb_future.fit_mat)
-        self.register_buffer('future_T_eval_start', torch.tensor([1.0, -1.0, 1.0, -1.0, 1.0])) # T_n(-1) for n=0..4
 
     def fit_history(self, history):
         """
@@ -129,18 +127,6 @@ class JulesPredictiveController(nn.Module):
         """
         batch_size = history.shape[0]
         # Reshape: (Batch, 30 steps, 10 features) -> (Batch, 10 features, 30 steps)
-        # Note: memory says history is [r, p, y, z, thrust, rr, pr, yr, u, v]
-        # In `drone.py`, `observations[:, 0:300]` is history.
-        # It's shifted: `obs[:, 0:290] = obs[:, 10:300]`.
-        # So index 0-10 is t-29, ..., 290-300 is t=0 (current).
-        # We need to reshape carefully.
-
-        # The history in `drone.py` is stored flat in `observations`.
-        # The shape in `observations` is (num_agents, 300).
-        # It represents 30 steps of 10 features flattened.
-        # Step 0 (oldest): 0-10
-        # Step 29 (newest): 290-300
-
         x = history.view(batch_size, 30, 10).permute(0, 2, 1) # (B, 10, 30)
 
         # Fit coefficients
@@ -149,61 +135,17 @@ class JulesPredictiveController(nn.Module):
 
         return coeffs.reshape(batch_size, -1) # Flatten to (B, 40)
 
-    def fit_future(self, future_actions):
-        """
-        Fits Chebyshev coefficients to future actions.
-        future_actions: (Batch, 4, FutureLen)
-        Returns: (Batch, 20) flattened
-        """
-        # (B, 4, F) @ (F, D+1) -> (B, 4, D+1)
-        # fit_mat is (D+1, F)
-        # coeffs = actions @ fit_mat.T
-        batch_size = future_actions.shape[0]
-        coeffs = torch.matmul(future_actions, self.future_fit_mat.t())
-        return coeffs.reshape(batch_size, -1)
-
     def forward(self, hist_coeffs, aux_state):
         """
         hist_coeffs: (Batch, 40) Chebyshev coefficients of history
         aux_state: (Batch, 8) current error/state (relative vel, dist, tracker)
+        Returns: (Batch, 4) action
         """
         # 2. Encode
         latent = self.encoder(hist_coeffs)
 
-        # 3. Plan Future
+        # 3. Predict Action
         fusion = torch.cat([latent, aux_state], dim=1)
-        action_coeffs = self.decoder(fusion) # (B, 20)
+        action = self.head(fusion) # (B, 4)
 
-        return action_coeffs
-
-    def get_action_for_execution(self, action_coeffs):
-        """
-        Reconstructs the immediate action (t=0) from the coefficients.
-        t=0 corresponds to x=-1 in our future window [0, 0.5] mapped to [-1, 1].
-        """
-        # Reshape to (Batch, 4 controls, output_degree+1 coeffs)
-        batch_size = action_coeffs.shape[0]
-        # output_degree=4 => 5 coeffs
-        coeffs_reshaped = action_coeffs.view(batch_size, 4, self.output_degree + 1)
-
-        # Eval at x=-1
-        # We use the registered buffer for the basis vector at -1
-        # self.future_T_eval_start shape is (5,)
-
-        current_action = torch.einsum('bck, k -> bc', coeffs_reshaped, self.future_T_eval_start)
-        return current_action
-
-    def decode_actions(self, action_coeffs, time_points=None):
-        """
-        Decodes coefficients back into action sequences.
-        action_coeffs: (Batch, 20)
-        time_points: Optional tensor of points in [-1, 1]
-        Returns: (Batch, 4, NumPoints)
-        """
-        batch_size = action_coeffs.shape[0]
-        coeffs_reshaped = action_coeffs.view(batch_size, 4, self.output_degree + 1)
-        # (B, 4, D+1)
-
-        # evaluate needs (B, 4, D+1)
-        # returns (B, 4, N)
-        return self.cheb_future.evaluate(coeffs_reshaped, time_points)
+        return action
