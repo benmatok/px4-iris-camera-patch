@@ -230,7 +230,7 @@ def evaluate_oracle():
     env.data_dictionary['thrust_coeffs'][:] = 1.0
     env.data_dictionary['drag_coeffs'][:] = 0.1
 
-    # Zero out wind for validation
+    # Zero out wind for validation (Initial)
     env.data_dictionary['wind_x'][:] = 0.0
     env.data_dictionary['wind_y'][:] = 0.0
     env.data_dictionary['wind_z'][:] = 0.0
@@ -249,18 +249,15 @@ def evaluate_oracle():
     # Same Target Trajectory for all 3.
     # --------------------------------------------------------------------------
 
-    # Copy Target Params from Agent 0 to 1, 2, 3, 4, 5
-    env.data_dictionary['traj_params'][:, 1] = env.data_dictionary['traj_params'][:, 0]
-    env.data_dictionary['traj_params'][:, 2] = env.data_dictionary['traj_params'][:, 0]
-    env.data_dictionary['traj_params'][:, 3] = env.data_dictionary['traj_params'][:, 0]
-    env.data_dictionary['traj_params'][:, 4] = env.data_dictionary['traj_params'][:, 0]
-    env.data_dictionary['traj_params'][:, 5] = env.data_dictionary['traj_params'][:, 0]
+    # Copy Target Params from Agent 0 to 1-8
+    for i in range(1, 9):
+        env.data_dictionary['traj_params'][:, i] = env.data_dictionary['traj_params'][:, 0]
 
     # Re-update precomputed trajectories since we changed params
     env.update_target_trajectory()
 
     # Get Initial Target Positions (t=0)
-    # They should be identical now for 0, 1, 2, 3, 4, 5
+    # They should be identical now for 0-8
     vt_x = env.data_dictionary['vt_x']
     vt_y = env.data_dictionary['vt_y']
     vt_z = env.data_dictionary['vt_z']
@@ -301,6 +298,25 @@ def evaluate_oracle():
     env.data_dictionary['pos_x'][5] = vt_x[5] + 20.0 * np.cos(angle5)
     env.data_dictionary['pos_y'][5] = vt_y[5] + 20.0 * np.sin(angle5)
     env.data_dictionary['pos_z'][5] = vt_z[5] + 50.0
+
+    # Agent 6: Wind Head (Headwind)
+    # Init 20m away, Wind will oppose
+    angle6 = 0.0 # East
+    env.data_dictionary['pos_x'][6] = vt_x[6] + 20.0 * np.cos(angle6)
+    env.data_dictionary['pos_y'][6] = vt_y[6] + 20.0 * np.sin(angle6)
+    env.data_dictionary['pos_z'][6] = vt_z[6] # Same alt
+
+    # Agent 7: Wind Cross (Crosswind)
+    angle7 = 0.0
+    env.data_dictionary['pos_x'][7] = vt_x[7] + 20.0 * np.cos(angle7)
+    env.data_dictionary['pos_y'][7] = vt_y[7] + 20.0 * np.sin(angle7)
+    env.data_dictionary['pos_z'][7] = vt_z[7] # Same alt
+
+    # Agent 8: Wind Turb (Variable)
+    angle8 = 0.0
+    env.data_dictionary['pos_x'][8] = vt_x[8] + 20.0 * np.cos(angle8)
+    env.data_dictionary['pos_y'][8] = vt_y[8] + 20.0 * np.sin(angle8)
+    env.data_dictionary['pos_z'][8] = vt_z[8] # Same alt
 
     # Reset Velocities to point at target?
     # The environment reset likely set random velocities. We can leave them or zero them.
@@ -351,13 +367,13 @@ def evaluate_oracle():
     # Tracker features might be wrong for first step.
     # Let's live with it for validation. It will correct in step 1.
 
-    # Data collection for 6 agents
-    actual_traj = [[], [], [], [], [], []]
-    target_traj = [[], [], [], [], [], []]
-    tracker_data = [[], [], [], [], [], []]
-    optimal_traj = [[], [], [], [], [], []]
+    # Data collection for 9 agents
+    actual_traj = [[] for _ in range(9)]
+    target_traj = [[] for _ in range(9)]
+    tracker_data = [[] for _ in range(9)]
+    optimal_traj = [[] for _ in range(9)]
 
-    distances = [[], [], [], [], [], []]
+    distances = [[] for _ in range(9)]
     altitude_diffs = [] # Defined here
     velocities = []
 
@@ -365,6 +381,47 @@ def evaluate_oracle():
 
     max_steps = 400
     for step in range(max_steps):
+        # ----------------------------------------------------------------------
+        # Controlled Wind Update
+        # ----------------------------------------------------------------------
+        # Reset all to zero first
+        env.data_dictionary['wind_x'][:] = 0.0
+        env.data_dictionary['wind_y'][:] = 0.0
+        env.data_dictionary['wind_z'][:] = 0.0
+
+        # Agent 6: Headwind (Opposing Motion)
+        # If Agent is at +X relative to target and moving -X to approach, Headwind is +X.
+        # Simple approximation: Wind = 4.0 m/s towards Agent from Target.
+        # Vector T->A = (Px-Tx, Py-Ty) normalized.
+        dx6 = env.data_dictionary['pos_x'][6] - env.data_dictionary['vt_x'][6]
+        dy6 = env.data_dictionary['pos_y'][6] - env.data_dictionary['vt_y'][6]
+        dist6 = np.sqrt(dx6**2 + dy6**2) + 1e-6
+        # Peak 4.0 m/s
+        wind_mag = 4.0
+        env.data_dictionary['wind_x'][6] = (dx6 / dist6) * wind_mag
+        env.data_dictionary['wind_y'][6] = (dy6 / dist6) * wind_mag
+
+        # Agent 7: Crosswind
+        # Perpendicular to T->A vector. (-dy, dx)
+        dx7 = env.data_dictionary['pos_x'][7] - env.data_dictionary['vt_x'][7]
+        dy7 = env.data_dictionary['pos_y'][7] - env.data_dictionary['vt_y'][7]
+        dist7 = np.sqrt(dx7**2 + dy7**2) + 1e-6
+        wind_mag = 4.0
+        env.data_dictionary['wind_x'][7] = (-dy7 / dist7) * wind_mag
+        env.data_dictionary['wind_y'][7] = (dx7 / dist7) * wind_mag
+
+        # Agent 8: Variable/Turbulent
+        # Mean 2.0, Peak 4.0.
+        # Sinusoid: 2.0 + 2.0 * sin(t) ? No that mean is 2.0, peak 4.0.
+        # Or just random walk bounded.
+        # Let's use deterministic sinusoid for reproducibility.
+        t_val = step * 0.05
+        # Wind X: 2.0 * sin(t) -> Mean 0, Peak 2.
+        # Wind Y: 2.0 * cos(t/2)
+        # Total Mag <= sqrt(4+4) = 2.8.
+        env.data_dictionary['wind_x'][8] = 2.5 * np.sin(t_val)
+        env.data_dictionary['wind_y'][8] = 2.5 * np.cos(t_val * 0.5)
+
         obs = env.data_dictionary['observations']
         pos_x = env.data_dictionary['pos_x']
         pos_y = env.data_dictionary['pos_y']
@@ -375,8 +432,8 @@ def evaluate_oracle():
         vt_z_all = env.data_dictionary['vt_z']
 
         current_distances = []
-        # Collect for Agents 0 to 5
-        for i in range(6):
+        # Collect for Agents 0 to 8
+        for i in range(9):
             actual_traj[i].append([pos_x[i], pos_y[i], pos_z[i]])
             target_traj[i].append([vt_x_all[i], vt_y_all[i], vt_z_all[i]])
             tracker_data[i].append(obs[i, 304:308].copy())
@@ -458,7 +515,7 @@ def evaluate_oracle():
             planned_pos_linear[:, step_idx, 1] = py_sim
             planned_pos_linear[:, step_idx, 2] = pz_sim
 
-        for i in range(6):
+        for i in range(9):
             optimal_traj[i].append(planned_pos_linear[i])
 
         # Compute Actions using LinearPlanner
@@ -486,8 +543,8 @@ def evaluate_oracle():
         env.step_function(**step_args)
 
     # Process Data for GIFs
-    labels = ["low", "mid", "high", "alt_low", "alt_mid", "alt_high"]
-    for i in range(6):
+    labels = ["low", "mid", "high", "alt_low", "alt_mid", "alt_high", "wind_head", "wind_cross", "wind_turb"]
+    for i in range(9):
         at = np.array(actual_traj[i])[np.newaxis, :, :]
         tt = np.array(target_traj[i])[np.newaxis, :, :]
         td = np.array(tracker_data[i])[np.newaxis, :, :]
