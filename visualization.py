@@ -8,11 +8,15 @@ class Visualizer:
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
         self.rewards_history = []
+        self.loss_history = []
         self.trajectory_snapshots = [] # List of tuples: (iteration, trajectories)
         self.video_snapshots = [] # (iteration, images_list)
 
     def log_reward(self, iteration, reward):
         self.rewards_history.append((iteration, reward))
+
+    def log_loss(self, iteration, loss):
+        self.loss_history.append((iteration, loss))
 
     def log_trajectory(self, iteration, trajectories, targets=None, tracker_data=None, optimal_trajectory=None):
         """
@@ -179,6 +183,20 @@ class Visualizer:
         plt.title("Reward vs Time")
         plt.grid(True)
         plt.savefig(os.path.join(self.output_dir, "reward_plot.png"))
+        plt.close()
+
+    def plot_loss(self):
+        if not self.loss_history:
+            return
+        iterations, losses = zip(*self.loss_history)
+        plt.figure(figsize=(10, 6))
+        plt.plot(iterations, losses)
+        plt.xlabel("Iteration")
+        plt.ylabel("Loss")
+        plt.title("Training Loss vs Time")
+        plt.grid(True)
+        plt.yscale('log')
+        plt.savefig(os.path.join(self.output_dir, "training_loss.png"))
         plt.close()
 
     def generate_trajectory_gif(self):

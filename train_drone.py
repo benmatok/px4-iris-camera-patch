@@ -234,6 +234,7 @@ def main():
     for itr in range(start_itr, args.iterations + 1):
         # Train
         loss = trainer.train_episode()
+        visualizer.log_loss(itr, loss)
 
         # Validate (every 10 iters)
         if itr % 10 == 0:
@@ -244,6 +245,7 @@ def main():
             logging.info(f"Iter {itr} | Loss: {loss:.4f} | Val Dist: {val_dist:.4f} m | Time: {elapsed:.2f}s")
 
             visualizer.log_reward(itr, -val_dist) # Log negative distance as 'reward' for plot
+            visualizer.plot_loss()
 
             # Periodically generate summary GIF if visualizing
             if visualize:
@@ -272,6 +274,7 @@ def main():
     # Final Visualizations
     if visualizer.rewards_history:
         visualizer.plot_rewards()
+    visualizer.plot_loss()
     visualizer.generate_trajectory_gif()
 
     logging.info("Training Complete.")
