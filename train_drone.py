@@ -2,77 +2,51 @@ import os
 import argparse
 import numpy as np
 import torch
+import torch.nn as nn
 import logging
 import time
-import shutil
 from tqdm import tqdm
-from collections import deque
 
 from drone_env.drone import DroneEnv
 from models.ae_policy import DronePolicy
+from rrt_planner import AggressiveOracle
+from models.predictive_policy import Chebyshev
 from visualization import Visualizer
-
-# For PPO
-from torch.distributions import Normal
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-class CPUTrainer:
-    def __init__(self, env, policy, num_agents, episode_length, batch_size=4096, mini_batch_size=1024, ppo_epochs=4, clip_param=0.2, debug=False):
+class SupervisedTrainer:
+    def __init__(self, env, policy, oracle, num_agents, episode_length, learning_rate=3e-4, debug=False):
         self.env = env
         self.policy = policy
+        self.oracle = oracle
         self.num_agents = num_agents
         self.episode_length = episode_length
-        self.batch_size = batch_size
-        self.mini_batch_size = mini_batch_size
-        self.ppo_epochs = ppo_epochs
-        self.clip_param = clip_param
-        self.gamma = 0.99
-        self.lam = 0.95
-        self.value_loss_coeff = 0.5
-        self.entropy_coeff = 0.01
-        self.max_grad_norm = 1.0 # Gradient clipping
         self.debug = debug
+        self.dt = 0.05
 
-        # Include action_log_std in parameters to optimize
-        self.optimizer_policy = torch.optim.Adam(
-            list(self.policy.action_head.parameters()) + [self.policy.action_log_std],
-            lr=3e-4
-        )
-        self.optimizer_value = torch.optim.Adam(self.policy.value_head.parameters(), lr=1e-3)
-        self.optimizer_encoder = torch.optim.Adam(self.policy.feature_extractor.parameters(), lr=3e-4)
+        # Optimizer (Adam for simplicity, training only the policy)
+        # We include action_log_std although it might not be used in MSE,
+        # but the policy outputs it. We mainly train the network weights.
+        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=learning_rate)
 
-        self.device = torch.device("cpu") # Force CPU
+        # Loss Function
+        self.loss_fn = nn.MSELoss()
 
-        # Buffers (Pre-allocate)
-        self.obs_buffer = torch.zeros((episode_length, num_agents, 308), dtype=torch.float32)
-        self.actions_buffer = torch.zeros((episode_length, num_agents, 4), dtype=torch.float32)
-        self.logprobs_buffer = torch.zeros((episode_length, num_agents), dtype=torch.float32)
-        self.rewards_buffer = torch.zeros((episode_length, num_agents), dtype=torch.float32)
-        self.dones_buffer = torch.zeros((episode_length, num_agents), dtype=torch.float32)
-        self.values_buffer = torch.zeros((episode_length, num_agents), dtype=torch.float32)
+        # Buffers for Visualization/Metrics
+        self.obs_buffer = np.zeros((episode_length, num_agents, 308), dtype=np.float32)
+        self.actions_buffer = np.zeros((episode_length, num_agents, 4), dtype=np.float32) # Student Actions
+        self.oracle_actions_buffer = np.zeros((episode_length, num_agents, 4), dtype=np.float32)
 
-        # New: Buffer for reward components (debug)
-        self.reward_components_buffer = torch.zeros((episode_length, num_agents, 8), dtype=torch.float32)
-
-        # Buffers for visualization
-        self.target_history_buffer = np.zeros((episode_length, num_agents, 3), dtype=np.float32)
-        self.tracker_history_buffer = np.zeros((episode_length, num_agents, 4), dtype=np.float32)
+        # Helper for Chebyshev evaluation
+        # Oracle returns coeffs for 4 dims, degree 4 -> 5 coeffs.
+        # Window is [t, t+0.5] mapped to [-1, 1]. t=0 corresponds to -1.
+        self.cheb = Chebyshev(num_points=1, degree=4, device='cpu')
+        # We only need to evaluate at -1.0
+        self.eval_point = torch.tensor([-1.0], dtype=torch.float32)
 
         # Pre-resolve step arguments to avoid dict lookup in loop
-        # We need to grab the data arrays from env.data_dictionary
-        # Step Signature:
-        # pos_x, pos_y, pos_z, vel_x, vel_y, vel_z, roll, pitch, yaw,
-        # masses, drag_coeffs, thrust_coeffs,
-        # target_vx, target_vy, target_vz, target_yaw_rate,
-        # vt_x, vt_y, vt_z,
-        # traj_params, target_trajectory,
-        # pos_history, observations,
-        # rewards, reward_components,
-        # done_flags, step_counts, actions,
-        # num_agents, episode_length, env_ids
-
         d = self.env.data_dictionary
         self.step_args_list = [
             d["pos_x"], d["pos_y"], d["pos_z"],
@@ -87,313 +61,214 @@ class CPUTrainer:
             d["done_flags"], d["step_counts"], d["actions"],
             self.num_agents, self.episode_length, d["env_ids"]
         ]
+        self.step_func = self.env.get_step_function()
 
+    def step_env(self):
+        self.step_func(*self.step_args_list)
 
-    def collect_rollout(self):
-        # Reset Environment
+    def train_episode(self):
         self.env.reset_all_envs()
 
-        # Get Data Dictionary from Env (NumPy arrays)
-        data = self.env.cuda_data_manager.data_dictionary
+        # Oracle internal reset
+        self.oracle.previous_coeffs = None
 
-        # Get Step Function
-        step_func = self.env.get_step_function()
+        total_loss = 0.0
 
-        # Initial Observation
-        obs_np = data["observations"]
-
-        # NaN check (Conditional)
-        if self.debug:
-            if np.isnan(obs_np).any() or np.isinf(obs_np).any():
-                print("Warning: Initial observations contain NaN or Inf!")
-                obs_np = np.nan_to_num(obs_np)
-
-        obs = torch.from_numpy(obs_np) # Already float32
-
-        # Local refs for speed
-        d_obs = data["observations"]
-        d_rew = data["rewards"]
-        d_done = data["done_flags"]
-        d_act = data["actions"]
-        d_vt_x = data["vt_x"]
-        d_vt_y = data["vt_y"]
-        d_vt_z = data["vt_z"]
-        d_rew_comp = data["reward_components"]
-
-        step_args = self.step_args_list
+        # Data access
+        d = self.env.data_dictionary
 
         for t in range(self.episode_length):
-            # 1. Policy Forward
-            with torch.no_grad():
-                # obs is (num_agents, 308)
-                action_mean, value = self.policy(obs)
+            t_start = t * self.dt
 
-                # Check for NaNs in network output
-                if self.debug:
-                    if torch.isnan(action_mean).any() or torch.isinf(action_mean).any():
-                        print(f"NaN/Inf detected in action_mean at step {t}")
-                        action_mean = torch.nan_to_num(action_mean)
-
-                    if torch.isnan(value).any() or torch.isinf(value).any():
-                        print(f"NaN/Inf detected in value at step {t}")
-                        value = torch.nan_to_num(value)
-
-                # Sample Action - use current std
-                std = self.policy.action_log_std.exp()
-                dist = Normal(action_mean, std)
-
-                action = dist.sample()
-                action = torch.clamp(action, -1.0, 1.0)
-                log_prob = dist.log_prob(action).sum(dim=-1)
-
-            # 2. Step Environment
-            # Write action to data dict
-            d_act[:] = action.numpy().flatten() # Expects flat array
-
-            # Execute Step (Positional Args)
-            step_func(*step_args)
-
-            # 3. Store Data
-            self.obs_buffer[t] = obs
-            self.actions_buffer[t] = action
-            self.logprobs_buffer[t] = log_prob
-            self.values_buffer[t] = value.squeeze()
-
-            # Check for NaNs in rewards
+            # 1. Get State for Oracle
+            obs_np = d["observations"]
             if self.debug:
-                if np.isnan(d_rew).any() or np.isinf(d_rew).any():
-                    print(f"NaN/Inf detected in rewards at step {t}")
-                    d_rew = np.nan_to_num(d_rew)
+                 obs_np = np.nan_to_num(obs_np)
 
-            self.rewards_buffer[t] = torch.from_numpy(d_rew)
-            self.dones_buffer[t] = torch.from_numpy(d_done)
-            self.reward_components_buffer[t] = torch.from_numpy(d_rew_comp)
+            obs_torch = torch.from_numpy(obs_np).float()
 
-            # Next Obs
-            if self.debug:
-                if np.isnan(d_obs).any() or np.isinf(d_obs).any():
-                    print(f"NaN/Inf detected in next observations from env at step {t}")
-                    d_obs = np.nan_to_num(d_obs)
+            # 2. Run Oracle (Expert)
+            # Returns (N, 20) coeffs or similar
+            oracle_coeffs = self.oracle.plan(d, obs_np, d['traj_params'], t_start)
 
-            obs = torch.from_numpy(d_obs) # Already float32
+            # Convert Coeffs to Action (Evaluate at t=0)
+            coeffs_view = oracle_coeffs.view(self.num_agents, 4, 5)
 
-            # Visualization Data
-            self.target_history_buffer[t, :, 0] = d_vt_x
-            self.target_history_buffer[t, :, 1] = d_vt_y
-            self.target_history_buffer[t, :, 2] = d_vt_z
-            self.tracker_history_buffer[t] = d_obs[:, 304:308] # u, v, size, conf
+            # Evaluate at -1.0 -> (N, 4)
+            oracle_actions = self.cheb.evaluate(coeffs_view, self.eval_point).squeeze(-1)
 
-        # Calculate Advantages (GAE)
+            # 3. Run Student (Policy)
+            student_logits, _ = self.policy(obs_torch)
+            pred_actions = student_logits
+
+            # 4. Compute Loss
+            target_actions = oracle_actions.detach()
+
+            loss = self.loss_fn(pred_actions, target_actions)
+
+            # 5. Optimize
+            self.optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 1.0)
+            self.optimizer.step()
+
+            total_loss += loss.item()
+
+            # 6. Step Environment (Student Drives)
+            action_to_step = pred_actions.detach().numpy()
+            d['actions'][:] = action_to_step.flatten()
+
+            self.step_env()
+
+        return total_loss / self.episode_length
+
+    def validate_episode(self, visualizer=None, iteration=0):
+        """
+        Runs a full episode with the Student driving, no training.
+        Metrics: Final Distance to Target.
+        Visualization: Store trajectories.
+        """
+        self.env.reset_all_envs()
+        self.oracle.previous_coeffs = None
+
+        d = self.env.data_dictionary
+
+        # Buffers for visualization
+        pos_history = []
+        target_history = []
+        tracker_history = []
+
+        # To avoid overhead, we only compute oracle plan if we are visualizing
+        compute_oracle_viz = (visualizer is not None) and (iteration % 100 == 0)
+
+        distances = []
+
         with torch.no_grad():
-             _, next_value = self.policy(obs)
-             next_value = next_value.squeeze()
+            for t in range(self.episode_length):
+                obs_np = d["observations"]
+                obs_torch = torch.from_numpy(obs_np).float()
 
-             if self.debug:
-                 if torch.isnan(next_value).any() or torch.isinf(next_value).any():
-                      print(f"NaN/Inf detected in next_value.")
-                      next_value = torch.nan_to_num(next_value)
+                # Student Action
+                pred_actions, _ = self.policy(obs_torch)
+                action_to_step = pred_actions.numpy()
 
-             advantages = torch.zeros_like(self.rewards_buffer)
-             lastgaelam = 0
-             for t in reversed(range(self.episode_length)):
-                 if t == self.episode_length - 1:
-                     nextnonterminal = 1.0 - self.dones_buffer[t]
-                     nextvalues = next_value
-                 else:
-                     nextnonterminal = 1.0 - self.dones_buffer[t]
-                     nextvalues = self.values_buffer[t+1]
+                # Step
+                d['actions'][:] = action_to_step.flatten()
+                self.step_env()
 
-                 term_next = self.gamma * nextvalues * nextnonterminal
-                 # Force term_next to 0 where nextnonterminal is 0
-                 term_next = torch.where(nextnonterminal == 0, torch.tensor(0.0, device=self.device), term_next)
+                # Record State
+                pos = np.stack([d['pos_x'], d['pos_y'], d['pos_z']], axis=1).copy() # (N, 3)
+                vt = np.stack([d['vt_x'], d['vt_y'], d['vt_z']], axis=1).copy() # (N, 3)
 
-                 delta = self.rewards_buffer[t] + term_next - self.values_buffer[t]
-                 advantages[t] = lastgaelam = delta + self.gamma * self.lam * nextnonterminal * lastgaelam
+                # Distance
+                dist = np.linalg.norm(pos - vt, axis=1)
 
-             returns = advantages + self.values_buffer
+                # Store
+                if compute_oracle_viz:
+                    # Run Oracle to get PLAN (future trajectory)
+                    # We need to call plan() but it changes internal state (previous_coeffs).
+                    # We should clone/restore or just let it run?
+                    # Since this is validation and we don't use oracle for control,
+                    # running it update its internal warm start is fine, it tracks the student.
+                    t_start = t * self.dt
+                    coeffs = self.oracle.plan(d, obs_np, d['traj_params'], t_start)
 
-        return self.obs_buffer, self.actions_buffer, self.logprobs_buffer, returns, advantages
+                    # Evaluate full horizon
+                    # coeffs: (N, 4, 5)
+                    # We want positions, not actions?
+                    # Oracle outputs ACTION coeffs.
+                    # To get position plan, we'd need to simulate forward.
+                    # AggressiveOracle has internal simulator.
+                    # Does it expose the planned trajectory?
+                    # The `plan` method returns coeffs.
+                    # Inside `plan`, it computes `P_t` (rollout pos).
+                    # We can't easily extract it without modifying Oracle.
+                    # However, we can visualize the TARGET trajectory which is known.
+                    # Or we can just skip oracle plan viz for now.
+                    # Visualizer supports it, but it's optional.
+                    pass
 
-    def update(self, rollouts):
-        obs, actions, old_logprobs, returns, advantages = rollouts
+                pos_history.append(pos)
+                target_history.append(vt)
+                # Tracker: u, v, size, conf
+                track = obs_np[:, 304:308].copy()
+                tracker_history.append(track)
 
-        # Check inputs for NaNs
-        if self.debug:
-            if torch.isnan(obs).any(): print("NaN in obs buffer")
-            if torch.isnan(actions).any(): print("NaN in actions buffer")
-            if torch.isnan(old_logprobs).any(): print("NaN in old_logprobs buffer")
-            if torch.isnan(returns).any(): print("NaN in returns buffer")
-            if torch.isnan(advantages).any(): print("NaN in advantages buffer")
+        # Final Distance (at last step)
+        final_dist = dist.mean() # Mean over agents
 
-            # Replace NaNs/Infs
-            obs = torch.nan_to_num(obs)
-            returns = torch.nan_to_num(returns, nan=0.0, posinf=100.0, neginf=-100.0)
-            advantages = torch.nan_to_num(advantages, nan=0.0, posinf=100.0, neginf=-100.0)
+        # Visualization
+        if visualizer is not None and iteration % 100 == 0:
+            # Stack: (T, N, 3) -> (N, T, 3)
+            traj = np.stack(pos_history, axis=1)
+            targ = np.stack(target_history, axis=1)
+            track = np.stack(tracker_history, axis=1)
 
-        # Flatten
-        # (T, N, ...) -> (T*N, ...)
-        obs = obs.reshape(-1, 308)
-        actions = actions.reshape(-1, 4)
-        old_logprobs = old_logprobs.reshape(-1)
-        returns = returns.reshape(-1)
-        advantages = advantages.reshape(-1)
+            # Log to visualizer (Agent 0)
+            visualizer.log_trajectory(iteration, traj, targets=targ, tracker_data=track)
 
-        # Normalize Advantages
-        adv_std = advantages.std()
-        if adv_std < 1e-5:
-             advantages = advantages - advantages.mean()
-        else:
-             advantages = (advantages - advantages.mean()) / (adv_std + 1e-8)
+            # Save GIF
+            visualizer.save_episode_gif(iteration, traj[0], targets=targ[0], tracker_data=track[0])
 
-        dataset_size = obs.size(0)
-        indices = np.arange(dataset_size)
-
-        for _ in range(self.ppo_epochs):
-            np.random.shuffle(indices)
-            for start in range(0, dataset_size, self.mini_batch_size):
-                end = start + self.mini_batch_size
-                idx = indices[start:end]
-
-                mb_obs = obs[idx]
-                mb_actions = actions[idx]
-                mb_old_logprobs = old_logprobs[idx]
-                mb_returns = returns[idx]
-                mb_advantages = advantages[idx]
-
-                # Forward
-                action_mean, value = self.policy(mb_obs)
-
-                # Recompute std inside loop to keep graph connected
-                std = self.policy.action_log_std.exp()
-
-                # Distribution using current std
-                dist = Normal(action_mean, std)
-                new_logprobs = dist.log_prob(mb_actions).sum(dim=-1)
-                entropy = dist.entropy().sum(dim=-1).mean()
-
-                # Ratio
-                ratio = torch.exp(new_logprobs - mb_old_logprobs)
-
-                # Surrogate Loss
-                surr1 = ratio * mb_advantages
-                surr2 = torch.clamp(ratio, 1.0 - self.clip_param, 1.0 + self.clip_param) * mb_advantages
-                policy_loss = -torch.min(surr1, surr2).mean()
-
-                # Value Loss
-                value = value.squeeze()
-                value_loss = 0.5 * ((value - mb_returns) ** 2).mean()
-
-                # Total Loss
-                loss = policy_loss + self.value_loss_coeff * value_loss - self.entropy_coeff * entropy
-
-                # Update
-                self.optimizer_policy.zero_grad()
-                self.optimizer_value.zero_grad()
-                self.optimizer_encoder.zero_grad()
-
-                loss.backward()
-
-                # Clip Gradients
-                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
-
-                self.optimizer_policy.step()
-                self.optimizer_value.step()
-                self.optimizer_encoder.step()
-
-        return policy_loss.item(), value_loss.item()
+        return final_dist
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_agents", type=int, default=200)
     parser.add_argument("--iterations", type=int, default=5000)
-    parser.add_argument("--episode_length", type=int, default=20) # Short episodes for dynamics
+    parser.add_argument("--episode_length", type=int, default=100) # User asked for "each step... run oracle". Longer episodes allow convergence.
     parser.add_argument("--load", type=str, default=None)
-    parser.add_argument("--debug", action="store_true", help="Enable anomaly detection and detailed checks")
+    parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
-    # Enable Anomaly Detection
-    if args.debug:
-        torch.autograd.set_detect_anomaly(True)
-        print("Debug mode enabled: Anomaly detection on.")
-
     # Environment
+    # We use CPU backend
     env = DroneEnv(num_agents=args.num_agents, episode_length=args.episode_length, use_cuda=False)
 
-    # Model
+    # Oracle
+    # Horizon 10 (0.5s), Iters 5
+    oracle = AggressiveOracle(env, horizon_steps=10, iterations=5)
+
+    # Student Policy
     policy = DronePolicy(observation_dim=308, action_dim=4, hidden_dim=256).cpu()
 
     if args.load:
         if os.path.exists(args.load):
-            print(f"Loading checkpoint from {args.load}")
+            logging.info(f"Loading checkpoint from {args.load}")
             checkpoint = torch.load(args.load)
             policy.load_state_dict(checkpoint)
         else:
-            print(f"Checkpoint {args.load} not found, starting fresh.")
+            logging.warning(f"Checkpoint {args.load} not found. Starting fresh.")
 
-    trainer = CPUTrainer(env, policy, args.num_agents, args.episode_length, debug=args.debug)
+    # Trainer
+    trainer = SupervisedTrainer(env, policy, oracle, args.num_agents, args.episode_length, debug=args.debug)
+
+    # Visualizer
     visualizer = Visualizer()
 
-    print(f"Starting Training: {args.num_agents} Agents, {args.iterations} Iterations")
+    logging.info(f"Starting Supervised Training: {args.num_agents} Agents, {args.iterations} Iterations")
 
     start_time = time.time()
 
     for itr in range(1, args.iterations + 1):
-        # Rollout
-        obs, _, _, _, _ = trainer.collect_rollout()
+        # Train
+        loss = trainer.train_episode()
 
-        # PPO Update
-        try:
-            p_loss, v_loss = trainer.update((obs, trainer.actions_buffer, trainer.logprobs_buffer, _, _))
-        except ValueError as e:
-            print(f"Update failed at itr {itr}: {e}")
-            break
-        except RuntimeError as e:
-             print(f"RuntimeError at itr {itr}: {e}")
-             break
-
-        # Logging
-        mean_reward = trainer.rewards_buffer.sum(dim=0).mean().item() # Sum over time, mean over agents
-        visualizer.log_reward(itr, mean_reward)
-
+        # Validate (every 10 iters)
         if itr % 10 == 0:
+            val_dist = trainer.validate_episode(visualizer, itr)
+
             elapsed = time.time() - start_time
-            print(f"Iter {itr} | Reward: {mean_reward:.2f} | P_Loss: {p_loss:.4f} | V_Loss: {v_loss:.4f} | Time: {elapsed:.2f}s")
+            logging.info(f"Iter {itr} | Loss: {loss:.4f} | Val Dist: {val_dist:.4f} m | Time: {elapsed:.2f}s")
 
-            # Log Reward Components
-            # (episode_length, num_agents, 8) -> sum time -> mean agents
-            comp_sums = trainer.reward_components_buffer.sum(dim=0).mean(dim=0)
-            # 0:pn, 1:closing, 2:gaze, 3:rate, 4:upright, 5:eff, 6:penalty, 7:bonus
-            print(f"   Breakdown -> PN: {comp_sums[0]:.2f}, Close: {comp_sums[1]:.2f}, Gaze: {comp_sums[2]:.2f}")
-            print(f"                Rate: {comp_sums[3]:.2f}, Upright: {comp_sums[4]:.2f}, Eff: {comp_sums[5]:.2f}")
-            print(f"                Penalty: {comp_sums[6]:.2f}, Bonus: {comp_sums[7]:.2f}")
+            visualizer.log_reward(itr, -val_dist) # Log negative distance as 'reward' for plot
 
-            # Log current exploration std
-            curr_std = trainer.policy.action_log_std.exp().mean().item()
-            print(f"                Exploration Std: {curr_std:.4f}")
-
-        # Visualization
+        # Save
         if itr % 50 == 0:
-            # Save checkpoint
-            torch.save(policy.state_dict(), "latest_checkpoint.pth")
-            pass
+            torch.save(policy.state_dict(), "latest_jules.pth")
 
-        if itr % 100 == 0:
-            # Generate Video of specific episode (first agent)
-            pos_hist = env.cuda_data_manager.data_dictionary["pos_history"]
-            targets = trainer.target_history_buffer
-            tracker_data = trainer.tracker_history_buffer
-
-            # Agent 0
-            traj_0 = pos_hist[:, 0, :]
-            targ_0 = targets[:, 0, :]
-            track_0 = tracker_data[:, 0, :]
-
-            visualizer.save_episode_gif(itr, traj_0, targ_0, track_0, filename_suffix="_best" if mean_reward > 0 else "")
-
-
-    # Save Final
-    torch.save(policy.state_dict(), "final_policy.pth")
-    print("Training Complete.")
+    torch.save(policy.state_dict(), "final_jules.pth")
+    logging.info("Training Complete.")
 
 if __name__ == "__main__":
     main()
