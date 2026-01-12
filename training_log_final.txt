@@ -1,1 +1,0 @@
-WARNING:root:update_target_trajectory_from_params not found in Cython ext. Falling back to python.
