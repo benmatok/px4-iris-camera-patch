@@ -114,7 +114,7 @@ class SupervisedTrainer:
 
         return total_loss / self.episode_length
 
-    def validate_episode(self, visualizer=None, iteration=0):
+    def validate_episode(self, visualizer=None, iteration=0, visualize=False):
         """
         Runs a full episode with the Student driving, no training.
         Metrics: Final Distance to Target.
@@ -130,7 +130,7 @@ class SupervisedTrainer:
         tracker_history = []
 
         # To avoid overhead, we only compute oracle plan if we are visualizing
-        compute_oracle_viz = (visualizer is not None) and (iteration % 100 == 0)
+        compute_oracle_viz = (visualizer is not None) and visualize
 
         distances = []
 
@@ -165,7 +165,7 @@ class SupervisedTrainer:
         final_dist = dist.mean() # Mean over agents
 
         # Visualization
-        if visualizer is not None and iteration % 100 == 0:
+        if visualizer is not None and visualize:
             # Stack: (T, N, 3) -> (N, T, 3)
             traj = np.stack(pos_history, axis=1)
             targ = np.stack(target_history, axis=1)
@@ -186,6 +186,7 @@ def main():
     parser.add_argument("--episode_length", type=int, default=100) # User asked for "each step... run oracle". Longer episodes allow convergence.
     parser.add_argument("--load", type=str, default=None)
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--viz_freq", type=int, default=100, help="Frequency of visualization generation")
     args = parser.parse_args()
 
     # Environment
@@ -198,16 +199,30 @@ def main():
     # Student Policy
     policy = DronePolicy(observation_dim=308, action_dim=4, hidden_dim=256).cpu()
 
+    # Trainer
+    trainer = SupervisedTrainer(env, policy, oracle, args.num_agents, args.episode_length, debug=args.debug)
+
+    start_itr = 1
     if args.load:
         if os.path.exists(args.load):
             logging.info(f"Loading checkpoint from {args.load}")
             checkpoint = torch.load(args.load)
-            policy.load_state_dict(checkpoint)
+
+            # Handle both formats
+            if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+                policy.load_state_dict(checkpoint['model_state_dict'])
+                if 'optimizer_state_dict' in checkpoint:
+                    trainer.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                if 'iteration' in checkpoint:
+                    start_itr = checkpoint['iteration'] + 1
+                    logging.info(f"Resuming from iteration {start_itr}")
+            else:
+                # Legacy: checkpoint is just the state dict
+                policy.load_state_dict(checkpoint)
+                logging.info("Loaded legacy model checkpoint (no optimizer/iter state).")
+
         else:
             logging.warning(f"Checkpoint {args.load} not found. Starting fresh.")
-
-    # Trainer
-    trainer = SupervisedTrainer(env, policy, oracle, args.num_agents, args.episode_length, debug=args.debug)
 
     # Visualizer
     visualizer = Visualizer()
@@ -216,24 +231,49 @@ def main():
 
     start_time = time.time()
 
-    for itr in range(1, args.iterations + 1):
+    for itr in range(start_itr, args.iterations + 1):
         # Train
         loss = trainer.train_episode()
 
         # Validate (every 10 iters)
         if itr % 10 == 0:
-            val_dist = trainer.validate_episode(visualizer, itr)
+            visualize = (itr % args.viz_freq == 0)
+            val_dist = trainer.validate_episode(visualizer, itr, visualize=visualize)
 
             elapsed = time.time() - start_time
             logging.info(f"Iter {itr} | Loss: {loss:.4f} | Val Dist: {val_dist:.4f} m | Time: {elapsed:.2f}s")
 
             visualizer.log_reward(itr, -val_dist) # Log negative distance as 'reward' for plot
 
+            # Periodically generate summary GIF if visualizing
+            if visualize:
+                try:
+                    visualizer.generate_trajectory_gif()
+                except Exception as e:
+                    logging.error(f"Error generating trajectory GIF: {e}")
+
         # Save
         if itr % 50 == 0:
-            torch.save(policy.state_dict(), "latest_jules.pth")
+            checkpoint = {
+                'iteration': itr,
+                'model_state_dict': policy.state_dict(),
+                'optimizer_state_dict': trainer.optimizer.state_dict()
+            }
+            torch.save(checkpoint, "latest_jules.pth")
 
-    torch.save(policy.state_dict(), "final_jules.pth")
+    # Save Final
+    final_checkpoint = {
+        'iteration': args.iterations,
+        'model_state_dict': policy.state_dict(),
+        'optimizer_state_dict': trainer.optimizer.state_dict()
+    }
+    torch.save(final_checkpoint, "final_jules.pth")
+
+    # Final Visualizations
+    if visualizer.rewards_history:
+        visualizer.plot_rewards()
+    visualizer.generate_trajectory_gif()
+
     logging.info("Training Complete.")
 
 if __name__ == "__main__":
