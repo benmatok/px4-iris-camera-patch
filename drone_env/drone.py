@@ -236,18 +236,18 @@ def step_cpu(
     u = xc / zc_safe
     v = yc / zc_safe
 
-    # Add Noise to Tracking
-    u_noise = np.random.normal(0, 0.05, num_agents) # 5% noise roughly?
-    v_noise = np.random.normal(0, 0.05, num_agents)
-    u += u_noise
-    v += v_noise
+    # Removed Tracker Noise as per instruction
+    # u_noise = np.random.normal(0, 0.05, num_agents)
+    # v_noise = np.random.normal(0, 0.05, num_agents)
+    # u += u_noise
+    # v += v_noise
 
     u = np.clip(u, -1.732, 1.732)
     v = np.clip(v, -1.732, 1.732)
 
     size = 10.0 / (zc*zc + 1.0)
-    # Noise on size
-    size += np.random.normal(0, 0.01, num_agents)
+    # Noise on size removed
+    # size += np.random.normal(0, 0.01, num_agents)
 
     w2 = roll_rate**2 + pitch_rate**2 + yaw_rate**2
     conf = np.exp(-0.1 * w2)

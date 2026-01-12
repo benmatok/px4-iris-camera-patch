@@ -295,8 +295,8 @@ cdef void _step_agent_scalar(
     # -------------------------------------------------------------------------
     # Noise on Tracking
     # -------------------------------------------------------------------------
-    u += (rand_float() - 0.5) * 0.1
-    v += (rand_float() - 0.5) * 0.1
+    # u += (rand_float() - 0.5) * 0.1
+    # v += (rand_float() - 0.5) * 0.1
 
     if u > 1.732: u = 1.732
     if u < -1.732: u = -1.732
@@ -316,7 +316,7 @@ cdef void _step_agent_scalar(
 
     cdef float size, conf
     size = 10.0 / (zc*zc + 1.0)
-    size += (rand_float() - 0.5) * 0.02 # Noise on size
+    # size += (rand_float() - 0.5) * 0.02 # Noise on size
 
     cdef float w2 = roll_rate_cmd*roll_rate_cmd + pitch_rate_cmd*pitch_rate_cmd + yaw_rate_cmd*yaw_rate_cmd
     conf = exp(-0.1 * w2)

@@ -352,23 +352,18 @@ inline void step_agents_avx2(
     // ------------------------------------------------------------------------
     // Noise on Tracking (u, v)
     // ------------------------------------------------------------------------
-    // Add noise: ~5%? or fixed std dev?
-    // Using Normal Distribution approx std=0.05
-    __m256 u_noise = avx_rng_normal(rng_state);
-    __m256 v_noise = avx_rng_normal(rng_state);
-    __m256 c_noise_scale = _mm256_set1_ps(0.05f);
-
-    u = _mm256_add_ps(u, _mm256_mul_ps(u_noise, c_noise_scale));
-    v = _mm256_add_ps(v, _mm256_mul_ps(v_noise, c_noise_scale));
+    // Removed noise as per instruction.
+    // __m256 u_noise = avx_rng_normal(rng_state);
+    // ...
 
     __m256 c_fov_neg = _mm256_sub_ps(c0, c_fov);
     u = _mm256_max_ps(c_fov_neg, _mm256_min_ps(u, c_fov));
     v = _mm256_max_ps(c_fov_neg, _mm256_min_ps(v, c_fov));
 
     __m256 rel_size = _mm256_div_ps(c10, _mm256_add_ps(_mm256_mul_ps(zc, zc), c1));
-    // Noise on size
-    __m256 s_noise = avx_rng_normal(rng_state);
-    rel_size = _mm256_add_ps(rel_size, _mm256_mul_ps(s_noise, _mm256_set1_ps(0.01f)));
+    // Noise on size removed
+    // __m256 s_noise = avx_rng_normal(rng_state);
+    // rel_size = ...
 
     __m256 w2 = _mm256_add_ps(
         _mm256_mul_ps(roll_rate_cmd, roll_rate_cmd),
