@@ -51,37 +51,19 @@ class LinearPlanner:
         dist_xy = np.sqrt(dx**2 + dy**2) + 1e-6
 
         # Elevation Angle Check
-        # angle = arctan(dz / dist_xy)
-        # If we are "above", dz (target - pos) is negative.
-        # "Above by 10 degrees" means angle of drone seen from target is > 10?
-        # Or angle of target seen from drone is < -10?
         # User said: "if we are above the object by at least 10 degrees"
-        # Relative vector from Target to Drone: V = P - T = -D.
-        # Elevation of Drone w.r.t Target: arctan((Pz-Tz)/dist_xy).
-        # We want Elevation >= 10 degrees.
-
         rel_h = pz - tz
         elevation_rad = np.arctan2(rel_h, dist_xy)
         threshold_rad = np.deg2rad(10.0)
 
         # Virtual Target Logic
         # If elevation < 10 deg, aim higher.
-        # We need to aim for a point that satisfies the condition.
-        # "imagine 2 steps: 1. go to altitude... 2. linear path"
-        # We set a virtual target that forces a climb.
-        # Target Z should be such that angle is comfortable (say 15 deg).
-        # T_virtual_z = Tz + dist_xy * tan(15 deg).
-        # If we fly to T_virtual, we climb.
-
         target_z_eff = tz.copy()
         mask_low = elevation_rad < threshold_rad
 
         # For low agents, set target Z higher
         target_angle_rad = np.deg2rad(15.0)
         req_h = dist_xy * np.tan(target_angle_rad)
-        # We want Pz - Tz >= req_h eventually.
-        # Flying towards (Tx, Ty, Tz + req_h) will guide us there?
-        # Yes, linear path to a point above target.
 
         target_z_eff[mask_low] = tz[mask_low] + req_h[mask_low]
 
@@ -103,23 +85,12 @@ class LinearPlanner:
         evz = vz_des - vz
 
         # PID for Acceleration Command
-        # Kp * error
         Kp = 2.0
         ax_cmd = Kp * evx
         ay_cmd = Kp * evy
         az_cmd = Kp * evz
 
         # Inverse Dynamics to get Thrust Vector
-        # F_net = m * a
-        # F_thrust + F_drag + F_gravity = m * a
-        # F_thrust = m*a - F_drag - F_gravity
-        # F_drag = -drag * v
-        # F_gravity = [0, 0, -mg]
-
-        # F_thrust_req_x = m*ax - (-drag*vx) - 0
-        # F_thrust_req_y = m*ay - (-drag*vy) - 0
-        # F_thrust_req_z = m*az - (-drag*vz) - (-mg)
-
         Fx_req = mass * ax_cmd + drag * vx
         Fy_req = mass * ay_cmd + drag * vy
         Fz_req = mass * az_cmd + drag * vz + mass * self.g
@@ -130,29 +101,12 @@ class LinearPlanner:
         thrust_cmd = np.clip(thrust_cmd, 0.0, 1.0)
 
         # Compute Desired Attitude (Z-axis alignment)
-        # Body Z axis should point along F_req
-        # zb_des = F_req / |F_req|
         zbx = Fx_req / F_total
         zby = Fy_req / F_total
         zbz = Fz_req / F_total
 
         # Yaw Alignment: Point nose at target (xy plane)
         yaw_des = np.arctan2(dy, dx)
-
-        # We need to construct a Rotation Matrix R_des = [xb, yb, zb]
-        # We know zb. We know yaw_des.
-        # Construct yb_des approx (Unit Y rotated by yaw)?
-        # Standard approach:
-        # xc_des = [cos(yaw), sin(yaw), 0]
-        # yb_des = cross(zb_des, xc_des).normalize
-        # xb_des = cross(yb_des, zb_des)
-
-        yc_des_x = -np.sin(yaw_des)
-        yc_des_y = np.cos(yaw_des)
-        yc_des_z = np.zeros_like(yaw_des)
-
-        # If zb is parallel to z (hover), cross product singularity.
-        # But here yaw defines X/Y orientation.
 
         # Better:
         # xb_temp = [cos(yaw), sin(yaw), 0]
@@ -179,12 +133,6 @@ class LinearPlanner:
         xb_z = yb_x * zby - yb_y * zbx
 
         # Extract Roll/Pitch from R = [xb, yb, zb]
-        # R31 = -sin(pitch) -> xb_z
-        # pitch = -asin(xb_z)
-        # R32 = sin(roll)cos(pitch) -> yb_z
-        # R33 = cos(roll)cos(pitch) -> zb_z
-        # roll = atan2(yb_z, zb_z)
-
         pitch_des = -np.arcsin(np.clip(xb_z, -1.0, 1.0))
         roll_des = np.arctan2(yb_z, zbz)
 
@@ -216,119 +164,71 @@ class LinearPlanner:
 def evaluate_oracle():
     logging.info("Starting Evaluation (LinearPlanner)...")
 
-    num_agents = 10
+    # Scenarios: 3 Distances x 3 Heights = 9 Agents
+    # Distances: 5, 40, 100
+    # Heights: 0, 20, 50 (Relative to target)
+    dists = [5.0, 40.0, 100.0]
+    heights = [0.0, 20.0, 50.0]
+
+    num_agents = len(dists) * len(heights) # 9
+
     env = DroneEnv(num_agents=num_agents, episode_length=100)
     planner = LinearPlanner(num_agents)
     viz = Visualizer()
 
     env.reset_all_envs()
 
-    # SLOW DOWN TARGETS
-    env.data_dictionary['traj_params'][1, :] *= 0.3
-    env.data_dictionary['traj_params'][4, :] *= 0.3
-    env.data_dictionary['traj_params'][7, :] *= 0.3
-
     # --------------------------------------------------------------------------
     # FORCED INITIALIZATION FOR VALIDATION
     # --------------------------------------------------------------------------
-    # Agent 0: Low Distance (~5m)
-    # Agent 1: Mid Distance (~100m)
-    # Agent 2: High Distance (~200m)
-    # Same Target Trajectory for all 3.
-    # --------------------------------------------------------------------------
 
-    # Copy Target Params from Agent 0 to 1 and 2
-    env.data_dictionary['traj_params'][:, 1] = env.data_dictionary['traj_params'][:, 0]
-    env.data_dictionary['traj_params'][:, 2] = env.data_dictionary['traj_params'][:, 0]
+    # 1. Uniform Target Trajectory
+    # Use Agent 0's params for everyone to ensure comparable tracking task
+    # SLOW DOWN TARGETS
+    env.data_dictionary['traj_params'][1, :] *= 0.3 # Slow Fx
+    env.data_dictionary['traj_params'][4, :] *= 0.3 # Slow Fy
+    env.data_dictionary['traj_params'][7, :] *= 0.3 # Slow Fz
+
+    ref_params = env.data_dictionary['traj_params'][:, 0].copy()
+    for i in range(1, num_agents):
+        env.data_dictionary['traj_params'][:, i] = ref_params
 
     # Re-update precomputed trajectories since we changed params
     env.update_target_trajectory()
 
     # Get Initial Target Positions (t=0)
-    # They should be identical now for 0, 1, 2
     vt_x = env.data_dictionary['vt_x']
     vt_y = env.data_dictionary['vt_y']
     vt_z = env.data_dictionary['vt_z']
 
-    # We need to re-init drone positions based on these targets
-    # Agent 0: 5m
-    angle0 = np.random.rand() * 2 * np.pi
-    env.data_dictionary['pos_x'][0] = vt_x[0] + 5.0 * np.cos(angle0)
-    env.data_dictionary['pos_y'][0] = vt_y[0] + 5.0 * np.sin(angle0)
-    env.data_dictionary['pos_z'][0] = vt_z[0] # Same alt
+    # 2. Position Initialization
+    scenario_labels = []
+    idx = 0
+    for d in dists:
+        for h in heights:
+            # Set Position
+            angle = np.random.rand() * 2 * np.pi
+            env.data_dictionary['pos_x'][idx] = vt_x[idx] + d * np.cos(angle)
+            env.data_dictionary['pos_y'][idx] = vt_y[idx] + d * np.sin(angle)
+            env.data_dictionary['pos_z'][idx] = vt_z[idx] + h
 
-    # Agent 1: 100m
-    angle1 = np.random.rand() * 2 * np.pi
-    env.data_dictionary['pos_x'][1] = vt_x[1] + 100.0 * np.cos(angle1)
-    env.data_dictionary['pos_y'][1] = vt_y[1] + 100.0 * np.sin(angle1)
-    env.data_dictionary['pos_z'][1] = vt_z[1] # Same alt
+            # Reset Velocities
+            env.data_dictionary['vel_x'][idx] = 0.0
+            env.data_dictionary['vel_y'][idx] = 0.0
+            env.data_dictionary['vel_z'][idx] = 0.0
 
-    # Agent 2: 200m
-    angle2 = np.random.rand() * 2 * np.pi
-    env.data_dictionary['pos_x'][2] = vt_x[2] + 200.0 * np.cos(angle2)
-    env.data_dictionary['pos_y'][2] = vt_y[2] + 200.0 * np.sin(angle2)
-    env.data_dictionary['pos_z'][2] = vt_z[2] # Same alt
+            scenario_labels.append(f"d{int(d)}_h{int(h)}")
+            idx += 1
 
-    # Reset Velocities to point at target?
-    # The environment reset likely set random velocities. We can leave them or zero them.
-    # Let's zero them to be clean.
-    env.data_dictionary['vel_x'][:3] = 0.0
-    env.data_dictionary['vel_y'][:3] = 0.0
-    env.data_dictionary['vel_z'][:3] = 0.0
+    logging.info(f"Initialized {num_agents} agents with scenarios: {scenario_labels}")
 
-    # We must also update observations because we moved the drones manually!
-    # DroneEnv doesn't have a Python method to recompute all obs from state easily
-    # except via Step or Reset. Reset would randomize again.
-    # However, `update_target_trajectory` was called.
-    # We can rely on the first Step to fix physics, but initial `obs` input to planner will be wrong.
-    # Fortunately, `reset_cpu` logic calculated obs.
-    # Let's just do a hack: Call step with zero actions for 1 step to align things?
-    # No, that advances time.
-    # Let's just update the specific history/obs manually for these 3 agents? Too complex.
-    # Better approach:
-    # The reset function logic was:
-    # 1. Randomize Params
-    # 2. Calc Target Pos
-    # 3. Set Drone Pos
-    # 4. Calc Obs
-    # We can't easily re-invoke step 4 without calling reset.
-    # BUT, we can use the `recompute_initial_observations` if available?
-    # Memory says: "The DroneEnv now includes a recompute_initial_observations method... wrapping a Cython helper".
-    # Let's use that!
+    # Data collection
+    actual_traj = [[] for _ in range(num_agents)]
+    target_traj = [[] for _ in range(num_agents)]
+    tracker_data = [[] for _ in range(num_agents)]
+    optimal_traj = [[] for _ in range(num_agents)]
 
-    if hasattr(env, 'recompute_initial_observations'):
-        # This method is not in the python source I read earlier in `drone.py`.
-        # Wait, memory said it "now includes". Let's check `drone.py` again.
-        # I read `drone.py` earlier and it did NOT have `recompute_initial_observations`.
-        # It had `update_target_trajectory`.
-        # Maybe memory is from a different version or I missed it?
-        # I read the file content in Step 1 of previous turn. It was not there.
-        # So I have to assume I cannot use it.
-        # I will manually update the relevant observations for the planner (Pos, Vel, Target).
-        pass
-
-    # Since I cannot easily recompute obs without duplicating logic, I will accept that
-    # the first step might have "jumpy" controls if obs are slightly off (they correspond to
-    # where the drone WAS initialized by reset, not where I moved it).
-    # actually, the reset initialized them at random distances.
-    # If I move them, the `pos_x` etc are updated.
-    # The `observations` array still holds old relative position data.
-    # The Planner uses `current_state` dict (pos_x, pos_y...) for position.
-    # It uses `obs` for history (which is zeroed at start) and tracker features.
-    # Tracker features might be wrong for first step.
-    # Let's live with it for validation. It will correct in step 1.
-
-    # Data collection for 3 agents
-    actual_traj = [[], [], []]
-    target_traj = [[], [], []]
-    tracker_data = [[], [], []]
-    optimal_traj = [[], [], []]
-
-    distances = [[], [], []]
-    altitude_diffs = [] # Defined here
-    velocities = []
-
-    traj_params = env.data_dictionary['traj_params']
+    distances_log = [[] for _ in range(num_agents)]
 
     max_steps = 400
     for step in range(max_steps):
@@ -342,27 +242,20 @@ def evaluate_oracle():
         vt_z_all = env.data_dictionary['vt_z']
 
         current_distances = []
-        # Collect for Agents 0, 1, 2
-        for i in range(3):
+        for i in range(num_agents):
             actual_traj[i].append([pos_x[i], pos_y[i], pos_z[i]])
             target_traj[i].append([vt_x_all[i], vt_y_all[i], vt_z_all[i]])
             tracker_data[i].append(obs[i, 304:308].copy())
 
             d = np.sqrt((pos_x[i]-vt_x_all[i])**2 + (pos_y[i]-vt_y_all[i])**2 + (pos_z[i]-vt_z_all[i])**2)
-            distances[i].append(d)
+            distances_log[i].append(d)
             current_distances.append(d)
-
-        # Agent 0 Data for plotting (Legacy support)
-        # Altitude Diff = Drone Z - Target Z. Should be >= 0.
-        altitude_diffs.append(pos_z[0] - vt_z_all[0])
-        velocities.append(np.sqrt(env.data_dictionary['vel_x'][0]**2 + env.data_dictionary['vel_y'][0]**2 + env.data_dictionary['vel_z'][0]**2))
 
         # Check Termination
         if all(d < 0.05 for d in current_distances):
-            logging.info(f"All 3 agents reached within 0.05m at step {step}. Terminating.")
+            logging.info(f"All agents reached within 0.05m at step {step}. Terminating.")
             break
 
-        t_current = float(step) * 0.05
         current_state = {
             'pos_x': env.data_dictionary['pos_x'],
             'pos_y': env.data_dictionary['pos_y'],
@@ -379,10 +272,7 @@ def evaluate_oracle():
         }
 
         # Compute Reference Trajectory for Visualization
-        # Should reflect the 2-step logic if active
         planned_pos_linear = np.zeros((num_agents, 10, 3))
-
-        # Snapshot current state for projection
         px_sim = env.data_dictionary['pos_x'].copy()
         py_sim = env.data_dictionary['pos_y'].copy()
         pz_sim = env.data_dictionary['pos_z'].copy()
@@ -391,10 +281,7 @@ def evaluate_oracle():
         ty = env.data_dictionary['vt_y']
         tz = env.data_dictionary['vt_z']
 
-        # Simulate the logic for 10 steps roughly
-        # This is just for visualization, simple Euler integration of the planner logic
         sim_dt = 0.05
-
         for step_idx in range(10):
             dx_s = tx - px_sim
             dy_s = ty - py_sim
@@ -410,8 +297,7 @@ def evaluate_oracle():
 
             dz_s = tz_eff_s - pz_sim
             dist_s = np.sqrt(dx_s**2 + dy_s**2 + dz_s**2) + 1e-6
-
-            speed_s = 10.0 # Approx cruise
+            speed_s = 10.0
 
             vx_s = (dx_s / dist_s) * speed_s
             vy_s = (dy_s / dist_s) * speed_s
@@ -425,11 +311,10 @@ def evaluate_oracle():
             planned_pos_linear[:, step_idx, 1] = py_sim
             planned_pos_linear[:, step_idx, 2] = pz_sim
 
-        for i in range(3):
+        for i in range(num_agents):
             optimal_traj[i].append(planned_pos_linear[i])
 
-        # Compute Actions using LinearPlanner
-        # Target Pos
+        # Compute Actions
         target_pos_current = np.stack([
             env.data_dictionary['vt_x'],
             env.data_dictionary['vt_y'],
@@ -437,7 +322,6 @@ def evaluate_oracle():
         ], axis=1)
 
         current_action_np = planner.compute_actions(current_state, target_pos_current)
-
         env.data_dictionary['actions'][:] = current_action_np.reshape(-1)
 
         step_kwargs = env.get_step_function_kwargs()
@@ -452,57 +336,50 @@ def evaluate_oracle():
 
         env.step_function(**step_args)
 
-    # Process Data for GIFs
-    labels = ["low", "mid", "high"]
-    for i in range(3):
+    # Visualization
+    # 1. Generate GIFs
+    for i in range(num_agents):
         at = np.array(actual_traj[i])[np.newaxis, :, :]
         tt = np.array(target_traj[i])[np.newaxis, :, :]
         td = np.array(tracker_data[i])[np.newaxis, :, :]
 
-        # Visualize
-        gif_path = viz.save_episode_gif(0, at[0], tt[0], td[0], filename_suffix=f"_{labels[i]}", optimal_trajectory=optimal_traj[i])
+        gif_path = viz.save_episode_gif(0, at[0], tt[0], td[0], filename_suffix=f"_{scenario_labels[i]}", optimal_trajectory=optimal_traj[i])
 
-        final_name = f"validation_{labels[i]}.gif"
+        final_name = f"validation_{scenario_labels[i]}.gif"
         if os.path.exists(gif_path):
             if os.path.exists(final_name):
                 os.remove(final_name)
             os.rename(gif_path, final_name)
             logging.info(f"Generated {final_name}")
 
-    time_steps = np.arange(len(distances[0])) * 0.05
+    # 2. Generate Plots
+    time_steps = np.arange(len(distances_log[0])) * 0.05
 
-    plt.figure(figsize=(10, 5))
-    plt.plot(time_steps, distances[0], label='Low (5m)')
-    plt.plot(time_steps, distances[1], label='Mid (100m)')
-    plt.plot(time_steps, distances[2], label='High (200m)')
-    plt.axhline(y=0.2, color='r', linestyle='--', label='Capture Threshold')
-    plt.xlabel('Time (s)')
-    plt.ylabel('Distance (m)')
-    plt.title('Validation: Distance vs Time')
-    plt.legend()
-    plt.grid(True)
-    plt.savefig('distance_vs_time.png')
-    logging.info("Saved distance_vs_time.png")
+    # Plot Distance vs Time (grouped by Distance)
+    # Colors for heights: 0:Blue, 20:Green, 50:Red
+    colors = ['b', 'g', 'r']
 
-    plt.figure(figsize=(10, 5))
-    plt.plot(time_steps, velocities, label='Speed (m/s)')
-    plt.xlabel('Time (s)')
-    plt.ylabel('Speed (m/s)')
-    plt.title('Agent 0: Speed vs Time')
-    plt.grid(True)
-    plt.savefig('speed_vs_time.png')
-    logging.info("Saved speed_vs_time.png")
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharey=True)
 
-    plt.figure(figsize=(10, 5))
-    plt.plot(time_steps, altitude_diffs, label='Altitude Diff (Drone - Target)')
-    plt.axhline(y=0.0, color='r', linestyle='--', label='Same Height')
-    plt.xlabel('Time (s)')
-    plt.ylabel('Delta Z (m)')
-    plt.title('Agent 0: Altitude Difference (Positive = Above)')
-    plt.legend()
-    plt.grid(True)
-    plt.savefig('altitude_vs_time.png')
-    logging.info("Saved altitude_vs_time.png")
+    idx = 0
+    for d_i, d_val in enumerate(dists):
+        ax = axes[d_i]
+        for h_i, h_val in enumerate(heights):
+            label = f"H+{int(h_val)}m"
+            ax.plot(time_steps, distances_log[idx], label=label, color=colors[h_i])
+            idx += 1
+
+        ax.set_title(f"Start Distance: {d_val}m")
+        ax.set_xlabel("Time (s)")
+        if d_i == 0:
+            ax.set_ylabel("Distance to Target (m)")
+        ax.axhline(y=0.2, color='k', linestyle='--', alpha=0.5, label='Capture')
+        ax.grid(True)
+        ax.legend()
+
+    plt.tight_layout()
+    plt.savefig('validation_distances.png')
+    logging.info("Saved validation_distances.png")
 
 if __name__ == "__main__":
     evaluate_oracle()
