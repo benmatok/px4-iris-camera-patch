@@ -112,7 +112,10 @@ class SupervisedTrainer:
 
             self.step_env()
 
-        return total_loss / self.episode_length
+            if d['done_flags'].all() == 1.0:
+                 break
+
+        return total_loss / (t + 1)
 
     def validate_episode(self, visualizer=None, iteration=0, visualize=False):
         """
@@ -161,6 +164,9 @@ class SupervisedTrainer:
                 track = obs_np[:, 304:308].copy()
                 tracker_history.append(track)
 
+                if d['done_flags'].all() == 1.0:
+                     break
+
         # Final Distance (at last step)
         final_dist = dist.mean() # Mean over agents
 
@@ -183,7 +189,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_agents", type=int, default=200)
     parser.add_argument("--iterations", type=int, default=5000)
-    parser.add_argument("--episode_length", type=int, default=100) # User asked for "each step... run oracle". Longer episodes allow convergence.
+    parser.add_argument("--episode_length", type=int, default=400) # User asked for "each step... run oracle". Longer episodes allow convergence.
     parser.add_argument("--load", type=str, default=None)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--viz_freq", type=int, default=100, help="Frequency of visualization generation")
