@@ -173,27 +173,8 @@ inline void step_agents_avx2(
     // ------------------------------------------------------------------------
     // Wind Update
     // ------------------------------------------------------------------------
-    // Random Walk: +/- 0.2
-    __m256 w_n1 = avx_rng_float(rng_state);
-    __m256 w_n2 = avx_rng_float(rng_state);
-    __m256 w_n3 = avx_rng_float(rng_state);
-
-    __m256 c_w_scale = _mm256_set1_ps(0.2f);
-    __m256 c_w_off = _mm256_set1_ps(0.5f);
-
-    wx = _mm256_add_ps(wx, _mm256_mul_ps(_mm256_sub_ps(w_n1, c_w_off), c_w_scale));
-    wy = _mm256_add_ps(wy, _mm256_mul_ps(_mm256_sub_ps(w_n2, c_w_off), c_w_scale));
-    wz = _mm256_add_ps(wz, _mm256_mul_ps(_mm256_sub_ps(w_n3, c_w_off), c_w_scale));
-
-    // Clamp Wind
-    __m256 w_max_xy = _mm256_set1_ps(10.0f);
-    __m256 w_max_z = _mm256_set1_ps(5.0f);
-    __m256 w_min_xy = _mm256_set1_ps(-10.0f);
-    __m256 w_min_z = _mm256_set1_ps(-5.0f);
-
-    wx = _mm256_max_ps(w_min_xy, _mm256_min_ps(wx, w_max_xy));
-    wy = _mm256_max_ps(w_min_xy, _mm256_min_ps(wy, w_max_xy));
-    wz = _mm256_max_ps(w_min_z, _mm256_min_ps(wz, w_max_z));
+    // Removed wind noise as per instruction.
+    // Wind remains constant (0.0 initialized).
 
     _mm256_storeu_ps(&wind_x[i], wx);
     _mm256_storeu_ps(&wind_y[i], wy);

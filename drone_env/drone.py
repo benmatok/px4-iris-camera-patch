@@ -105,16 +105,8 @@ def step_cpu(
     r, p, y_ang = roll, pitch, yaw
 
     # Wind Update (Random Walk)
-    # Add small random noise to wind
-    wind_noise = np.random.normal(0, 0.1, (num_agents, 3))
-    wind_x += wind_noise[:, 0]
-    wind_y += wind_noise[:, 1]
-    wind_z += wind_noise[:, 2]
-    # Decay slightly to keep bounded? Or clamp?
-    # Let's simple clamp for stability
-    wind_x[:] = np.clip(wind_x, -10.0, 10.0)
-    wind_y[:] = np.clip(wind_y, -10.0, 10.0)
-    wind_z[:] = np.clip(wind_z, -5.0, 5.0)
+    # Removed wind noise as per instruction
+    # wind_x, wind_y, wind_z remain constant (likely 0.0)
 
     # Update Virtual Target using Trajectory Params
     t = step_counts[0] + 1
@@ -378,13 +370,15 @@ def reset_cpu(
     masses[:] = 0.5 + np.random.rand(num_agents) * 2.0
     # Drag: 0.05 to 0.2
     drag_coeffs[:] = 0.05 + np.random.rand(num_agents) * 0.15
-    # Thrust: 0.5 to 1.5 (Engines)
-    thrust_coeffs[:] = 0.5 + np.random.rand(num_agents) * 1.0
+    # Thrust: Fixed at 2.0 to ensure T/W > 1.0 for max mass (2.5kg)
+    # Max Weight = 2.5 * 9.81 = 24.5N. Base Thrust=20N.
+    # With Coeff=2.0, Max Thrust=40N.
+    thrust_coeffs[:] = 2.0
 
-    # Wind: Random vector, magnitude 0-5m/s
-    wind_x[:] = (np.random.rand(num_agents) - 0.5) * 10.0
-    wind_y[:] = (np.random.rand(num_agents) - 0.5) * 10.0
-    wind_z[:] = (np.random.rand(num_agents) - 0.5) * 2.0 # Less vertical wind
+    # Wind: Zeroed out
+    wind_x[:] = 0.0
+    wind_y[:] = 0.0
+    wind_z[:] = 0.0
 
     # Delays: 0 to 10 steps (0-500ms)
     delays[:] = np.random.randint(0, 11, size=num_agents)

@@ -234,12 +234,15 @@ def evaluate_oracle():
     # Agent 0: Low Distance (~5m)
     # Agent 1: Mid Distance (~100m)
     # Agent 2: High Distance (~200m)
-    # Same Target Trajectory for all 3.
+    # Agent 3: Low Altitude Diff (+5m Z)
+    # Agent 4: Mid Altitude Diff (+30m Z)
+    # Agent 5: High Altitude Diff (+80m Z)
+    # Same Target Trajectory for all.
     # --------------------------------------------------------------------------
 
-    # Copy Target Params from Agent 0 to 1 and 2
-    env.data_dictionary['traj_params'][:, 1] = env.data_dictionary['traj_params'][:, 0]
-    env.data_dictionary['traj_params'][:, 2] = env.data_dictionary['traj_params'][:, 0]
+    # Copy Target Params from Agent 0 to others
+    for i in range(1, 6):
+        env.data_dictionary['traj_params'][:, i] = env.data_dictionary['traj_params'][:, 0]
 
     # Re-update precomputed trajectories since we changed params
     env.update_target_trajectory()
@@ -269,12 +272,33 @@ def evaluate_oracle():
     env.data_dictionary['pos_y'][2] = vt_y[2] + 200.0 * np.sin(angle2)
     env.data_dictionary['pos_z'][2] = vt_z[2] # Same alt
 
+    # Altitude Validation Agents (Fixed Horizontal Distance 50m)
+    dist_h = 50.0
+
+    # Agent 3: +5m Altitude
+    angle3 = np.random.rand() * 2 * np.pi
+    env.data_dictionary['pos_x'][3] = vt_x[3] + dist_h * np.cos(angle3)
+    env.data_dictionary['pos_y'][3] = vt_y[3] + dist_h * np.sin(angle3)
+    env.data_dictionary['pos_z'][3] = vt_z[3] + 5.0
+
+    # Agent 4: +30m Altitude
+    angle4 = np.random.rand() * 2 * np.pi
+    env.data_dictionary['pos_x'][4] = vt_x[4] + dist_h * np.cos(angle4)
+    env.data_dictionary['pos_y'][4] = vt_y[4] + dist_h * np.sin(angle4)
+    env.data_dictionary['pos_z'][4] = vt_z[4] + 30.0
+
+    # Agent 5: +80m Altitude
+    angle5 = np.random.rand() * 2 * np.pi
+    env.data_dictionary['pos_x'][5] = vt_x[5] + dist_h * np.cos(angle5)
+    env.data_dictionary['pos_y'][5] = vt_y[5] + dist_h * np.sin(angle5)
+    env.data_dictionary['pos_z'][5] = vt_z[5] + 80.0
+
     # Reset Velocities to point at target?
     # The environment reset likely set random velocities. We can leave them or zero them.
     # Let's zero them to be clean.
-    env.data_dictionary['vel_x'][:3] = 0.0
-    env.data_dictionary['vel_y'][:3] = 0.0
-    env.data_dictionary['vel_z'][:3] = 0.0
+    env.data_dictionary['vel_x'][:6] = 0.0
+    env.data_dictionary['vel_y'][:6] = 0.0
+    env.data_dictionary['vel_z'][:6] = 0.0
 
     # We must also update observations because we moved the drones manually!
     # DroneEnv doesn't have a Python method to recompute all obs from state easily
@@ -318,14 +342,14 @@ def evaluate_oracle():
     # Tracker features might be wrong for first step.
     # Let's live with it for validation. It will correct in step 1.
 
-    # Data collection for 3 agents
-    actual_traj = [[], [], []]
-    target_traj = [[], [], []]
-    tracker_data = [[], [], []]
-    optimal_traj = [[], [], []]
+    # Data collection for 6 agents
+    actual_traj = [[] for _ in range(6)]
+    target_traj = [[] for _ in range(6)]
+    tracker_data = [[] for _ in range(6)]
+    optimal_traj = [[] for _ in range(6)]
 
-    distances = [[], [], []]
-    altitude_diffs = [] # Defined here
+    distances = [[] for _ in range(6)]
+    altitude_diffs_history = [[] for _ in range(6)]
     velocities = []
 
     traj_params = env.data_dictionary['traj_params']
@@ -342,8 +366,8 @@ def evaluate_oracle():
         vt_z_all = env.data_dictionary['vt_z']
 
         current_distances = []
-        # Collect for Agents 0, 1, 2
-        for i in range(3):
+        # Collect for Agents 0..5
+        for i in range(6):
             actual_traj[i].append([pos_x[i], pos_y[i], pos_z[i]])
             target_traj[i].append([vt_x_all[i], vt_y_all[i], vt_z_all[i]])
             tracker_data[i].append(obs[i, 304:308].copy())
@@ -351,15 +375,14 @@ def evaluate_oracle():
             d = np.sqrt((pos_x[i]-vt_x_all[i])**2 + (pos_y[i]-vt_y_all[i])**2 + (pos_z[i]-vt_z_all[i])**2)
             distances[i].append(d)
             current_distances.append(d)
+            altitude_diffs_history[i].append(pos_z[i] - vt_z_all[i])
 
         # Agent 0 Data for plotting (Legacy support)
-        # Altitude Diff = Drone Z - Target Z. Should be >= 0.
-        altitude_diffs.append(pos_z[0] - vt_z_all[0])
         velocities.append(np.sqrt(env.data_dictionary['vel_x'][0]**2 + env.data_dictionary['vel_y'][0]**2 + env.data_dictionary['vel_z'][0]**2))
 
-        # Check Termination
+        # Check Termination (if all are close)
         if all(d < 0.05 for d in current_distances):
-            logging.info(f"All 3 agents reached within 0.05m at step {step}. Terminating.")
+            logging.info(f"All agents reached within 0.05m at step {step}. Terminating.")
             break
 
         t_current = float(step) * 0.05
@@ -425,7 +448,7 @@ def evaluate_oracle():
             planned_pos_linear[:, step_idx, 1] = py_sim
             planned_pos_linear[:, step_idx, 2] = pz_sim
 
-        for i in range(3):
+        for i in range(6):
             optimal_traj[i].append(planned_pos_linear[i])
 
         # Compute Actions using LinearPlanner
@@ -453,8 +476,8 @@ def evaluate_oracle():
         env.step_function(**step_args)
 
     # Process Data for GIFs
-    labels = ["low", "mid", "high"]
-    for i in range(3):
+    labels = ["dist_low", "dist_mid", "dist_high", "alt_low", "alt_mid", "alt_high"]
+    for i in range(6):
         at = np.array(actual_traj[i])[np.newaxis, :, :]
         tt = np.array(target_traj[i])[np.newaxis, :, :]
         td = np.array(tracker_data[i])[np.newaxis, :, :]
@@ -471,18 +494,33 @@ def evaluate_oracle():
 
     time_steps = np.arange(len(distances[0])) * 0.05
 
+    # Distance Plot - Distance Group
     plt.figure(figsize=(10, 5))
-    plt.plot(time_steps, distances[0], label='Low (5m)')
-    plt.plot(time_steps, distances[1], label='Mid (100m)')
-    plt.plot(time_steps, distances[2], label='High (200m)')
+    plt.plot(time_steps, distances[0], label='Low Dist (5m)')
+    plt.plot(time_steps, distances[1], label='Mid Dist (100m)')
+    plt.plot(time_steps, distances[2], label='High Dist (200m)')
     plt.axhline(y=0.2, color='r', linestyle='--', label='Capture Threshold')
     plt.xlabel('Time (s)')
     plt.ylabel('Distance (m)')
-    plt.title('Validation: Distance vs Time')
+    plt.title('Validation: Distance vs Time (Distance Group)')
     plt.legend()
     plt.grid(True)
-    plt.savefig('distance_vs_time.png')
-    logging.info("Saved distance_vs_time.png")
+    plt.savefig('distance_vs_time_dist.png')
+    logging.info("Saved distance_vs_time_dist.png")
+
+    # Distance Plot - Altitude Group
+    plt.figure(figsize=(10, 5))
+    plt.plot(time_steps, distances[3], label='Low Alt (+5m)')
+    plt.plot(time_steps, distances[4], label='Mid Alt (+30m)')
+    plt.plot(time_steps, distances[5], label='High Alt (+80m)')
+    plt.axhline(y=0.2, color='r', linestyle='--', label='Capture Threshold')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Distance (m)')
+    plt.title('Validation: Distance vs Time (Altitude Group)')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig('distance_vs_time_alt.png')
+    logging.info("Saved distance_vs_time_alt.png")
 
     plt.figure(figsize=(10, 5))
     plt.plot(time_steps, velocities, label='Speed (m/s)')
@@ -493,12 +531,15 @@ def evaluate_oracle():
     plt.savefig('speed_vs_time.png')
     logging.info("Saved speed_vs_time.png")
 
+    # Altitude Diff Plot
     plt.figure(figsize=(10, 5))
-    plt.plot(time_steps, altitude_diffs, label='Altitude Diff (Drone - Target)')
+    plt.plot(time_steps, altitude_diffs_history[3], label='Low Alt (+5m)')
+    plt.plot(time_steps, altitude_diffs_history[4], label='Mid Alt (+30m)')
+    plt.plot(time_steps, altitude_diffs_history[5], label='High Alt (+80m)')
     plt.axhline(y=0.0, color='r', linestyle='--', label='Same Height')
     plt.xlabel('Time (s)')
     plt.ylabel('Delta Z (m)')
-    plt.title('Agent 0: Altitude Difference (Positive = Above)')
+    plt.title('Altitude Difference (Positive = Above)')
     plt.legend()
     plt.grid(True)
     plt.savefig('altitude_vs_time.png')

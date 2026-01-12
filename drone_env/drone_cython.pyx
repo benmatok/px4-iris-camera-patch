@@ -148,17 +148,9 @@ cdef void _step_agent_scalar(
     wy = wind_y[i]
     wz = wind_z[i]
 
-    wx += (rand_float() - 0.5) * 0.2
-    wy += (rand_float() - 0.5) * 0.2
-    wz += (rand_float() - 0.5) * 0.2
-
-    # Clamp
-    if wx > 10.0: wx = 10.0
-    if wx < -10.0: wx = -10.0
-    if wy > 10.0: wy = 10.0
-    if wy < -10.0: wy = -10.0
-    if wz > 5.0: wz = 5.0
-    if wz < -5.0: wz = -5.0
+    # Wind noise removed
+    # wx += (rand_float() - 0.5) * 0.2
+    # ...
 
     wind_x[i] = wx
     wind_y[i] = wy
@@ -543,12 +535,13 @@ cdef void _reset_agent_scalar_wrapper(
     # Randomize Dynamics (Wider)
     masses[i] = 0.5 + rand_float() * 2.0 # 0.5 - 2.5
     drag_coeffs[i] = 0.05 + rand_float() * 0.15 # 0.05 - 0.2
-    thrust_coeffs[i] = 0.5 + rand_float() * 1.0 # 0.5 - 1.5
+    # Thrust: Fixed at 2.0 (See drone.py for reasoning)
+    thrust_coeffs[i] = 2.0
 
-    # Wind (random 0-5m/s vector)
-    wind_x[i] = (rand_float() - 0.5) * 10.0
-    wind_y[i] = (rand_float() - 0.5) * 10.0
-    wind_z[i] = (rand_float() - 0.5) * 2.0
+    # Wind (Zero)
+    wind_x[i] = 0.0
+    wind_y[i] = 0.0
+    wind_z[i] = 0.0
 
     # Delays (0-10)
     delays[i] = <int>(rand_float() * 11.0)
