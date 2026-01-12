@@ -9,8 +9,7 @@ from tqdm import tqdm
 
 from drone_env.drone import DroneEnv
 from models.ae_policy import DronePolicy
-from rrt_planner import AggressiveOracle
-from models.predictive_policy import Chebyshev
+from train_jules import LinearPlanner
 from visualization import Visualizer
 
 # Configure Logging
@@ -27,24 +26,10 @@ class SupervisedTrainer:
         self.dt = 0.05
 
         # Optimizer (Adam for simplicity, training only the policy)
-        # We include action_log_std although it might not be used in MSE,
-        # but the policy outputs it. We mainly train the network weights.
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=learning_rate)
 
         # Loss Function
         self.loss_fn = nn.MSELoss()
-
-        # Buffers for Visualization/Metrics
-        self.obs_buffer = np.zeros((episode_length, num_agents, 308), dtype=np.float32)
-        self.actions_buffer = np.zeros((episode_length, num_agents, 4), dtype=np.float32) # Student Actions
-        self.oracle_actions_buffer = np.zeros((episode_length, num_agents, 4), dtype=np.float32)
-
-        # Helper for Chebyshev evaluation
-        # Oracle returns coeffs for 4 dims, degree 4 -> 5 coeffs.
-        # Window is [t, t+0.5] mapped to [-1, 1]. t=0 corresponds to -1.
-        self.cheb = Chebyshev(num_points=1, degree=4, device='cpu')
-        # We only need to evaluate at -1.0
-        self.eval_point = torch.tensor([-1.0], dtype=torch.float32)
 
         # Pre-resolve step arguments to avoid dict lookup in loop
         d = self.env.data_dictionary
@@ -69,17 +54,12 @@ class SupervisedTrainer:
     def train_episode(self):
         self.env.reset_all_envs()
 
-        # Oracle internal reset
-        self.oracle.previous_coeffs = None
-
         total_loss = 0.0
 
         # Data access
         d = self.env.data_dictionary
 
         for t in range(self.episode_length):
-            t_start = t * self.dt
-
             # 1. Get State for Oracle
             obs_np = d["observations"]
             if self.debug:
@@ -87,15 +67,27 @@ class SupervisedTrainer:
 
             obs_torch = torch.from_numpy(obs_np).float()
 
+            # Construct State Dict for LinearPlanner (needs explicit keys)
+            current_state = {
+                'pos_x': d['pos_x'],
+                'pos_y': d['pos_y'],
+                'pos_z': d['pos_z'],
+                'vel_x': d['vel_x'],
+                'vel_y': d['vel_y'],
+                'vel_z': d['vel_z'],
+                'roll': d['roll'],
+                'pitch': d['pitch'],
+                'yaw': d['yaw'],
+                'masses': d['masses'],
+                'drag_coeffs': d['drag_coeffs'],
+                'thrust_coeffs': d['thrust_coeffs']
+            }
+            target_pos = np.stack([d['vt_x'], d['vt_y'], d['vt_z']], axis=1)
+
             # 2. Run Oracle (Expert)
-            # Returns (N, 20) coeffs or similar
-            oracle_coeffs = self.oracle.plan(d, obs_np, d['traj_params'], t_start)
-
-            # Convert Coeffs to Action (Evaluate at t=0)
-            coeffs_view = oracle_coeffs.view(self.num_agents, 4, 5)
-
-            # Evaluate at -1.0 -> (N, 4)
-            oracle_actions = self.cheb.evaluate(coeffs_view, self.eval_point).squeeze(-1)
+            # Returns (N, 4) actions directly
+            oracle_actions_np = self.oracle.compute_actions(current_state, target_pos)
+            oracle_actions = torch.from_numpy(oracle_actions_np).float()
 
             # 3. Run Student (Policy)
             student_logits, _ = self.policy(obs_torch)
@@ -129,7 +121,6 @@ class SupervisedTrainer:
         Visualization: Store trajectories.
         """
         self.env.reset_all_envs()
-        self.oracle.previous_coeffs = None
 
         d = self.env.data_dictionary
 
@@ -164,30 +155,6 @@ class SupervisedTrainer:
                 dist = np.linalg.norm(pos - vt, axis=1)
 
                 # Store
-                if compute_oracle_viz:
-                    # Run Oracle to get PLAN (future trajectory)
-                    # We need to call plan() but it changes internal state (previous_coeffs).
-                    # We should clone/restore or just let it run?
-                    # Since this is validation and we don't use oracle for control,
-                    # running it update its internal warm start is fine, it tracks the student.
-                    t_start = t * self.dt
-                    coeffs = self.oracle.plan(d, obs_np, d['traj_params'], t_start)
-
-                    # Evaluate full horizon
-                    # coeffs: (N, 4, 5)
-                    # We want positions, not actions?
-                    # Oracle outputs ACTION coeffs.
-                    # To get position plan, we'd need to simulate forward.
-                    # AggressiveOracle has internal simulator.
-                    # Does it expose the planned trajectory?
-                    # The `plan` method returns coeffs.
-                    # Inside `plan`, it computes `P_t` (rollout pos).
-                    # We can't easily extract it without modifying Oracle.
-                    # However, we can visualize the TARGET trajectory which is known.
-                    # Or we can just skip oracle plan viz for now.
-                    # Visualizer supports it, but it's optional.
-                    pass
-
                 pos_history.append(pos)
                 target_history.append(vt)
                 # Tracker: u, v, size, conf
@@ -226,8 +193,7 @@ def main():
     env = DroneEnv(num_agents=args.num_agents, episode_length=args.episode_length, use_cuda=False)
 
     # Oracle
-    # Horizon 10 (0.5s), Iters 5
-    oracle = AggressiveOracle(env, horizon_steps=10, iterations=5)
+    oracle = LinearPlanner(num_agents=args.num_agents)
 
     # Student Policy
     policy = DronePolicy(observation_dim=308, action_dim=4, hidden_dim=256).cpu()
@@ -246,7 +212,7 @@ def main():
     # Visualizer
     visualizer = Visualizer()
 
-    logging.info(f"Starting Supervised Training: {args.num_agents} Agents, {args.iterations} Iterations")
+    logging.info(f"Starting Supervised Training (LinearPlanner): {args.num_agents} Agents, {args.iterations} Iterations")
 
     start_time = time.time()
 
