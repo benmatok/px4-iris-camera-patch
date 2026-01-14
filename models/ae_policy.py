@@ -392,15 +392,16 @@ class Autoencoder1D(nn.Module):
         return latent, recon_flat
 
 class DronePolicy(nn.Module):
-    def __init__(self, observation_dim=308, action_dim=4, hidden_dim=256, env=None, hidden_dims=None):
+    def __init__(self, observation_dim=304, action_dim=4, hidden_dim=256, env=None, hidden_dims=None):
         super(DronePolicy, self).__init__()
-        # Observation space is 308 (300 history + 4 target + 4 tracker)
+        # Observation space is 304 (300 history + 4 tracker)
+        # Removed 4 relative target state vars
 
         self.observation_dim = observation_dim
         self.action_dim = action_dim
 
         self.history_dim = 300
-        self.target_dim = 4 # Target Commands
+        # self.target_dim = 4 # REMOVED (Rel Vel)
         self.tracker_dim = 4 # Tracker Features
         self.latent_dim = 20
 
@@ -410,8 +411,8 @@ class DronePolicy(nn.Module):
 
         self.ae = Autoencoder1D(input_dim=10, seq_len=30, latent_dim=self.latent_dim)
 
-        # RL Agent Input: Latent(20) + Target(4) + Tracker(4) = 28
-        input_dim = self.latent_dim + self.target_dim + self.tracker_dim
+        # RL Agent Input: Latent(20) + Tracker(4) = 24
+        input_dim = self.latent_dim + self.tracker_dim
 
         # Separate feature extraction from heads
         feature_layers = []
@@ -437,18 +438,17 @@ class DronePolicy(nn.Module):
         self.action_log_std = nn.Parameter(torch.ones(1, self.action_dim) * -0.69)
 
     def forward(self, obs):
-        # Obs: (Batch, 308)
+        # Obs: (Batch, 304)
 
         history = obs[:, :self.history_dim]
-        # targets = 300:304
-        # tracker = 304:308
-        aux_features = obs[:, self.history_dim:] # (Batch, 8)
+        # tracker = 300:304
+        aux_features = obs[:, self.history_dim:] # (Batch, 4)
 
         # Autoencode
         latent, recon = self.ae(history)
 
         # RL Input
-        rl_input = torch.cat([latent, aux_features], dim=1) # 20 + 8 = 28
+        rl_input = torch.cat([latent, aux_features], dim=1) # 20 + 4 = 24
 
         # Feature Extraction
         features = self.feature_extractor(rl_input)

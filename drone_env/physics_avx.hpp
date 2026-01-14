@@ -12,12 +12,12 @@ static const float DT = 0.05f;
 static const float GRAVITY = 9.81f;
 static const int SUBSTEPS = 2;
 
-// Helper: Custom Memmove using AVX for new obs size (308)
+// Helper: Custom Memmove using AVX for new obs size (304)
 // Shift 0..290 <- 10..300
 // 290 floats shift.
 inline void shift_observations_avx(float* observations, int i) {
     for (int k = 0; k < 8; k++) {
-        float* ptr = &observations[(i + k) * 308];
+        float* ptr = &observations[(i + k) * 304];
         float* src = ptr + 10; // Shift by 10 (one step history)
         float* dst = ptr;
 
@@ -43,7 +43,7 @@ inline void step_agents_avx2(
     float* vt_x, float* vt_y, float* vt_z, // Virtual Target Position (Output)
     float* target_trajectory, // Precomputed Trajectory: Shape (episode_length+1, num_agents, 3)
     float* pos_history, // Shape (episode_length, num_agents, 3)
-    float* observations, // stride 308
+    float* observations, // stride 304
     float* rewards,
     float* reward_components, // New: stride 8 (num_agents, 8)
     float* done_flags,
@@ -131,25 +131,6 @@ inline void step_agents_avx2(
     // ------------------------------------------------------------------------
     // Tracker / UV features needed for History
     // ------------------------------------------------------------------------
-    // Calculate these based on CURRENT state (before dynamics update)
-    // Or should it be after? User said "History of last 3 seconds".
-    // Usually state is recorded before action applied or after?
-    // In step_cpu, we record history at the end of the step.
-    // BUT we need `u` and `v` to put into history.
-    // If we calculate `u, v` at end of step, we put that into history.
-    // The history shift happens at START of step usually?
-    // In step_cpu: shift happens, then new data appended.
-    // So we need to calculate features, then shift & append.
-    // But we need the features of the *previous* step?
-    // No, standard is: Action -> New State -> Observation.
-    // Observation includes current state.
-    // So we should:
-    // 1. Shift history (dropping oldest).
-    // 2. Run Dynamics -> New State.
-    // 3. Calc Features (u, v, etc).
-    // 4. Append New State to History.
-    // 5. Update Obs buffer.
-
     shift_observations_avx(observations, i);
 
     // Substeps
@@ -320,7 +301,7 @@ inline void step_agents_avx2(
 
     for (int k=0; k<8; k++) {
         int agent_idx = i+k;
-        int off = agent_idx*308 + 290; // Last 10 of 300
+        int off = agent_idx*304 + 290; // Last 10 of 300
         observations[off+0] = tmp_r[k];
         observations[off+1] = tmp_p[k];
         observations[off+2] = tmp_y[k];
@@ -333,14 +314,17 @@ inline void step_agents_avx2(
         observations[off+9] = tmp_v[k];
     }
 
-    // Update Aux Features (300-308)
+    // Update Aux Features (300-303)
+    // Rel Vel REMOVED. Only tracker.
+
+    // We still need Rel Vel for REWARDS.
     __m256 rvx = _mm256_sub_ps(vtvx, vx);
     __m256 rvy = _mm256_sub_ps(vtvy, vy);
     __m256 rvz = _mm256_sub_ps(vtvz, vz);
 
+    // Body rel vel (for reward only)
     __m256 rvx_b = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r11, rvx), _mm256_mul_ps(r12, rvy)), _mm256_mul_ps(r13, rvz));
-    __m256 rvy_b = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r21, rvx), _mm256_mul_ps(r22, rvy)), _mm256_mul_ps(r23, rvz));
-    __m256 rvz_b = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r31, rvx), _mm256_mul_ps(r32, rvy)), _mm256_mul_ps(r33, rvz));
+    // __m256 rvy_b = ... (not needed for reward in this master equation formulation actually? no, rvel_sq uses global)
 
     __m256 rx = _mm256_sub_ps(vtx, px);
     __m256 ry = _mm256_sub_ps(vty, py);
@@ -349,26 +333,17 @@ inline void step_agents_avx2(
     __m256 dist = _mm256_sqrt_ps(dist_sq);
     __m256 dist_safe = _mm256_max_ps(dist, c01);
 
-    float tmp_rvx[8], tmp_rvy[8], tmp_rvz[8], tmp_dist[8];
     float tmp_size[8], tmp_conf[8];
-    _mm256_storeu_ps(tmp_rvx, rvx_b);
-    _mm256_storeu_ps(tmp_rvy, rvy_b);
-    _mm256_storeu_ps(tmp_rvz, rvz_b);
-    _mm256_storeu_ps(tmp_dist, dist);
     _mm256_storeu_ps(tmp_size, rel_size);
     _mm256_storeu_ps(tmp_conf, conf);
 
     for(int k=0; k<8; k++) {
         int agent_idx = i+k;
-        int off = agent_idx*308 + 300;
-        observations[off] = tmp_rvx[k];
-        observations[off+1] = tmp_rvy[k];
-        observations[off+2] = tmp_rvz[k];
-        observations[off+3] = tmp_dist[k];
-        observations[off+4] = tmp_u[k];
-        observations[off+5] = tmp_v[k];
-        observations[off+6] = tmp_size[k];
-        observations[off+7] = tmp_conf[k];
+        int off = agent_idx*304 + 300;
+        observations[off+0] = tmp_u[k];
+        observations[off+1] = tmp_v[k];
+        observations[off+2] = tmp_size[k];
+        observations[off+3] = tmp_conf[k];
     }
 
     // Rewards with Optimized Division (Newton-Raphson)
