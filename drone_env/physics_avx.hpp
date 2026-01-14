@@ -323,7 +323,7 @@ inline void step_agents_avx2(
     __m256 rvz = _mm256_sub_ps(vtvz, vz);
 
     // Body rel vel (for reward only)
-    __m256 rvx_b = _mm256_add_ps(_mm256_add_ps(_mm256_mul_ps(r11, rvx), _mm256_mul_ps(r12, rvy)), _mm256_mul_ps(r13, rvz));
+    // __m256 rvx_b = ... (unused)
     // __m256 rvy_b = ... (not needed for reward in this master equation formulation actually? no, rvel_sq uses global)
 
     __m256 rx = _mm256_sub_ps(vtx, px);

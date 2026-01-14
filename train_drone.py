@@ -310,7 +310,8 @@ class SupervisedTrainer:
                 pos_history.append(pos)
                 target_history.append(vt)
                 # Tracker: u, v, size, conf
-                track = obs_np[:, 304:308].copy()
+                # Observation size is 304. Tracker features are at 300:304.
+                track = obs_np[:, 300:304].copy()
                 tracker_history.append(track)
 
                 if d['done_flags'].all() == 1.0:
@@ -352,7 +353,8 @@ def main():
     oracle = LinearPlanner(num_agents=args.num_agents)
 
     # Student Policy
-    policy = DronePolicy(observation_dim=308, action_dim=4, hidden_dim=256).cpu()
+    # Observation dim reduced to 304
+    policy = DronePolicy(observation_dim=304, action_dim=4, hidden_dim=256).cpu()
 
     # Trainer
     trainer = SupervisedTrainer(env, policy, oracle, args.num_agents, args.episode_length, debug=args.debug)
