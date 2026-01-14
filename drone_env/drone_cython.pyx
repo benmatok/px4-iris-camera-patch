@@ -140,7 +140,7 @@ cdef void _step_agent_scalar(
     vt_z[i] = vtz_val
 
     # Shift Observations
-    # 308 total. 10..300 -> 0..290
+    # 304 total. 10..300 -> 0..290
     memmove(&observations[i, 0], &observations[i, 10], 290 * 4)
 
     # Substeps (Physics Update)
@@ -280,13 +280,13 @@ cdef void _step_agent_scalar(
         if (c30 * xb + s30 * zb) < 0:
             conf = 0.0
 
-    # Rel Vel
+    # Rel Vel removed from obs
     cdef float rvx, rvy, rvz
     rvx = vtvx_val - vx
     rvy = vtvy_val - vy
     rvz = vtvz_val - vz
 
-    # Body Frame Rel Vel
+    # Body Rel Vel used only for rewards, not obs
     cdef float rvx_b, rvy_b, rvz_b
     rvx_b = r11 * rvx + r12 * rvy + r13 * rvz
     rvy_b = r21 * rvx + r22 * rvy + r23 * rvz
@@ -297,15 +297,11 @@ cdef void _step_agent_scalar(
     cdef float dist_safe = dist
     if dist_safe < 0.1: dist_safe = 0.1
 
-    observations[i, 300] = rvx_b
-    observations[i, 301] = rvy_b
-    observations[i, 302] = rvz_b
-    observations[i, 303] = dist
-
-    observations[i, 304] = u
-    observations[i, 305] = v
-    observations[i, 306] = size
-    observations[i, 307] = conf
+    # Obs 300-303 (Tracker features)
+    observations[i, 300] = u
+    observations[i, 301] = v
+    observations[i, 302] = size
+    observations[i, 303] = conf
 
     # -------------------------------------------------------------------------
     # Homing Reward (Master Equation)
@@ -520,8 +516,8 @@ cdef void _reset_agent_scalar_wrapper(
     target_vz[i] = tvz
     target_yaw_rate[i] = tyr
 
-    # Reset Observations (Size 308)
-    memset(&observations[i, 0], 0, 308 * 4)
+    # Reset Observations (Size 304)
+    memset(&observations[i, 0], 0, 304 * 4)
 
     # Calculate Initial Target State (t=0) locally
     cdef float ax_p = traj_params[0, i]
@@ -611,16 +607,10 @@ cdef void _reset_agent_scalar_wrapper(
     cdef float r32 = sy * sp * cr - cy * sr
     cdef float r33 = cp * cr
 
-    cdef float rvx_b = r11 * rvx + r12 * rvy + r13 * rvz
-    cdef float rvy_b = r21 * rvx + r22 * rvy + r23 * rvz
-    cdef float rrvz_b = r31 * rvx + r32 * rvy + r33 * rvz
-
-    observations[i, 300] = rvx_b
-    observations[i, 301] = rvy_b
-    observations[i, 302] = rrvz_b
+    # rvx_b not put into obs anymore
 
     cdef float dist = sqrt(dx*dx + dy*dy + dz*dz)
-    observations[i, 303] = dist
+    # dist not put into obs anymore
 
     cdef float xb = r11 * dx + r12 * dy + r13 * dz
     cdef float yb = r21 * dx + r22 * dy + r23 * dz
@@ -647,10 +637,10 @@ cdef void _reset_agent_scalar_wrapper(
     conf = 1.0
     if (c30 * xb + s30 * zb) < 0: conf = 0.0
 
-    observations[i, 304] = u
-    observations[i, 305] = v
-    observations[i, 306] = size
-    observations[i, 307] = conf
+    observations[i, 300] = u
+    observations[i, 301] = v
+    observations[i, 302] = size
+    observations[i, 303] = conf
 
 def reset_cython(
     float[:] pos_x, float[:] pos_y, float[:] pos_z,
