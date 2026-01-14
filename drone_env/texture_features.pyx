@@ -385,38 +385,39 @@ def compute_texture_hypercube(float[:, ::1] image, int levels=3):
         num_strips_c = (cw + TILE_SIZE - 1) // TILE_SIZE
         total_tiles = num_strips_r * num_strips_c
 
-        with nogil, parallel():
-            buf_h = TILE_SIZE + 2
-            buf_w = TILE_SIZE + 2
-            buf_size = buf_h * buf_w
+        buf_h = TILE_SIZE + 2
+        buf_w = TILE_SIZE + 2
+        buf_size = buf_h * buf_w
 
+        # We allocate buffers inside the loop to avoid race conditions and ensure thread safety.
+        # Although malloc inside the loop adds overhead, it is negligible compared to the image processing.
+        for tile_idx in prange(total_tiles, schedule='dynamic', nogil=True):
             Ix_buf = <float *> malloc(buf_size * sizeof(float))
             Iy_buf = <float *> malloc(buf_size * sizeof(float))
 
             if Ix_buf != NULL and Iy_buf != NULL:
-                for tile_idx in prange(total_tiles, schedule='dynamic'):
-                    strip_r = tile_idx // num_strips_c
-                    strip_c = tile_idx % num_strips_c
+                strip_r = tile_idx // num_strips_c
+                strip_c = tile_idx % num_strips_c
 
-                    r_start = strip_r * TILE_SIZE
-                    r_end = r_start + TILE_SIZE
-                    if r_end > ch: r_end = ch
+                r_start = strip_r * TILE_SIZE
+                r_end = r_start + TILE_SIZE
+                if r_end > ch: r_end = ch
 
-                    c_start = strip_c * TILE_SIZE
-                    c_end = c_start + TILE_SIZE
-                    if c_end > cw: c_end = cw
+                c_start = strip_c * TILE_SIZE
+                c_end = c_start + TILE_SIZE
+                if c_end > cw: c_end = cw
 
-                    process_tile_features_simd(
-                        r_start, r_end, c_start, c_end,
-                        ch, cw,
-                        current_img,
-                        orient, coher, hess, ged,
-                        pow(scale_factor, 4),
-                        Ix_buf, Iy_buf, buf_w
-                    )
+                process_tile_features_simd(
+                    r_start, r_end, c_start, c_end,
+                    ch, cw,
+                    current_img,
+                    orient, coher, hess, ged,
+                    pow(scale_factor, 4),
+                    Ix_buf, Iy_buf, buf_w
+                )
 
-            free(Ix_buf)
-            free(Iy_buf)
+                free(Ix_buf)
+                free(Iy_buf)
 
         st_orientations.append(orient)
         st_coherences.append(coher)
