@@ -104,9 +104,9 @@ def step_cpu(
     vt_z[:] = vtz_val
 
     # Shift History
-    # Total obs 304. History 0-300.
-    # Shift 10..300 -> 0..290
-    observations[:, 0:290] = observations[:, 10:300]
+    # Total obs 274. History 0-270.
+    # Shift 9..270 -> 0..261
+    observations[:, 0:261] = observations[:, 9:270]
 
     for s in range(substeps):
         # 1. Dynamics Update
@@ -229,28 +229,27 @@ def step_cpu(
     # Strictly behind check
     conf = np.where(xb < 0.0, 0.0, conf)
 
-    # Capture History Samples (1 per step, 10 features)
-    # Features: roll, pitch, yaw, z, thrust, roll_rate, pitch_rate, yaw_rate, u, v
+    # Capture History Samples (1 per step, 9 features)
+    # Order: Thrust, Rates(3), Yaw, Pitch, Roll, u, v
     # Updated AFTER dynamics to match AVX implementation
-    new_features = np.zeros((num_agents, 10), dtype=np.float32)
-    new_features[:, 0] = r
-    new_features[:, 1] = p
-    new_features[:, 2] = y_ang
-    new_features[:, 3] = pz
-    new_features[:, 4] = thrust_cmd
-    new_features[:, 5] = roll_rate
-    new_features[:, 6] = pitch_rate
-    new_features[:, 7] = yaw_rate
-    new_features[:, 8] = u
-    new_features[:, 9] = v
+    new_features = np.zeros((num_agents, 9), dtype=np.float32)
+    new_features[:, 0] = thrust_cmd
+    new_features[:, 1] = roll_rate
+    new_features[:, 2] = pitch_rate
+    new_features[:, 3] = yaw_rate
+    new_features[:, 4] = y_ang
+    new_features[:, 5] = p
+    new_features[:, 6] = r
+    new_features[:, 7] = u
+    new_features[:, 8] = v
 
-    observations[:, 290:300] = new_features
+    observations[:, 261:270] = new_features
 
-    # 300-303 (Shifted from 304-307)
-    observations[:, 300] = u
-    observations[:, 301] = v
-    observations[:, 302] = size
-    observations[:, 303] = conf
+    # 270-273 (Current Tracker)
+    observations[:, 270] = u
+    observations[:, 271] = v
+    observations[:, 272] = size
+    observations[:, 273] = conf
 
     # Note: Relative Velocity and Distance removed from observations.
     # But needed for Reward Calculation.
@@ -412,7 +411,7 @@ def reset_cpu(
     target_vz[:] = tvz
     target_yaw_rate[:] = tyr
 
-    # Reset Observations (Size 304)
+    # Reset Observations (Size 274)
     observations[:] = 0.0
 
     # Calculate Initial Target State (t=0) FIRST so we can place drone relative to it
@@ -498,10 +497,10 @@ def reset_cpu(
     conf = np.ones(num_agents, dtype=np.float32)
     conf = np.where((c30 * xb + s30 * zb) < 0, 0.0, conf)
 
-    observations[:, 300] = u
-    observations[:, 301] = v
-    observations[:, 302] = size
-    observations[:, 303] = conf
+    observations[:, 270] = u
+    observations[:, 271] = v
+    observations[:, 272] = size
+    observations[:, 273] = conf
 
     if len(reset_indices) > 0:
         step_counts[reset_indices] = 0
@@ -635,7 +634,7 @@ class DroneEnv(CUDAEnvironmentState):
              "done_flags": {"shape": (self.num_agents,), "dtype": np.float32},
              "rewards": {"shape": (self.num_agents,), "dtype": np.float32},
              "reward_components": {"shape": (self.num_agents, 8), "dtype": np.float32}, # New
-             "observations": {"shape": (self.num_agents, 304), "dtype": np.float32}, # UPDATED to 304
+             "observations": {"shape": (self.num_agents, 274), "dtype": np.float32}, # UPDATED to 274
              "reset_indices": {"shape": (self.num_agents,), "dtype": np.int32}, # Added for safety
              "actions": {"shape": (self.num_agents * 4,), "dtype": np.float32}, # Also needed for step
              "env_ids": {"shape": (self.num_agents,), "dtype": np.int32},
@@ -645,8 +644,8 @@ class DroneEnv(CUDAEnvironmentState):
         return (self.num_agents, 4)
 
     def get_observation_space(self):
-        # 30 * 10 + 4 = 304
-        return (self.num_agents, 304)
+        # 30 * 9 + 4 = 274
+        return (self.num_agents, 274)
 
     def get_reward_signature(self): return (self.num_agents,)
 

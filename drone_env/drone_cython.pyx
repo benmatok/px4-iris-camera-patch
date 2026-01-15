@@ -140,8 +140,8 @@ cdef void _step_agent_scalar(
     vt_z[i] = vtz_val
 
     # Shift Observations
-    # 304 total. 10..300 -> 0..290
-    memmove(&observations[i, 0], &observations[i, 10], 290 * 4)
+    # 274 total. 9..270 -> 0..261
+    memmove(&observations[i, 0], &observations[i, 9], 261 * 4)
 
     # Substeps (Physics Update)
     for s in range(substeps):
@@ -256,19 +256,19 @@ cdef void _step_agent_scalar(
     if v > 1.732: v = 1.732
     if v < -1.732: v = -1.732
 
-    # Add new history entry (10 features)
-    observations[i, 290] = r
-    observations[i, 291] = p
-    observations[i, 292] = y_ang
-    observations[i, 293] = pz
-    observations[i, 294] = thrust_cmd
-    observations[i, 295] = roll_rate_cmd
-    observations[i, 296] = pitch_rate_cmd
-    observations[i, 297] = yaw_rate_cmd
-    observations[i, 298] = u
-    observations[i, 299] = v
+    # Add new history entry (9 features)
+    # Order: Thrust, Rates(3), Yaw, Pitch, Roll, u, v
+    observations[i, 261] = thrust_cmd
+    observations[i, 262] = roll_rate_cmd
+    observations[i, 263] = pitch_rate_cmd
+    observations[i, 264] = yaw_rate_cmd
+    observations[i, 265] = y_ang
+    observations[i, 266] = p
+    observations[i, 267] = r
+    observations[i, 268] = u
+    observations[i, 269] = v
 
-    # Recompute Features for Aux Observation (Indices 300+)
+    # Recompute Features for Aux Observation (Indices 270+)
     # (Already computed above for u/v)
 
     cdef float size, conf
@@ -297,11 +297,11 @@ cdef void _step_agent_scalar(
     cdef float dist_safe = dist
     if dist_safe < 0.1: dist_safe = 0.1
 
-    # Obs 300-303 (Tracker features)
-    observations[i, 300] = u
-    observations[i, 301] = v
-    observations[i, 302] = size
-    observations[i, 303] = conf
+    # Obs 270-273 (Tracker features)
+    observations[i, 270] = u
+    observations[i, 271] = v
+    observations[i, 272] = size
+    observations[i, 273] = conf
 
     # -------------------------------------------------------------------------
     # Homing Reward (Master Equation)
@@ -516,8 +516,8 @@ cdef void _reset_agent_scalar_wrapper(
     target_vz[i] = tvz
     target_yaw_rate[i] = tyr
 
-    # Reset Observations (Size 304)
-    memset(&observations[i, 0], 0, 304 * 4)
+    # Reset Observations (Size 274)
+    memset(&observations[i, 0], 0, 274 * 4)
 
     # Calculate Initial Target State (t=0) locally
     cdef float ax_p = traj_params[0, i]
@@ -637,10 +637,10 @@ cdef void _reset_agent_scalar_wrapper(
     conf = 1.0
     if (c30 * xb + s30 * zb) < 0: conf = 0.0
 
-    observations[i, 300] = u
-    observations[i, 301] = v
-    observations[i, 302] = size
-    observations[i, 303] = conf
+    observations[i, 270] = u
+    observations[i, 271] = v
+    observations[i, 272] = size
+    observations[i, 273] = conf
 
 def reset_cython(
     float[:] pos_x, float[:] pos_y, float[:] pos_z,
