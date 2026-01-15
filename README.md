@@ -96,9 +96,12 @@ The simulation is built on a custom **Cython-optimized** engine (`drone_env/`) f
     - **Wind**: Dynamic wind vectors.
     - **Delays**: Variable communication/actuation delays (0-500ms).
     - **Target**: A virtual target moving in a trajectory (default: circular/wavy).
-- **Observation Space (304 dimensions)**:
-    - **0-299**: 30-step history of state variables (Position, Velocity, Attitude).
-    - **300-303**: Tracker Data:
+- **Observation Space (274 dimensions)**:
+    - **0-269**: 30-step history of relevant observables (9 features per step).
+        - **0-3**: Control Actions (Thrust, Roll Rate, Pitch Rate, Yaw Rate).
+        - **4-6**: Attitude (Yaw, Pitch, Roll).
+        - **7-8**: Visual Tracking (u, v).
+    - **270-273**: Current Tracker Data:
         - `u, v`: Normalized pixel coordinates of the target in the camera frame ([-1.732, 1.732] for 120° FOV).
         - `size`: Relative size of the target.
         - `conf`: Confidence score.
@@ -109,7 +112,7 @@ The simulation is built on a custom **Cython-optimized** engine (`drone_env/`) f
 ## Architecture
 
 ### Policy Network
-- **Input**: 304 dimensions (State History + Tracker).
+- **Input**: 274 dimensions (State History + Tracker).
 - **Hidden**: 256 units.
 - **Output**: 4 dimensions (Thrust, Roll Rate, Pitch Rate, Yaw Rate).
 - **Type**: Deterministic Neural Network (for Supervised Learning).

@@ -254,45 +254,22 @@ class ChannelScaler(nn.Module):
         return x * self.scale + self.bias
 
 class Autoencoder1D(nn.Module):
-    def __init__(self, input_dim=10, seq_len=30, latent_dim=20):
+    def __init__(self, input_dim=9, seq_len=30, latent_dim=20):
         super(Autoencoder1D, self).__init__()
         self.seq_len = seq_len
         self.input_dim = input_dim
         self.latent_dim = latent_dim
 
         # Structurally Aware Encoder
-        # Channel Groups:
-        # 0-2: Attitude (3)
-        # 3: Altitude (1)
-        # 4-7: Control (4)
-        # 8-9: Tracker (2)
+        # Channel Groups (New Order):
+        # 0-3: Control (4) [Thrust, Rates]
+        # 4-6: Attitude (3) [Yaw, Pitch, Roll]
+        # 7-8: Tracker (2) [u, v]
+        # Altitude Removed.
 
         # Learnable Scalers (Global Parameters)
-        # Replaces BatchNorm to avoid batch-dependency issues while ensuring normalization.
 
-        # Branch 1: Attitude (3 ch)
-        # Scale ~ 0.3 (pi -> 1). Bias 0.
-        self.scale_att = ChannelScaler(3, init_scale=0.3, init_bias=0.0)
-        self.enc_att = nn.Sequential(
-            nn.Conv1d(3, 16, 3, 1, 1), nn.LeakyReLU(0.2),
-            nn.Conv1d(16, 32, 3, 2, 1), nn.LeakyReLU(0.2), # -> 15
-            nn.Conv1d(32, 64, 3, 2, 1), nn.LeakyReLU(0.2), # -> 8
-            nn.Flatten()
-        )
-        # 64 * 8 = 512
-
-        # Branch 2: Altitude (1 ch)
-        # 0-20. Center at 10. Scale ~ 0.1. (x-10)*0.1 -> x*0.1 - 1.0
-        self.scale_alt = ChannelScaler(1, init_scale=0.1, init_bias=-1.0)
-        self.enc_alt = nn.Sequential(
-            nn.Conv1d(1, 8, 3, 1, 1), nn.LeakyReLU(0.2),
-            nn.Conv1d(8, 16, 3, 2, 1), nn.LeakyReLU(0.2), # -> 15
-            nn.Conv1d(16, 32, 3, 2, 1), nn.LeakyReLU(0.2), # -> 8
-            nn.Flatten()
-        )
-        # 32 * 8 = 256
-
-        # Branch 3: Control (4 ch)
+        # Branch 1: Control (4 ch)
         # Thrust: Center 0.5. (x - 0.5)*2.0 -> x*2 - 1.
         # Rates: Scale 0.2.
         self.scale_ctrl = ChannelScaler(4, init_scale=[2.0, 0.2, 0.2, 0.2], init_bias=[-1.0, 0.0, 0.0, 0.0])
@@ -304,7 +281,18 @@ class Autoencoder1D(nn.Module):
         )
         # 64 * 8 = 512
 
-        # Branch 4: Tracker (2 ch)
+        # Branch 2: Attitude (3 ch)
+        # Scale ~ 0.3 (pi -> 1). Bias 0.
+        self.scale_att = ChannelScaler(3, init_scale=0.3, init_bias=0.0)
+        self.enc_att = nn.Sequential(
+            nn.Conv1d(3, 16, 3, 1, 1), nn.LeakyReLU(0.2),
+            nn.Conv1d(16, 32, 3, 2, 1), nn.LeakyReLU(0.2), # -> 15
+            nn.Conv1d(32, 64, 3, 2, 1), nn.LeakyReLU(0.2), # -> 8
+            nn.Flatten()
+        )
+        # 64 * 8 = 512
+
+        # Branch 3: Tracker (2 ch)
         # +/- 10. Scale 0.1.
         self.scale_track = ChannelScaler(2, init_scale=0.1, init_bias=0.0)
         self.enc_track = nn.Sequential(
@@ -315,8 +303,8 @@ class Autoencoder1D(nn.Module):
         )
         # 64 * 8 = 512
 
-        # Total Flattened Dim = 512 + 256 + 512 + 512 = 1792
-        self.flat_dim = 1792
+        # Total Flattened Dim = 512 + 512 + 512 = 1536
+        self.flat_dim = 1536
 
         self.fc_enc = nn.Linear(self.flat_dim, latent_dim)
         self.tanh = nn.Tanh()
@@ -332,47 +320,37 @@ class Autoencoder1D(nn.Module):
         )
 
         # Output Scaler (Inversion)
-        # Initialize with roughly the inverse of input scales to easy the decoder's job.
-        # Inverse: x = (y - bias)/scale = y*(1/scale) - bias/scale
-        # So new_scale = 1/scale, new_bias = -bias/scale
-
-        # Att: scale=0.3, bias=0. -> inv_scale=3.33, inv_bias=0.
-        # Alt: scale=0.1, bias=-1. -> inv_scale=10., inv_bias=10.
-        # Ctrl:
-        #   Thrust: scale=2, bias=-1 -> inv_scale=0.5, inv_bias=0.5.
-        #   Rates: scale=0.2, bias=0 -> inv_scale=5., inv_bias=0.
-        # Track: scale=0.1, bias=0 -> inv_scale=10., inv_bias=0.
-
-        inv_scales = [3.33]*3 + [10.0] + [0.5, 5.0, 5.0, 5.0] + [10.0]*2
-        inv_biases = [0.0]*3 + [10.0] + [0.5, 0.0, 0.0, 0.0] + [0.0]*2
+        # Ctrl (4): Thrust (0.5, 0.5), Rates (5, 0).
+        # Att (3): (3.33, 0).
+        # Track (2): (10, 0).
+        inv_scales = [0.5, 5.0, 5.0, 5.0] + [3.33]*3 + [10.0]*2
+        inv_biases = [0.5, 0.0, 0.0, 0.0] + [0.0]*3 + [0.0]*2
 
         self.out_scaler = ChannelScaler(input_dim, init_scale=inv_scales, init_bias=inv_biases)
 
     def forward(self, x):
-        # x is (Batch, 300). Reshape to (Batch, 10, 30)
+        # x is (Batch, 270). Reshape to (Batch, 9, 30)
         batch_size = x.shape[0]
-        x_reshaped = x.view(batch_size, self.seq_len, self.input_dim).permute(0, 2, 1) # (N, 10, 30)
+        x_reshaped = x.view(batch_size, self.seq_len, self.input_dim).permute(0, 2, 1) # (N, 9, 30)
 
         # Split inputs based on structure
-        x_att = x_reshaped[:, 0:3, :]   # Roll, Pitch, Yaw
-        x_alt = x_reshaped[:, 3:4, :]   # Z
-        x_ctrl = x_reshaped[:, 4:8, :]  # Thrust, Rates
-        x_track = x_reshaped[:, 8:10, :] # U, V
+        # Order: Thrust, Rates(3), Yaw, Pitch, Roll, u, v
+        x_ctrl = x_reshaped[:, 0:4, :]   # Thrust, Rates
+        x_att = x_reshaped[:, 4:7, :]    # Yaw, Pitch, Roll
+        x_track = x_reshaped[:, 7:9, :]  # U, V
 
         # Scale Inputs
-        x_att = self.scale_att(x_att)
-        x_alt = self.scale_alt(x_alt)
         x_ctrl = self.scale_ctrl(x_ctrl)
+        x_att = self.scale_att(x_att)
         x_track = self.scale_track(x_track)
 
         # Encode branches
-        f_att = self.enc_att(x_att)
-        f_alt = self.enc_alt(x_alt)
         f_ctrl = self.enc_ctrl(x_ctrl)
+        f_att = self.enc_att(x_att)
         f_track = self.enc_track(x_track)
 
         # Concatenate features
-        f_all = torch.cat([f_att, f_alt, f_ctrl, f_track], dim=1)
+        f_all = torch.cat([f_ctrl, f_att, f_track], dim=1)
 
         # Latent space
         latent = self.tanh(self.fc_enc(f_all))
@@ -392,16 +370,15 @@ class Autoencoder1D(nn.Module):
         return latent, recon_flat
 
 class DronePolicy(nn.Module):
-    def __init__(self, observation_dim=304, action_dim=4, hidden_dim=256, env=None, hidden_dims=None):
+    def __init__(self, observation_dim=274, action_dim=4, hidden_dim=256, env=None, hidden_dims=None):
         super(DronePolicy, self).__init__()
-        # Observation space is 304 (300 history + 4 tracker)
-        # Removed 4 relative target state vars
+        # Observation space is 274 (270 history + 4 tracker)
+        # History: 30 * 9 = 270
 
         self.observation_dim = observation_dim
         self.action_dim = action_dim
 
-        self.history_dim = 300
-        # self.target_dim = 4 # REMOVED (Rel Vel)
+        self.history_dim = 270
         self.tracker_dim = 4 # Tracker Features
         self.latent_dim = 20
 
@@ -409,7 +386,7 @@ class DronePolicy(nn.Module):
         if hidden_dims is None:
             hidden_dims = [hidden_dim, hidden_dim]
 
-        self.ae = Autoencoder1D(input_dim=10, seq_len=30, latent_dim=self.latent_dim)
+        self.ae = Autoencoder1D(input_dim=9, seq_len=30, latent_dim=self.latent_dim)
 
         # RL Agent Input: Latent(20) + Tracker(4) = 24
         input_dim = self.latent_dim + self.tracker_dim
