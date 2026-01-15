@@ -1,6 +1,14 @@
 <img width="1475" height="850" alt="Screenshot from 2025-08-10 12-48-40" src="https://github.com/user-attachments/assets/47b1f314-c5a3-4acc-ab10-66812e4b3dc6" />
 
 This repo provides a patch to add a forward-looking RGB camera pitched up at 30 degrees relative to the Iris body in PX4 Gazebo Classic simulations (compatible with v1.14.0).
+
+### Current Status
+Two pretrained models are available after training for 5000 epochs with 200 agents:
+- `latest_jules.pth`: Checkpoint at 5000 epochs.
+- `final_jules.pth`: Final trained model.
+
+Both models show good performance in tracking the target.
+
 ### Prequesits 
 - nvidia drivers
 - nvidia docker
@@ -62,6 +70,22 @@ You can customize the configuration by editing `configs/drone.yaml` or passing a
 ```bash
 python3 train_drone.py --config configs/my_custom_config.yaml
 ```
+
+### Validation
+
+To validate the robustness of the trained policy, use the provided `run_validation.py` script. This script evaluates the agent's performance under various challenging conditions and generates GIF visualizations of the trajectories.
+
+```bash
+python3 run_validation.py --checkpoint final_jules.pth --agents 200
+```
+
+**Scenarios Tested:**
+1.  **Baseline**: Standard environment conditions.
+2.  **Input Noise**: Adds 1% relative noise to all observations.
+3.  **Tracking Robustness**: Simulates VGA pixel quantization and "holds" the last known target position when it exits the field of view.
+4.  **Tracking Noise**: Adds 3-pixel standard deviation Gaussian noise to the tracking coordinates.
+
+Results (metrics and GIFs) are saved to the `validation_results/` directory.
 
 ### Architecture and Scaling
 
