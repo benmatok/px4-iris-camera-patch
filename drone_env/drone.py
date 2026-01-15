@@ -315,7 +315,7 @@ def step_cpu(
     rew = rew_guidance + rew_rate + rew_upright + rew_eff
 
     # Terminations
-    bonus = np.where(dist < 0.4, 10.0, 0.0)
+    bonus = np.where(dist < 1.0, 10.0, 0.0)
     rew += bonus
 
     penalty = np.zeros(num_agents, dtype=np.float32)
@@ -340,7 +340,7 @@ def step_cpu(
     # Done Flags
     d_flag = np.zeros(num_agents, dtype=np.float32)
     d_flag = np.where(t >= episode_length, 1.0, d_flag)
-    d_flag = np.where(dist < 0.4, 1.0, d_flag)
+    d_flag = np.where(dist < 1.0, 1.0, d_flag)
     d_flag = np.where(r33 < 0.5, 1.0, d_flag)
     d_flag = np.where(collision, 1.0, d_flag)
 

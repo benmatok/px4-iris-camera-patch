@@ -20703,7 +20703,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
  *
  *     # Terminations
  *     cdef float bonus = 0.0             # <<<<<<<<<<<<<<
- *     if dist < 0.4:
+ *     if dist < 1.0:
  *         bonus = 10.0
 */
   __pyx_v_bonus = 0.0;
@@ -20711,16 +20711,16 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
   /* "drone_env/drone_cython.pyx":353
  *     # Terminations
  *     cdef float bonus = 0.0
- *     if dist < 0.4:             # <<<<<<<<<<<<<<
+ *     if dist < 1.0:             # <<<<<<<<<<<<<<
  *         bonus = 10.0
  *
 */
-  __pyx_t_2 = (__pyx_v_dist < 0.4);
+  __pyx_t_2 = (__pyx_v_dist < 1.0);
   if (__pyx_t_2) {
 
     /* "drone_env/drone_cython.pyx":354
  *     cdef float bonus = 0.0
- *     if dist < 0.4:
+ *     if dist < 1.0:
  *         bonus = 10.0             # <<<<<<<<<<<<<<
  *
  *     rew += bonus
@@ -20730,7 +20730,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
     /* "drone_env/drone_cython.pyx":353
  *     # Terminations
  *     cdef float bonus = 0.0
- *     if dist < 0.4:             # <<<<<<<<<<<<<<
+ *     if dist < 1.0:             # <<<<<<<<<<<<<<
  *         bonus = 10.0
  *
 */
@@ -20931,7 +20931,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
  *     cdef float d_flag = 0.0
  *     if t >= episode_length:             # <<<<<<<<<<<<<<
  *         d_flag = 1.0
- *     if dist < 0.4:
+ *     if dist < 1.0:
 */
   __pyx_t_2 = (__pyx_v_t >= __pyx_v_episode_length);
   if (__pyx_t_2) {
@@ -20940,7 +20940,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
  *     cdef float d_flag = 0.0
  *     if t >= episode_length:
  *         d_flag = 1.0             # <<<<<<<<<<<<<<
- *     if dist < 0.4:
+ *     if dist < 1.0:
  *         d_flag = 1.0
 */
     __pyx_v_d_flag = 1.0;
@@ -20950,23 +20950,23 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
  *     cdef float d_flag = 0.0
  *     if t >= episode_length:             # <<<<<<<<<<<<<<
  *         d_flag = 1.0
- *     if dist < 0.4:
+ *     if dist < 1.0:
 */
   }
 
   /* "drone_env/drone_cython.pyx":384
  *     if t >= episode_length:
  *         d_flag = 1.0
- *     if dist < 0.4:             # <<<<<<<<<<<<<<
+ *     if dist < 1.0:             # <<<<<<<<<<<<<<
  *         d_flag = 1.0
  *     if r33 < 0.5:
 */
-  __pyx_t_2 = (__pyx_v_dist < 0.4);
+  __pyx_t_2 = (__pyx_v_dist < 1.0);
   if (__pyx_t_2) {
 
     /* "drone_env/drone_cython.pyx":385
  *         d_flag = 1.0
- *     if dist < 0.4:
+ *     if dist < 1.0:
  *         d_flag = 1.0             # <<<<<<<<<<<<<<
  *     if r33 < 0.5:
  *         d_flag = 1.0
@@ -20976,14 +20976,14 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
     /* "drone_env/drone_cython.pyx":384
  *     if t >= episode_length:
  *         d_flag = 1.0
- *     if dist < 0.4:             # <<<<<<<<<<<<<<
+ *     if dist < 1.0:             # <<<<<<<<<<<<<<
  *         d_flag = 1.0
  *     if r33 < 0.5:
 */
   }
 
   /* "drone_env/drone_cython.pyx":386
- *     if dist < 0.4:
+ *     if dist < 1.0:
  *         d_flag = 1.0
  *     if r33 < 0.5:             # <<<<<<<<<<<<<<
  *         d_flag = 1.0
@@ -21002,7 +21002,7 @@ static void __pyx_f_9drone_env_12drone_cython__step_agent_scalar(int __pyx_v_i, 
     __pyx_v_d_flag = 1.0;
 
     /* "drone_env/drone_cython.pyx":386
- *     if dist < 0.4:
+ *     if dist < 1.0:
  *         d_flag = 1.0
  *     if r33 < 0.5:             # <<<<<<<<<<<<<<
  *         d_flag = 1.0

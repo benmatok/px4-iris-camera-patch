@@ -350,7 +350,7 @@ cdef void _step_agent_scalar(
 
     # Terminations
     cdef float bonus = 0.0
-    if dist < 0.4:
+    if dist < 1.0:
         bonus = 10.0
 
     rew += bonus
@@ -381,7 +381,7 @@ cdef void _step_agent_scalar(
     cdef float d_flag = 0.0
     if t >= episode_length:
         d_flag = 1.0
-    if dist < 0.4:
+    if dist < 1.0:
         d_flag = 1.0
     if r33 < 0.5:
         d_flag = 1.0

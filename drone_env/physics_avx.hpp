@@ -395,7 +395,8 @@ inline void step_agents_avx2(
     __m256 rew = _mm256_add_ps(rew_guidance, _mm256_add_ps(rew_rate, _mm256_add_ps(rew_upright, rew_eff)));
 
     __m256 bonus_val = _mm256_set1_ps(10.0f);
-    __m256 mask_success = _mm256_cmp_ps(dist, _mm256_set1_ps(0.4f), _CMP_LT_OQ);
+    // Success/Termination threshold changed from 0.4 to 1.0
+    __m256 mask_success = _mm256_cmp_ps(dist, _mm256_set1_ps(1.0f), _CMP_LT_OQ);
     __m256 bonus = _mm256_and_ps(mask_success, bonus_val);
     rew = _mm256_add_ps(rew, bonus);
 
