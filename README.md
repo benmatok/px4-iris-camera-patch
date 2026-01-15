@@ -1,6 +1,6 @@
-# Jules: High-Performance Drone Pursuit Policy
+# High-Performance Drone Pursuit Policy
 
-This repository contains the training and validation infrastructure for "Jules", a neural network policy trained to pilot a drone and intercept a moving target using visual tracking inputs.
+This repository contains the training and validation infrastructure for a neural network policy trained to pilot a drone and intercept a moving target using visual tracking inputs.
 
 ## Project Status
 The project is currently focused on **Supervised Learning** where a Student Policy learns to mimic an Oracle (`LinearPlanner`) that has access to ground truth state information.
