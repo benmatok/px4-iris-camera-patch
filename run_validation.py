@@ -1,0 +1,321 @@
+import numpy as np
+import torch
+import argparse
+import logging
+import os
+from drone_env.drone import DroneEnv
+from models.ae_policy import DronePolicy
+
+# Configure Logging
+logging.basicConfig(level=logging.INFO, format='%(message)s')
+
+class ValidationScenario:
+    def __init__(self, name, description):
+        self.name = name
+        self.description = description
+
+    def reset(self, num_agents):
+        pass
+
+    def apply_intervention(self, env, obs):
+        """
+        Modify observations in-place or return modified observations.
+        Args:
+            env: The DroneEnv instance (to access state if needed)
+            obs: The observation array (num_agents, 304)
+        """
+        return obs
+
+class NoiseScenario(ValidationScenario):
+    def __init__(self, noise_level=0.01):
+        super().__init__("Input Noise", f"Adds {noise_level*100}% relative noise to all inputs")
+        self.noise_level = noise_level
+
+    def apply_intervention(self, env, obs):
+        noise = np.random.normal(0, self.noise_level, size=obs.shape)
+        # Apply relative noise: x = x * (1 + noise)
+        # To avoid issues with 0, maybe absolute? User said "1% of each input type".
+        # Usually implies relative or % of range. Since we don't know range for all, relative is safer for large values,
+        # but does nothing for 0.
+        # Let's assume relative noise.
+        obs[:] = obs * (1.0 + noise)
+        return obs
+
+class TrackingScenario(ValidationScenario):
+    def __init__(self, decimation=False, holding=False, tracking_noise_std=0.0):
+        desc = []
+        if decimation: desc.append("VGA Pixel Decimation")
+        if holding: desc.append("Hold Last Known Position (instead of clipping)")
+        if tracking_noise_std > 0: desc.append(f"Tracking Noise {tracking_noise_std} px")
+
+        super().__init__("Tracking Robustness", ", ".join(desc))
+        self.decimation = decimation
+        self.holding = holding
+        self.tracking_noise_std = tracking_noise_std
+
+        # Camera Params
+        self.W = 640
+        self.H = 480
+        # FOV_x = 120 deg => tan(60) = 1.732
+        # tan(60) = (W/2) / f => f = 320 / 1.732 = 184.75
+        self.f = 184.751
+        self.u_max = 1.73205
+        # v_max = (H/2) / f = 240 / 184.75 = 1.299
+        self.v_max = 1.299
+
+        self.last_known_u = None
+        self.last_known_v = None
+
+    def reset(self, num_agents):
+        # Initialize last known with zeros (center) or perhaps we wait for first valid?
+        # Let's init with 0.
+        self.last_known_u = np.zeros(num_agents, dtype=np.float32)
+        self.last_known_v = np.zeros(num_agents, dtype=np.float32)
+
+    def compute_raw_uv(self, env):
+        # Extract state
+        d = env.data_dictionary
+        px, py, pz = d['pos_x'], d['pos_y'], d['pos_z']
+        vt_x, vt_y, vt_z = d['vt_x'], d['vt_y'], d['vt_z']
+        r, p, yaw = d['roll'], d['pitch'], d['yaw']
+
+        # Relative Position (World)
+        dx_w = vt_x - px
+        dy_w = vt_y - py
+        dz_w = vt_z - pz
+
+        # Rotation Matrix
+        sr, cr = np.sin(r), np.cos(r)
+        sp, cp = np.sin(p), np.cos(p)
+        sy, cy = np.sin(yaw), np.cos(yaw)
+
+        r11 = cy * cp
+        r12 = sy * cp
+        r13 = -sp
+        r21 = cy * sp * sr - sy * cr
+        r22 = sy * sp * sr + cy * cr
+        r23 = cp * sr
+        r31 = cy * sp * cr + sy * sr
+        r32 = sy * sp * cr - cy * sr
+        r33 = cp * cr
+
+        # Body Frame
+        xb = r11 * dx_w + r12 * dy_w + r13 * dz_w
+        yb = r21 * dx_w + r22 * dy_w + r23 * dz_w
+        zb = r31 * dx_w + r32 * dy_w + r33 * dz_w
+
+        # Camera Frame (Up 30 deg)
+        s30 = 0.5
+        c30 = 0.866025
+
+        # xc = yb (Standard NED to Camera Convention: x_cam is right, y_cam is down, z_cam is fwd)
+        # But code says: xc = yb.
+        # yc = -s30 * xb + c30 * zb
+        # zc = c30 * xb + s30 * zb
+
+        xc = yb
+        yc = -s30 * xb + c30 * zb
+        zc = c30 * xb + s30 * zb
+
+        # Project
+        zc_safe = np.maximum(zc, 0.1)
+        u = xc / zc_safe
+        v = yc / zc_safe
+
+        # Check validity (behind camera)
+        # In drone.py: conf = np.where((c30 * xb + s30 * zb) < 0.0, 0.0, conf)
+        # zc < 0 check
+
+        is_behind = zc <= 0.0
+
+        return u, v, is_behind
+
+    def apply_intervention(self, env, obs):
+        num_agents = obs.shape[0]
+
+        # 1. Get Raw U, V (Before Clipping)
+        u_raw, v_raw, is_behind = self.compute_raw_uv(env)
+
+        # 2. Logic
+
+        # Pixel coordinates
+        u_pix = u_raw * self.f
+        v_pix = v_raw * self.f
+
+        # Noise
+        if self.tracking_noise_std > 0:
+            noise_u = np.random.normal(0, self.tracking_noise_std, size=num_agents)
+            noise_v = np.random.normal(0, self.tracking_noise_std, size=num_agents)
+            u_pix += noise_u
+            v_pix += noise_v
+
+        # Decimation (Quantize to integers)
+        if self.decimation:
+            u_pix = np.round(u_pix)
+            v_pix = np.round(v_pix)
+
+        # Convert back to normalized
+        u_final = u_pix / self.f
+        v_final = v_pix / self.f
+
+        # Holding vs Clipping
+        if self.holding:
+            # Check if valid (in FOV and in front)
+            # FOV check: abs(u) <= u_max AND abs(v) <= v_max
+            in_fov = (np.abs(u_final) <= self.u_max) & (np.abs(v_final) <= self.v_max) & (~is_behind)
+
+            # If in FOV, update last known
+            self.last_known_u[in_fov] = u_final[in_fov]
+            self.last_known_v[in_fov] = v_final[in_fov]
+
+            # Use last known for ALL (if currently out, we use old value. If in, we use current which is now in last_known)
+            u_out = self.last_known_u.copy()
+            v_out = self.last_known_v.copy()
+
+            # NOTE: drone.py sets 'conf' to 0 if out of view.
+            # If we are "holding", does that mean we simulate "perfect memory" or just the coordinates freeze?
+            # User said "just use last known position".
+            # Probably implies the agent thinks the target is there.
+            # So we should probably set 'conf' to high? Or leave it as is?
+            # If 'conf' is 0, the policy might ignore u,v.
+            # But the user specifically wants to test this logic, presumably to see if the agent turns towards the last known pos.
+            # So we should probably FORCE conf to be valid (e.g. 1.0) or at least not 0.
+            # Let's set conf to 1.0 if we are holding and it was valid before.
+            # But wait, conf also depends on angular velocity in drone.py.
+            # Let's just restore the u, v. The policy might use u,v even if conf is low (depending on training).
+            # But typically conf is an input.
+
+            # Let's assume we maintain the last valid U, V.
+            pass
+        else:
+            # Standard clipping behavior (re-applying it to our potentially noisy/decimated values)
+            u_out = np.clip(u_final, -self.u_max, self.u_max)
+            v_out = np.clip(v_final, -self.u_max, self.u_max) # Using u_max (1.732) for v as well to match drone.py behavior?
+            # drone.py clips both to 1.732.
+
+        # Update Observation
+        # Indices:
+        # 300: u, 301: v
+        # Also the history tail: 298: u, 299: v (The most recent step added)
+
+        obs[:, 300] = u_out
+        obs[:, 301] = v_out
+
+        # History part (indices 290-300 are the new features for this step)
+        # 290: r, 291: p, 292: y, 293: z, 294: th, 295: rr, 296: pr, 297: yr, 298: u, 299: v
+        obs[:, 298] = u_out
+        obs[:, 299] = v_out
+
+        return obs
+
+def run_validation(checkpoint_path, scenarios, num_agents=200, episode_length=400):
+    if not os.path.exists(checkpoint_path):
+        logging.error(f"Checkpoint not found: {checkpoint_path}")
+        return
+
+    # Load Policy
+    logging.info(f"Loading policy from {checkpoint_path}...")
+    policy = DronePolicy(observation_dim=304, action_dim=4, hidden_dim=256).cpu()
+    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+        policy.load_state_dict(checkpoint['model_state_dict'])
+    else:
+        policy.load_state_dict(checkpoint)
+    policy.eval()
+
+    # Environment
+    env = DroneEnv(num_agents=num_agents, episode_length=episode_length, use_cuda=False)
+
+    print(f"{'Scenario':<40} | {'Mean Dist':<10} | {'Std Dist':<10}")
+    print("-" * 65)
+
+    for scenario in scenarios:
+        env.reset_all_envs()
+        scenario.reset(num_agents)
+
+        d = env.data_dictionary
+
+        # Get initial obs
+        obs_np = d["observations"]
+
+        # Apply intervention at t=0
+        obs_np = scenario.apply_intervention(env, obs_np)
+
+        final_dists = []
+
+        with torch.no_grad():
+            for t in range(episode_length):
+                obs_torch = torch.from_numpy(obs_np).float()
+
+                # Policy Step
+                pred_actions, _ = policy(obs_torch)
+                action_to_step = pred_actions.numpy()
+
+                # Env Step
+                d['actions'][:] = action_to_step.flatten()
+                env.step_function(
+                    d["pos_x"], d["pos_y"], d["pos_z"],
+                    d["vel_x"], d["vel_y"], d["vel_z"],
+                    d["roll"], d["pitch"], d["yaw"],
+                    d["masses"], d["drag_coeffs"], d["thrust_coeffs"],
+                    d["target_vx"], d["target_vy"], d["target_vz"], d["target_yaw_rate"],
+                    d["vt_x"], d["vt_y"], d["vt_z"],
+                    d["traj_params"], d["target_trajectory"],
+                    d["pos_history"], d["observations"],
+                    d["rewards"], d["reward_components"],
+                    d["done_flags"], d["step_counts"], d["actions"],
+                    num_agents, episode_length, d["env_ids"]
+                )
+
+                # Apply Intervention at t+1
+                obs_np = d["observations"]
+                obs_np = scenario.apply_intervention(env, obs_np)
+
+                # Check for done
+                if d['done_flags'].all() == 1.0:
+                    break
+
+        # Calculate Metric: Final Distance
+        pos = np.stack([d['pos_x'], d['pos_y'], d['pos_z']], axis=1)
+        vt = np.stack([d['vt_x'], d['vt_y'], d['vt_z']], axis=1)
+        dists = np.linalg.norm(pos - vt, axis=1)
+
+        mean_dist = np.mean(dists)
+        std_dist = np.std(dists)
+
+        print(f"{scenario.name:<40} | {mean_dist:.4f} m   | {std_dist:.4f} m")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--checkpoint", type=str, default="final_jules.pth")
+    parser.add_argument("--agents", type=int, default=200)
+    args = parser.parse_args()
+
+    # Define Scenarios
+    scenarios = [
+        # Baseline
+        ValidationScenario("Baseline (No Intervention)", "Standard environment"),
+
+        # 1. Noise 1%
+        NoiseScenario(noise_level=0.01),
+
+        # 2. Decimation & Holding
+        TrackingScenario(decimation=True, holding=True, tracking_noise_std=0.0), # Assuming this is one combo test
+
+        # 3. Noise 3 pixels
+        TrackingScenario(decimation=True, holding=False, tracking_noise_std=3.0), # Assuming pixel noise implies pixel domain
+    ]
+
+    # Wait, the user said:
+    # 2. decimation of tracking assuming image is vga pixels AND instead of clipping target outside fov, just use last known position.
+    # 3. noise of 3 pixels std on tracking.
+
+    # Let's adjust slightly:
+    scenarios = [
+        ValidationScenario("Baseline", "None"),
+        NoiseScenario(noise_level=0.01),
+        TrackingScenario(decimation=True, holding=True, tracking_noise_std=0.0), # Scenario 2
+        TrackingScenario(decimation=True, holding=False, tracking_noise_std=3.0), # Scenario 3 (Pixel noise implies pixel grid)
+    ]
+
+    run_validation(args.checkpoint, scenarios, num_agents=args.agents)
