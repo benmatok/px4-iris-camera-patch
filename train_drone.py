@@ -286,6 +286,9 @@ class SupervisedTrainer:
 
         distances = []
 
+        final_distances = np.full(self.num_agents, np.nan)
+        already_done = np.zeros(self.num_agents, dtype=bool)
+
         with torch.no_grad():
             for t in range(self.episode_length):
                 obs_np = d["observations"]
@@ -303,8 +306,13 @@ class SupervisedTrainer:
                 pos = np.stack([d['pos_x'], d['pos_y'], d['pos_z']], axis=1).copy() # (N, 3)
                 vt = np.stack([d['vt_x'], d['vt_y'], d['vt_z']], axis=1).copy() # (N, 3)
 
-                # Distance
-                dist = np.linalg.norm(pos - vt, axis=1)
+                # Capture distances for agents that JUST finished
+                current_dists = np.linalg.norm(pos - vt, axis=1)
+                done_mask = d['done_flags'].astype(bool)
+
+                just_finished = done_mask & (~already_done)
+                final_distances[just_finished] = current_dists[just_finished]
+                already_done = done_mask | already_done
 
                 # Store
                 pos_history.append(pos)
@@ -321,8 +329,12 @@ class SupervisedTrainer:
                 if d['done_flags'].all() == 1.0:
                      break
 
-        # Final Distance (at last step)
-        final_dist = dist.mean() # Mean over agents
+        # Final Distance (at termination)
+        # Fill remainder with last dist
+        current_dists = np.linalg.norm(pos - vt, axis=1)
+        final_distances[~already_done] = current_dists[~already_done]
+
+        final_dist = np.nanmean(final_distances) # Mean over agents
 
         # Visualization
         if visualizer is not None and visualize:

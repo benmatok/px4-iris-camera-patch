@@ -218,6 +218,9 @@ def run_validation(checkpoint_path, scenarios, num_agents=200, episode_length=40
         # Apply intervention at t=0
         obs_np = scenario.apply_intervention(env, obs_np)
 
+        final_distances = np.full(num_agents, np.nan)
+        already_done = np.zeros(num_agents, dtype=bool)
+
         with torch.no_grad():
             for t in range(episode_length):
                 obs_torch = torch.from_numpy(obs_np).float()
@@ -246,6 +249,15 @@ def run_validation(checkpoint_path, scenarios, num_agents=200, episode_length=40
                 pos = np.stack([d['pos_x'], d['pos_y'], d['pos_z']], axis=1).copy() # (N, 3)
                 vt = np.stack([d['vt_x'], d['vt_y'], d['vt_z']], axis=1).copy() # (N, 3)
 
+                # Capture distances for agents that JUST finished
+                current_dists = np.linalg.norm(pos - vt, axis=1)
+                done_mask = d['done_flags'].astype(bool)
+
+                # Identify agents that are done now but weren't before
+                just_finished = done_mask & (~already_done)
+                final_distances[just_finished] = current_dists[just_finished]
+                already_done = done_mask | already_done
+
                 # Important: Capture the tracker data *as seen by the agent* (i.e. after intervention)
                 # But interventions happen BEFORE step.
                 # Here, we just stepped. We need to apply intervention for the NEXT step observations.
@@ -269,12 +281,13 @@ def run_validation(checkpoint_path, scenarios, num_agents=200, episode_length=40
                     break
 
         # Calculate Metric: Final Distance
-        pos = np.stack([d['pos_x'], d['pos_y'], d['pos_z']], axis=1)
-        vt = np.stack([d['vt_x'], d['vt_y'], d['vt_z']], axis=1)
-        dists = np.linalg.norm(pos - vt, axis=1)
+        # Fill in any agents that didn't finish (timeout) with their last distance
+        # Use current 'pos' and 'vt' which are from the last step
+        current_dists = np.linalg.norm(pos - vt, axis=1)
+        final_distances[~already_done] = current_dists[~already_done]
 
-        mean_dist = np.mean(dists)
-        std_dist = np.std(dists)
+        mean_dist = np.mean(final_distances)
+        std_dist = np.std(final_distances)
 
         print(f"{scenario.name:<40} | {mean_dist:.4f} m   | {std_dist:.4f} m")
 
