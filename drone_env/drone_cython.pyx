@@ -140,8 +140,8 @@ cdef void _step_agent_scalar(
     vt_z[i] = vtz_val
 
     # Shift Observations
-    # 274 total. 9..270 -> 0..261
-    memmove(&observations[i, 0], &observations[i, 9], 261 * 4)
+    # 302 total. 10..300 -> 0..290
+    memmove(&observations[i, 0], &observations[i, 10], 290 * 4)
 
     # Substeps (Physics Update)
     for s in range(substeps):
@@ -256,20 +256,21 @@ cdef void _step_agent_scalar(
     if v > 1.732: v = 1.732
     if v < -1.732: v = -1.732
 
-    # Add new history entry (9 features)
-    # Order: Thrust, Rates(3), Yaw, Pitch, Roll, u, v
-    observations[i, 261] = thrust_cmd
-    observations[i, 262] = roll_rate_cmd
-    observations[i, 263] = pitch_rate_cmd
-    observations[i, 264] = yaw_rate_cmd
-    observations[i, 265] = y_ang
-    observations[i, 266] = p
-    observations[i, 267] = r
-    observations[i, 268] = u
-    observations[i, 269] = v
+    # Add new history entry (10 features)
+    # Order: Thrust, Rates(3), Yaw, Pitch, Roll, Altitude, u, v
+    observations[i, 290] = thrust_cmd
+    observations[i, 291] = roll_rate_cmd
+    observations[i, 292] = pitch_rate_cmd
+    observations[i, 293] = yaw_rate_cmd
+    observations[i, 294] = y_ang
+    observations[i, 295] = p
+    observations[i, 296] = r
+    observations[i, 297] = pz
+    observations[i, 298] = u
+    observations[i, 299] = v
 
-    # Recompute Features for Aux Observation (Indices 270+)
-    # (Already computed above for u/v)
+    # Recompute Features for Aux Observation (Indices 300+)
+    # u, v are already in history at 298, 299
 
     cdef float size, conf
     size = 10.0 / (zc*zc + 1.0)
@@ -297,11 +298,9 @@ cdef void _step_agent_scalar(
     cdef float dist_safe = dist
     if dist_safe < 0.1: dist_safe = 0.1
 
-    # Obs 270-273 (Tracker features)
-    observations[i, 270] = u
-    observations[i, 271] = v
-    observations[i, 272] = size
-    observations[i, 273] = conf
+    # Obs 300-301 (Aux Tracker features: Size, Conf)
+    observations[i, 300] = size
+    observations[i, 301] = conf
 
     # -------------------------------------------------------------------------
     # Homing Reward (Master Equation)
@@ -516,8 +515,8 @@ cdef void _reset_agent_scalar_wrapper(
     target_vz[i] = tvz
     target_yaw_rate[i] = tyr
 
-    # Reset Observations (Size 274)
-    memset(&observations[i, 0], 0, 274 * 4)
+    # Reset Observations (Size 302)
+    memset(&observations[i, 0], 0, 302 * 4)
 
     # Calculate Initial Target State (t=0) locally
     cdef float ax_p = traj_params[0, i]
@@ -637,10 +636,12 @@ cdef void _reset_agent_scalar_wrapper(
     conf = 1.0
     if (c30 * xb + s30 * zb) < 0: conf = 0.0
 
-    observations[i, 270] = u
-    observations[i, 271] = v
-    observations[i, 272] = size
-    observations[i, 273] = conf
+    # Populate initial history slot for tracker
+    observations[i, 298] = u
+    observations[i, 299] = v
+    # Populate Aux
+    observations[i, 300] = size
+    observations[i, 301] = conf
 
 def reset_cython(
     float[:] pos_x, float[:] pos_y, float[:] pos_z,

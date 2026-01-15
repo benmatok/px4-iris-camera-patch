@@ -12,26 +12,23 @@ static const float DT = 0.05f;
 static const float GRAVITY = 9.81f;
 static const int SUBSTEPS = 2;
 
-// Helper: Custom Memmove using AVX for new obs size (274)
-// Shift 0..261 <- 9..270
-// 261 floats shift.
+// Helper: Custom Memmove using AVX for new obs size (302)
+// Shift 0..290 <- 10..300
+// 290 floats shift.
 inline void shift_observations_avx(float* observations, int i) {
     for (int k = 0; k < 8; k++) {
-        float* ptr = &observations[(i + k) * 274];
-        float* src = ptr + 9; // Shift by 9 (one step history)
+        float* ptr = &observations[(i + k) * 302];
+        float* src = ptr + 10; // Shift by 10 (one step history)
         float* dst = ptr;
 
-        // Copy 261 floats
-        // 261 / 8 = 32 blocks + 5 remainder
-        for (int j = 0; j < 32; j++) {
+        // Copy 290 floats
+        // 290 / 8 = 36 blocks + 2 remainder
+        for (int j = 0; j < 36; j++) {
             __m256 v = _mm256_loadu_ps(src + j * 8);
             _mm256_storeu_ps(dst + j * 8, v);
         }
-        dst[256] = src[256];
-        dst[257] = src[257];
-        dst[258] = src[258];
-        dst[259] = src[259];
-        dst[260] = src[260];
+        dst[288] = src[288];
+        dst[289] = src[289];
     }
 }
 
@@ -46,7 +43,7 @@ inline void step_agents_avx2(
     float* vt_x, float* vt_y, float* vt_z, // Virtual Target Position (Output)
     float* target_trajectory, // Precomputed Trajectory: Shape (episode_length+1, num_agents, 3)
     float* pos_history, // Shape (episode_length, num_agents, 3)
-    float* observations, // stride 274
+    float* observations, // stride 302
     float* rewards,
     float* reward_components, // New: stride 8 (num_agents, 8)
     float* done_flags,
@@ -285,38 +282,42 @@ inline void step_agents_avx2(
     __m256 mask_behind = _mm256_cmp_ps(zc, c0, _CMP_LT_OQ);
     conf = _mm256_blendv_ps(conf, c0, mask_behind);
 
-    // Update History (last 9 slots)
-    // Features: Thrust, Rates(3), Yaw, Pitch, Roll, u, v
-    float tmp_r[8], tmp_p[8], tmp_y[8];
-    float tmp_th[8], tmp_rr[8], tmp_pr[8], tmp_yr[8];
-    float tmp_u[8], tmp_v[8];
+    // Update History (last 10 slots)
+    // Features: Thrust, Rates(3), Yaw, Pitch, Roll, Altitude, u, v
+    float feat_thrust[8], feat_roll_rate[8], feat_pitch_rate[8], feat_yaw_rate[8];
+    float feat_yaw[8], feat_pitch[8], feat_roll[8], feat_altitude[8];
+    float feat_u[8], feat_v[8];
 
-    _mm256_storeu_ps(tmp_r, r);
-    _mm256_storeu_ps(tmp_p, p);
-    _mm256_storeu_ps(tmp_y, y);
-    _mm256_storeu_ps(tmp_th, thrust_cmd);
-    _mm256_storeu_ps(tmp_rr, roll_rate_cmd);
-    _mm256_storeu_ps(tmp_pr, pitch_rate_cmd);
-    _mm256_storeu_ps(tmp_yr, yaw_rate_cmd);
-    _mm256_storeu_ps(tmp_u, u);
-    _mm256_storeu_ps(tmp_v, v);
+    _mm256_storeu_ps(feat_thrust, thrust_cmd);
+    _mm256_storeu_ps(feat_roll_rate, roll_rate_cmd);
+    _mm256_storeu_ps(feat_pitch_rate, pitch_rate_cmd);
+    _mm256_storeu_ps(feat_yaw_rate, yaw_rate_cmd);
+
+    _mm256_storeu_ps(feat_yaw, y);
+    _mm256_storeu_ps(feat_pitch, p);
+    _mm256_storeu_ps(feat_roll, r);
+    _mm256_storeu_ps(feat_altitude, pz);
+
+    _mm256_storeu_ps(feat_u, u);
+    _mm256_storeu_ps(feat_v, v);
 
     for (int k=0; k<8; k++) {
         int agent_idx = i+k;
-        int off = agent_idx*274 + 261; // Last 9 of 270
-        observations[off+0] = tmp_th[k];
-        observations[off+1] = tmp_rr[k];
-        observations[off+2] = tmp_pr[k];
-        observations[off+3] = tmp_yr[k];
-        observations[off+4] = tmp_y[k];
-        observations[off+5] = tmp_p[k];
-        observations[off+6] = tmp_r[k];
-        observations[off+7] = tmp_u[k];
-        observations[off+8] = tmp_v[k];
+        int off = agent_idx*302 + 290; // Last 10 of 300
+        observations[off+0] = feat_thrust[k];
+        observations[off+1] = feat_roll_rate[k];
+        observations[off+2] = feat_pitch_rate[k];
+        observations[off+3] = feat_yaw_rate[k];
+        observations[off+4] = feat_yaw[k];
+        observations[off+5] = feat_pitch[k];
+        observations[off+6] = feat_roll[k];
+        observations[off+7] = feat_altitude[k];
+        observations[off+8] = feat_u[k];
+        observations[off+9] = feat_v[k];
     }
 
-    // Update Aux Features (270-273)
-    // Rel Vel REMOVED. Only tracker.
+    // Update Aux Features (300-301)
+    // Only Size and Confidence (u, v are in history)
 
     // We still need Rel Vel for REWARDS.
     __m256 rvx = _mm256_sub_ps(vtvx, vx);
@@ -334,17 +335,15 @@ inline void step_agents_avx2(
     __m256 dist = _mm256_sqrt_ps(dist_sq);
     __m256 dist_safe = _mm256_max_ps(dist, c01);
 
-    float tmp_size[8], tmp_conf[8];
-    _mm256_storeu_ps(tmp_size, rel_size);
-    _mm256_storeu_ps(tmp_conf, conf);
+    float feat_size[8], feat_conf[8];
+    _mm256_storeu_ps(feat_size, rel_size);
+    _mm256_storeu_ps(feat_conf, conf);
 
     for(int k=0; k<8; k++) {
         int agent_idx = i+k;
-        int off = agent_idx*274 + 270;
-        observations[off+0] = tmp_u[k];
-        observations[off+1] = tmp_v[k];
-        observations[off+2] = tmp_size[k];
-        observations[off+3] = tmp_conf[k];
+        int off = agent_idx*302 + 300;
+        observations[off+0] = feat_size[k];
+        observations[off+1] = feat_conf[k];
     }
 
     // Rewards with Optimized Division (Newton-Raphson)
