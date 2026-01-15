@@ -171,13 +171,9 @@ class TrackingScenario(ValidationScenario):
             v_out = np.clip(v_final, -self.u_max, self.u_max)
 
         # Update Observation
-        # Current Tracker Data
-        obs[:, 270] = u_out
-        obs[:, 271] = v_out
-        # History Tracker Data (Last entry in history buffer)
-        # Indices 268 (u), 269 (v)
-        obs[:, 268] = u_out
-        obs[:, 269] = v_out
+        # u, v are only in history at 298, 299.
+        obs[:, 298] = u_out
+        obs[:, 299] = v_out
 
         return obs
 
@@ -188,7 +184,7 @@ def run_validation(checkpoint_path, scenarios, num_agents=200, episode_length=40
 
     # Load Policy
     logging.info(f"Loading policy from {checkpoint_path}...")
-    policy = DronePolicy(observation_dim=274, action_dim=4, hidden_dim=256).cpu()
+    policy = DronePolicy(observation_dim=302, action_dim=4, hidden_dim=256).cpu()
     checkpoint = torch.load(checkpoint_path, map_location='cpu')
     if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
         policy.load_state_dict(checkpoint['model_state_dict'])
@@ -258,8 +254,12 @@ def run_validation(checkpoint_path, scenarios, num_agents=200, episode_length=40
                 obs_np = scenario.apply_intervention(env, obs_np)
 
                 # Now obs_np contains the modified tracker data.
-                # Tracker features are at 270:274.
-                track = obs_np[:, 270:274].copy()
+                # u, v at 298, 299. Size, Conf at 300, 301.
+                u_col = obs_np[:, 298:299]
+                v_col = obs_np[:, 299:300]
+                size_col = obs_np[:, 300:301]
+                conf_col = obs_np[:, 301:302]
+                track = np.concatenate([u_col, v_col, size_col, conf_col], axis=1)
 
                 pos_history.append(pos)
                 target_history.append(vt)
