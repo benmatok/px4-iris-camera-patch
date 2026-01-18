@@ -326,9 +326,7 @@ class SupervisedTrainer:
                 track = np.concatenate([u_col, v_col, size_col, conf_col], axis=1)
                 tracker_history.append(track)
 
-                # Break only if all agents have reached the target (Success)
-                # User requested to continue to 400 unless within 1.0m
-                if (current_dists < 1.0).all():
+                if d['done_flags'].all() == 1.0:
                      break
 
         # Final Distance (at termination)

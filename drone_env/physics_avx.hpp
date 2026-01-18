@@ -431,7 +431,8 @@ inline void step_agents_avx2(
         reward_components[off+7] = t_bo[k];
     }
 
-    __m256 mask_done = _mm256_or_ps(mask_success, _mm256_or_ps(mask_tilt, mask_coll));
+    // Criterion: Continue unless Success or Timeout. Ignore tilt/coll for done flag.
+    __m256 mask_done = mask_success;
     __m256 mask_timeout = c0;
     if (t >= episode_length) mask_timeout = c1;
     mask_done = _mm256_or_ps(mask_done, mask_timeout);
