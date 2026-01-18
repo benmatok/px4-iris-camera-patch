@@ -179,9 +179,10 @@ inline void step_agents_avx2(
         pz = _mm256_add_ps(pz, _mm256_mul_ps(vz, dt_v));
 
         // Terrain Sincos (LUT)
-        __m256 sin_px = lut_sin256_ps(_mm256_mul_ps(c01, px));
-        __m256 cos_py = lut_cos256_ps(_mm256_mul_ps(c01, py));
-        __m256 terr_z = _mm256_mul_ps(c5, _mm256_mul_ps(sin_px, cos_py));
+        // __m256 sin_px = lut_sin256_ps(_mm256_mul_ps(c01, px));
+        // __m256 cos_py = lut_cos256_ps(_mm256_mul_ps(c01, py));
+        // __m256 terr_z = _mm256_mul_ps(c5, _mm256_mul_ps(sin_px, cos_py));
+        __m256 terr_z = c0;
 
         __m256 mask_under = _mm256_cmp_ps(pz, terr_z, _CMP_LT_OQ);
         pz = _mm256_blendv_ps(pz, terr_z, mask_under);
@@ -201,11 +202,13 @@ inline void step_agents_avx2(
     _mm256_storeu_ps(&yaw[i], y);
 
     // Final terrain check with LUT
-    __m256 sin_px_f = lut_sin256_ps(_mm256_mul_ps(c01, px));
-    __m256 cos_py_f = lut_cos256_ps(_mm256_mul_ps(c01, py));
-    __m256 terr_z_final = _mm256_mul_ps(c5, _mm256_mul_ps(sin_px_f, cos_py_f));
+    // __m256 sin_px_f = lut_sin256_ps(_mm256_mul_ps(c01, px));
+    // __m256 cos_py_f = lut_cos256_ps(_mm256_mul_ps(c01, py));
+    // __m256 terr_z_final = _mm256_mul_ps(c5, _mm256_mul_ps(sin_px_f, cos_py_f));
+    // __m256 terr_z_final = c0;
 
-    __m256 mask_coll = _mm256_cmp_ps(pz, terr_z_final, _CMP_LT_OQ);
+    // Detect collision/ground proximity at z < 0.5
+    __m256 mask_coll = _mm256_cmp_ps(pz, c05, _CMP_LT_OQ);
 
     if (t <= episode_length) {
         int base_idx = (t-1) * num_agents * 3 + i * 3;
@@ -431,8 +434,9 @@ inline void step_agents_avx2(
         reward_components[off+7] = t_bo[k];
     }
 
-    // Criterion: Continue unless Success or Timeout. Ignore tilt/coll for done flag.
+    // Criterion: Success, Timeout, or Ground Collision (< 0.5m)
     __m256 mask_done = mask_success;
+    mask_done = _mm256_or_ps(mask_done, mask_coll); // Add collision to termination
     __m256 mask_timeout = c0;
     if (t >= episode_length) mask_timeout = c1;
     mask_done = _mm256_or_ps(mask_done, mask_timeout);

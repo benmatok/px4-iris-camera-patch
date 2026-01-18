@@ -44,7 +44,7 @@ _DRONE_CUDA_SOURCE = """
 # -----------------------------------------------------------------------------
 
 def terrain_height_cpu(x, y):
-    return 5.0 * np.sin(0.1 * x) * np.cos(0.1 * y)
+    return 0.0
 
 def step_cpu(
     pos_x, pos_y, pos_z,
@@ -144,7 +144,7 @@ def step_cpu(
         pz += vz * dt
 
         # Terrain Collision
-        terr_z = terrain_height_cpu(px, py)
+        terr_z = 0.0
 
         # Vectorized collision check
         underground = pz < terr_z
@@ -154,10 +154,10 @@ def step_cpu(
         vz = np.where(underground, 0.0, vz)
 
     # Terrain Collision (Final check)
-    terr_z = terrain_height_cpu(px, py)
+    terr_z = 0.0
     underground = pz < terr_z
     pz = np.where(underground, terr_z, pz)
-    collision = underground # boolean array
+    collision = pz < 0.5 # Treat z < 0.5 as collision/termination
 
     # Update State Arrays
     pos_x[:] = px
@@ -341,9 +341,9 @@ def step_cpu(
     d_flag = np.zeros(num_agents, dtype=np.float32)
     d_flag = np.where(t >= episode_length, 1.0, d_flag)
     d_flag = np.where(dist < 1.0, 1.0, d_flag)
-    # Criterion: Continue unless Success or Timeout
+    # Criterion: Success, Timeout, or Ground Collision (< 0.5m)
+    d_flag = np.where(pz < 0.5, 1.0, d_flag)
     # d_flag = np.where(r33 < 0.5, 1.0, d_flag)
-    # d_flag = np.where(collision, 1.0, d_flag)
 
     done_flags[:] = d_flag
 
@@ -436,8 +436,8 @@ def reset_cpu(
 
     pos_x[:] = vtx_val + dist_xy_desired * np.cos(init_angle)
     pos_y[:] = vty_val + dist_xy_desired * np.sin(init_angle)
-    # Initialize at target altitude to ensure visibility with Camera Up 30
-    pos_z[:] = vtz_val
+    # Initialize above 10m
+    pos_z[:] = 10.0 + np.random.rand(num_agents) * 5.0
 
     # Initial Velocity: Slow speed (0-2 m/s)
     speed = np.random.rand(num_agents) * 2.0

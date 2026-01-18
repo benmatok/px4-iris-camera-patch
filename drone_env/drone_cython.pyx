@@ -45,7 +45,7 @@ cdef extern from "physics_avx.hpp":
     ) nogil
 
 cdef inline float terrain_height(float x, float y) nogil:
-    return 5.0 * sin(0.1 * x) * cos(0.1 * y)
+    return 0.0
 
 cdef inline float rand_float() nogil:
     return <float>rand() / <float>RAND_MAX
@@ -180,7 +180,7 @@ cdef void _step_agent_scalar(
         pz += vz * dt
 
         # Terrain Collision
-        terr_z = terrain_height(px, py)
+        terr_z = 0.0
         if pz < terr_z:
             pz = terr_z
             vx = 0.0
@@ -188,11 +188,14 @@ cdef void _step_agent_scalar(
             vz = 0.0
 
     # Final terrain check
-    terr_z = terrain_height(px, py)
+    terr_z = 0.0
     collision = 0
+    if pz < 0.5:
+        # collision for reward/termination purposes
+        collision = 1
+    # Physical constraint at 0
     if pz < terr_z:
         pz = terr_z
-        collision = 1
 
     # Store State
     pos_x[i] = px
@@ -383,10 +386,10 @@ cdef void _step_agent_scalar(
         d_flag = 1.0
     if dist < 1.0:
         d_flag = 1.0
-    # Criterion: Continue unless Success or Timeout
+    # Criterion: Success, Timeout, or Ground Collision (< 0.5m)
+    if pz < 0.5:
+        d_flag = 1.0
     # if r33 < 0.5:
-    #    d_flag = 1.0
-    # if collision == 1:
     #    d_flag = 1.0
 
     done_flags[i] = d_flag
@@ -559,7 +562,7 @@ cdef void _reset_agent_scalar_wrapper(
 
     pos_x[i] = vtx_val + dist_xy_desired * ca
     pos_y[i] = vty_val + dist_xy_desired * sa
-    pos_z[i] = vtz_val
+    pos_z[i] = 10.0 + rand_float() * 5.0
 
     # Initial Velocity: Slow speed (0-2 m/s)
     cdef float speed = rand_float() * 2.0
