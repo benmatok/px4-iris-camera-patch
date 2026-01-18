@@ -383,10 +383,11 @@ cdef void _step_agent_scalar(
         d_flag = 1.0
     if dist < 1.0:
         d_flag = 1.0
-    if r33 < 0.5:
-        d_flag = 1.0
-    if collision == 1:
-        d_flag = 1.0
+    # Criterion: Continue unless Success or Timeout
+    # if r33 < 0.5:
+    #    d_flag = 1.0
+    # if collision == 1:
+    #    d_flag = 1.0
 
     done_flags[i] = d_flag
 

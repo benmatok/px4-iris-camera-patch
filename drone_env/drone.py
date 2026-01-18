@@ -341,8 +341,9 @@ def step_cpu(
     d_flag = np.zeros(num_agents, dtype=np.float32)
     d_flag = np.where(t >= episode_length, 1.0, d_flag)
     d_flag = np.where(dist < 1.0, 1.0, d_flag)
-    d_flag = np.where(r33 < 0.5, 1.0, d_flag)
-    d_flag = np.where(collision, 1.0, d_flag)
+    # Criterion: Continue unless Success or Timeout
+    # d_flag = np.where(r33 < 0.5, 1.0, d_flag)
+    # d_flag = np.where(collision, 1.0, d_flag)
 
     done_flags[:] = d_flag
 
