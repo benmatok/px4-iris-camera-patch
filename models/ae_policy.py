@@ -141,6 +141,10 @@ class KFACOptimizer(optim.Optimizer):
                 module.register_full_backward_hook(self._save_grad_output)
 
     def _update_inv(self, m):
+        if m not in self.m_aa or m not in self.m_gg:
+            # Skip if stats not collected (e.g. module not used in forward/backward)
+            return
+
         eps = 1e-10
         d_a, Q_a = torch.linalg.eigh(self.m_aa[m])
         d_g, Q_g = torch.linalg.eigh(self.m_gg[m])
@@ -175,19 +179,21 @@ class KFACOptimizer(optim.Optimizer):
     def _kl_clip_and_update_grad(self, updates, lr):
         vg_sum = 0
         for m in self.modules:
-            v = updates[m]
-            vg_sum += (v[0] * m.weight.grad.data * lr ** 2).sum().item()
-            if m.bias is not None:
-                vg_sum += (v[1] * m.bias.grad.data * lr ** 2).sum().item()
+            if m in updates:
+                v = updates[m]
+                vg_sum += (v[0] * m.weight.grad.data * lr ** 2).sum().item()
+                if m.bias is not None:
+                    vg_sum += (v[1] * m.bias.grad.data * lr ** 2).sum().item()
         nu = min(1.0, math.sqrt(self.kl_clip / (vg_sum + 1e-10)))
 
         for m in self.modules:
-            v = updates[m]
-            m.weight.grad.data.copy_(v[0])
-            m.weight.grad.data.mul_(nu)
-            if m.bias is not None:
-                m.bias.grad.data.copy_(v[1])
-                m.bias.grad.data.mul_(nu)
+            if m in updates:
+                v = updates[m]
+                m.weight.grad.data.copy_(v[0])
+                m.weight.grad.data.mul_(nu)
+                if m.bias is not None:
+                    m.bias.grad.data.copy_(v[1])
+                    m.bias.grad.data.mul_(nu)
 
     def _step(self, closure):
         for group in self.param_groups:
@@ -215,13 +221,27 @@ class KFACOptimizer(optim.Optimizer):
         damping = group['damping']
         updates = {}
         for m in self.modules:
+            # Skip modules without gradients or stats
+            if m.weight.grad is None:
+                continue
+            if m not in self.m_aa or m not in self.m_gg:
+                continue
+
             classname = m.__class__.__name__
             if self.steps % self.TInv == 0:
                 self._update_inv(m)
+
+            # Check again if inv update succeeded (or existed)
+            if m not in self.Q_a or m not in self.Q_g:
+                continue
+
             p_grad_mat = self._get_matrix_form_grad(m, classname)
             v = self._get_natural_grad(m, p_grad_mat, damping)
             updates[m] = v
-        self._kl_clip_and_update_grad(updates, lr)
+
+        if updates:
+             self._kl_clip_and_update_grad(updates, lr)
+
         self._step(closure)
         self.steps += 1
 
@@ -229,6 +249,26 @@ class KFACOptimizerPlaceholder(KFACOptimizer):
     pass
 
 # --- End KFAC Implementation ---
+
+class ResidualBlock(nn.Module):
+    def __init__(self, hidden_dim):
+        super(ResidualBlock, self).__init__()
+        self.fc1 = nn.Linear(hidden_dim, hidden_dim)
+        self.ln1 = nn.LayerNorm(hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        self.ln2 = nn.LayerNorm(hidden_dim)
+        self.activation = nn.ReLU()
+
+    def forward(self, x):
+        identity = x
+        out = self.fc1(x)
+        out = self.ln1(out)
+        out = self.activation(out)
+        out = self.fc2(out)
+        out = self.ln2(out)
+        out += identity
+        out = self.activation(out)
+        return out
 
 class ChannelScaler(nn.Module):
     def __init__(self, num_channels, init_scale=None, init_bias=None):
@@ -385,7 +425,7 @@ class Autoencoder1D(nn.Module):
         return latent, recon_flat
 
 class DronePolicy(nn.Module):
-    def __init__(self, observation_dim=302, action_dim=4, hidden_dim=256, env=None, hidden_dims=None):
+    def __init__(self, observation_dim=302, action_dim=4, hidden_dim=256, env=None, hidden_dims=None, use_resnet=False, num_res_blocks=4):
         super(DronePolicy, self).__init__()
         # Observation space is 302 (300 history + 2 aux)
         # History: 30 * 10 = 300
@@ -407,14 +447,28 @@ class DronePolicy(nn.Module):
         input_dim = self.latent_dim + self.tracker_dim
 
         # Separate feature extraction from heads
-        feature_layers = []
-        in_dim = input_dim
-        for h_dim in hidden_dims:
-            feature_layers.append(nn.Linear(in_dim, h_dim))
-            feature_layers.append(nn.ReLU())
-            in_dim = h_dim
+        if use_resnet:
+            # ResNet Architecture
+            # First project to hidden dim
+            layers = [
+                nn.Linear(input_dim, hidden_dim),
+                nn.ReLU(),
+            ]
+            # Add Residual Blocks
+            for _ in range(num_res_blocks):
+                layers.append(ResidualBlock(hidden_dim))
 
-        self.feature_extractor = nn.Sequential(*feature_layers)
+            self.feature_extractor = nn.Sequential(*layers)
+            in_dim = hidden_dim
+        else:
+            # Standard MLP Architecture
+            feature_layers = []
+            in_dim = input_dim
+            for h_dim in hidden_dims:
+                feature_layers.append(nn.Linear(in_dim, h_dim))
+                feature_layers.append(nn.ReLU())
+                in_dim = h_dim
+            self.feature_extractor = nn.Sequential(*feature_layers)
 
         # Action Head
         self.action_head = nn.Sequential(

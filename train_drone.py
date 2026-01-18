@@ -6,9 +6,10 @@ import torch.nn as nn
 import logging
 import time
 from tqdm import tqdm
+from torch.distributions import Normal
 
 from drone_env.drone import DroneEnv
-from models.ae_policy import DronePolicy
+from models.ae_policy import DronePolicy, KFACOptimizer
 from visualization import Visualizer
 
 # Configure Logging
@@ -165,7 +166,7 @@ class LinearPlanner:
         return actions
 
 class SupervisedTrainer:
-    def __init__(self, env, policy, oracle, num_agents, episode_length, learning_rate=3e-4, debug=False):
+    def __init__(self, env, policy, oracle, num_agents, episode_length, learning_rate=3e-4, debug=False, optimizer_type='adam'):
         self.env = env
         self.policy = policy
         self.oracle = oracle
@@ -174,8 +175,11 @@ class SupervisedTrainer:
         self.debug = debug
         self.dt = 0.05
 
-        # Optimizer (Adam for simplicity, training only the policy)
-        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=learning_rate)
+        # Optimizer
+        if optimizer_type == 'kfac':
+            self.optimizer = KFACOptimizer(self.policy, lr=learning_rate)
+        else:
+            self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=learning_rate)
 
         # Loss Function
         self.loss_fn = nn.MSELoss()
@@ -353,100 +357,391 @@ class SupervisedTrainer:
 
         return final_dist
 
+class PPOTrainer:
+    def __init__(self, env, policy, num_agents, episode_length, lr=1e-4, gamma=0.99, gae_lambda=0.95, clip_range=0.2, ent_coef=0.01, vf_coef=0.5, n_epochs=5, batch_size=2048, debug=False, optimizer_type='adam'):
+        self.env = env
+        self.policy = policy
+        self.num_agents = num_agents
+        self.episode_length = episode_length
+        self.gamma = gamma
+        self.gae_lambda = gae_lambda
+        self.clip_range = clip_range
+        self.ent_coef = ent_coef
+        self.vf_coef = vf_coef
+        self.n_epochs = n_epochs
+        self.batch_size = batch_size
+        self.debug = debug
+        self.optimizer_type = optimizer_type
+
+        # Optimizer
+        if optimizer_type == 'kfac':
+            self.optimizer = KFACOptimizer(self.policy, lr=lr)
+        else:
+            self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=lr)
+
+        # Pre-resolve step arguments
+        d = self.env.data_dictionary
+        self.step_args_list = [
+            d["pos_x"], d["pos_y"], d["pos_z"],
+            d["vel_x"], d["vel_y"], d["vel_z"],
+            d["roll"], d["pitch"], d["yaw"],
+            d["masses"], d["drag_coeffs"], d["thrust_coeffs"],
+            d["target_vx"], d["target_vy"], d["target_vz"], d["target_yaw_rate"],
+            d["vt_x"], d["vt_y"], d["vt_z"],
+            d["traj_params"], d["target_trajectory"],
+            d["pos_history"], d["observations"],
+            d["rewards"], d["reward_components"],
+            d["done_flags"], d["step_counts"], d["actions"],
+            self.num_agents, self.episode_length, d["env_ids"]
+        ]
+        self.step_func = self.env.get_step_function()
+
+    def step_env(self):
+        self.step_func(*self.step_args_list)
+
+    def collect_rollouts(self):
+        self.env.reset_all_envs()
+        d = self.env.data_dictionary
+
+        # Buffers
+        obs_buf = []
+        action_buf = []
+        log_prob_buf = []
+        reward_buf = []
+        done_buf = []
+        value_buf = []
+
+        total_reward = 0.0
+
+        # PPO requires keeping track of the previous done state to mask returns correctly
+        # Here we collect one full episode trajectory per agent
+        # But we need to handle early terminations by masking
+
+        for t in range(self.episode_length):
+            obs_np = d["observations"]
+            if self.debug:
+                 obs_np = np.nan_to_num(obs_np)
+            obs_torch = torch.from_numpy(obs_np).float()
+
+            with torch.no_grad():
+                mean, value = self.policy(obs_torch)
+                std = self.policy.action_log_std.exp()
+                dist = Normal(mean, std)
+                action = dist.sample()
+                log_prob = dist.log_prob(action).sum(axis=-1)
+
+            # Step Env
+            # Clip action for environment safety
+            action_np = action.cpu().numpy()
+            clipped_action = np.clip(action_np, -1.0, 1.0) # Assume normalized action space
+            d['actions'][:] = clipped_action.flatten()
+
+            self.step_env()
+
+            rewards = d["rewards"].copy()
+            dones = d["done_flags"].copy().astype(bool)
+
+            # Store in buffer
+            obs_buf.append(obs_torch)
+            action_buf.append(action)
+            log_prob_buf.append(log_prob)
+            value_buf.append(value.squeeze())
+            reward_buf.append(torch.from_numpy(rewards).float())
+            done_buf.append(torch.from_numpy(dones).float())
+
+            total_reward += rewards.sum()
+
+            if dones.all():
+                break
+
+        # Bootstrap value for last step (if not done)
+        # We assume 0 value for terminal states, but if timeout, we might need value
+        # For simplicity, just use 0 for now as episode ended.
+
+        # Convert buffers to tensors
+        # Shape: (T, N, ...)
+        obs_tens = torch.stack(obs_buf)
+        act_tens = torch.stack(action_buf)
+        lp_tens = torch.stack(log_prob_buf)
+        rew_tens = torch.stack(reward_buf)
+        done_tens = torch.stack(done_buf)
+        val_tens = torch.stack(value_buf)
+
+        return obs_tens, act_tens, lp_tens, rew_tens, done_tens, val_tens, t+1
+
+    def compute_gae(self, rewards, values, dones):
+        # returns and advantages
+        T, N = rewards.shape
+        advantages = torch.zeros_like(rewards)
+        lastgaelam = 0
+
+        # Next value is 0 for the very last step of the episode
+        # For intermediate steps, next_value is values[t+1]
+
+        for t in reversed(range(T)):
+            if t == T - 1:
+                nextnonterminal = 0.0 # Assuming episode always ends at T or before
+                nextvalues = 0.0
+            else:
+                nextnonterminal = 1.0 - dones[t]
+                nextvalues = values[t+1]
+
+            delta = rewards[t] + self.gamma * nextvalues * nextnonterminal - values[t]
+            advantages[t] = lastgaelam = delta + self.gamma * self.gae_lambda * nextnonterminal * lastgaelam
+
+        returns = advantages + values
+        return advantages, returns
+
+    def update(self, obs, actions, log_probs, returns, advantages):
+        # Flatten (T, N, ...) -> (Batch, ...)
+        # obs tensor shape is (T, N, 302)
+        obs = obs.reshape(-1, obs.shape[-1])
+        actions = actions.reshape(-1, self.policy.action_dim)
+        log_probs = log_probs.reshape(-1)
+        returns = returns.reshape(-1)
+        advantages = advantages.reshape(-1)
+
+        # Normalize Advantages
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+        # Dataset
+        dataset_size = obs.size(0)
+        indices = np.arange(dataset_size)
+
+        total_loss = 0.0
+
+        for _ in range(self.n_epochs):
+            np.random.shuffle(indices)
+            for start in range(0, dataset_size, self.batch_size):
+                end = start + self.batch_size
+                idx = indices[start:end]
+
+                mb_obs = obs[idx]
+                mb_actions = actions[idx]
+                mb_old_log_probs = log_probs[idx]
+                mb_returns = returns[idx]
+                mb_advantages = advantages[idx]
+
+                # Forward
+                mean, value = self.policy(mb_obs)
+                std = self.policy.action_log_std.exp()
+                dist = Normal(mean, std)
+                new_log_probs = dist.log_prob(mb_actions).sum(axis=-1)
+                entropy = dist.entropy().sum(axis=-1).mean()
+
+                # Ratio
+                ratio = torch.exp(new_log_probs - mb_old_log_probs)
+
+                # Surrogate Loss
+                surr1 = ratio * mb_advantages
+                surr2 = torch.clamp(ratio, 1.0 - self.clip_range, 1.0 + self.clip_range) * mb_advantages
+                policy_loss = -torch.min(surr1, surr2).mean()
+
+                # Value Loss
+                value_loss = 0.5 * ((value.squeeze() - mb_returns) ** 2).mean()
+
+                # Total Loss
+                loss = policy_loss + self.vf_coef * value_loss - self.ent_coef * entropy
+
+                self.optimizer.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(self.policy.parameters(), 0.5)
+                self.optimizer.step()
+
+                total_loss += loss.item()
+
+        return total_loss / (self.n_epochs * (dataset_size / self.batch_size))
+
+    def train_step(self):
+        obs, actions, log_probs, rewards, dones, values, duration = self.collect_rollouts()
+        advantages, returns = self.compute_gae(rewards, values, dones)
+        loss = self.update(obs, actions, log_probs, returns, advantages)
+        return loss, duration, rewards.mean().item()
+
+    def validate_episode(self, visualizer=None, iteration=0, visualize=False):
+        # Reuse the SupervisedTrainer's validation logic or implement similar
+        # Since logic is identical (run policy without noise), we can just implement it here
+
+        self.env.reset_all_envs()
+        d = self.env.data_dictionary
+
+        pos_history = []
+        target_history = []
+        tracker_history = []
+
+        final_distances = np.full(self.num_agents, np.nan)
+        already_done = np.zeros(self.num_agents, dtype=bool)
+
+        with torch.no_grad():
+            for t in range(self.episode_length):
+                obs_np = d["observations"]
+                obs_torch = torch.from_numpy(obs_np).float()
+
+                mean, _ = self.policy(obs_torch)
+                # Deterministic action for validation (mean)
+                action_to_step = mean.numpy()
+                d['actions'][:] = np.clip(action_to_step, -1.0, 1.0).flatten()
+
+                self.step_env()
+
+                pos = np.stack([d['pos_x'], d['pos_y'], d['pos_z']], axis=1).copy()
+                vt = np.stack([d['vt_x'], d['vt_y'], d['vt_z']], axis=1).copy()
+
+                current_dists = np.linalg.norm(pos - vt, axis=1)
+                done_mask = d['done_flags'].astype(bool)
+
+                just_finished = done_mask & (~already_done)
+                final_distances[just_finished] = current_dists[just_finished]
+                already_done = done_mask | already_done
+
+                pos_history.append(pos)
+                target_history.append(vt)
+
+                u_col = obs_np[:, 298:299]
+                v_col = obs_np[:, 299:300]
+                size_col = obs_np[:, 300:301]
+                conf_col = obs_np[:, 301:302]
+                track = np.concatenate([u_col, v_col, size_col, conf_col], axis=1)
+                tracker_history.append(track)
+
+                if d['done_flags'].all():
+                    break
+
+        current_dists = np.linalg.norm(pos - vt, axis=1)
+        final_distances[~already_done] = current_dists[~already_done]
+        final_dist = np.nanmean(final_distances)
+
+        if visualizer is not None and visualize:
+            traj = np.stack(pos_history, axis=1)
+            targ = np.stack(target_history, axis=1)
+            track = np.stack(tracker_history, axis=1)
+            visualizer.log_trajectory(iteration, traj, targets=targ, tracker_data=track)
+            visualizer.save_episode_gif(iteration, traj[0], targets=targ[0], tracker_data=track[0])
+
+        return final_dist
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--num_agents", type=int, default=200)
-    parser.add_argument("--iterations", type=int, default=5000)
-    parser.add_argument("--episode_length", type=int, default=400) # User asked for "each step... run oracle". Longer episodes allow convergence.
+    parser.add_argument("--iterations", type=int, default=0, help="Total iterations (legacy, overrides split if > 0)")
+    parser.add_argument("--supervised_iters", type=int, default=5000, help="Number of Supervised Learning iterations")
+    parser.add_argument("--ppo_iters", type=int, default=5000, help="Number of PPO iterations")
+    parser.add_argument("--episode_length", type=int, default=400)
     parser.add_argument("--load", type=str, default=None)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--viz_freq", type=int, default=100, help="Frequency of visualization generation")
+    parser.add_argument("--optimizer", type=str, default="adam", choices=["adam", "kfac"], help="Optimizer type")
+    parser.add_argument("--use_resnet", action="store_true", help="Use ResNet architecture")
+    parser.add_argument("--num_res_blocks", type=int, default=4, help="Number of ResNet blocks")
     args = parser.parse_args()
 
     # Environment
-    # We use CPU backend
     env = DroneEnv(num_agents=args.num_agents, episode_length=args.episode_length, use_cuda=False)
 
-    # Oracle
+    # Oracle (for Supervised)
     oracle = LinearPlanner(num_agents=args.num_agents)
 
     # Student Policy
-    # Observation dim 302
-    policy = DronePolicy(observation_dim=302, action_dim=4, hidden_dim=256).cpu()
-
-    # Trainer
-    trainer = SupervisedTrainer(env, policy, oracle, args.num_agents, args.episode_length, debug=args.debug)
+    policy = DronePolicy(observation_dim=302, action_dim=4, hidden_dim=256, use_resnet=args.use_resnet, num_res_blocks=args.num_res_blocks).cpu()
 
     start_itr = 1
     if args.load:
         if os.path.exists(args.load):
             logging.info(f"Loading checkpoint from {args.load}")
             checkpoint = torch.load(args.load)
-
-            # Handle both formats
             if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
                 policy.load_state_dict(checkpoint['model_state_dict'])
-                if 'optimizer_state_dict' in checkpoint:
-                    trainer.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
                 if 'iteration' in checkpoint:
                     start_itr = checkpoint['iteration'] + 1
-                    logging.info(f"Resuming from iteration {start_itr}")
             else:
-                # Legacy: checkpoint is just the state dict
                 policy.load_state_dict(checkpoint)
-                logging.info("Loaded legacy model checkpoint (no optimizer/iter state).")
-
         else:
             logging.warning(f"Checkpoint {args.load} not found. Starting fresh.")
 
-    # Visualizer
     visualizer = Visualizer()
-
-    logging.info(f"Starting Supervised Training (LinearPlanner): {args.num_agents} Agents, {args.iterations} Iterations")
-
     start_time = time.time()
 
-    for itr in range(start_itr, args.iterations + 1):
-        # Train
-        loss, duration = trainer.train_episode()
-        visualizer.log_loss(itr, loss)
+    # Logic for split training
+    total_supervised = args.supervised_iters
+    total_ppo = args.ppo_iters
 
-        # Validate (every 10 iters)
-        if itr % 10 == 0:
-            visualize = (itr % args.viz_freq == 0)
-            val_dist = trainer.validate_episode(visualizer, itr, visualize=visualize)
+    # If legacy 'iterations' is set, use it for supervised (or split evenly? let's default to supervised)
+    if args.iterations > 0:
+        total_supervised = args.iterations
+        total_ppo = 0
 
-            elapsed = time.time() - start_time
-            logging.info(f"Iter {itr} | Loss: {loss:.4f} | Avg Ep Len: {duration} | Val Dist: {val_dist:.4f} m | Time: {elapsed:.2f}s")
+    # 1. Supervised Training Phase
+    if total_supervised > 0:
+        logging.info(f"Starting Supervised Training: {args.num_agents} Agents, {total_supervised} Iterations")
+        trainer = SupervisedTrainer(env, policy, oracle, args.num_agents, args.episode_length, debug=args.debug, optimizer_type=args.optimizer)
 
-            visualizer.log_reward(itr, -val_dist) # Log negative distance as 'reward' for plot
-            visualizer.plot_loss()
+        # Try to load optimizer state if resuming and we are in the right phase
+        if args.load and 'optimizer_state_dict' in checkpoint and start_itr <= total_supervised:
+             trainer.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
-            # Periodically generate summary GIF if visualizing
-            if visualize:
-                try:
-                    visualizer.generate_trajectory_gif()
-                except Exception as e:
-                    logging.error(f"Error generating trajectory GIF: {e}")
+        for itr in range(start_itr, total_supervised + 1):
+            loss, duration = trainer.train_episode()
+            visualizer.log_loss(itr, loss)
 
-        # Save
-        if itr % 50 == 0:
-            checkpoint = {
-                'iteration': itr,
-                'model_state_dict': policy.state_dict(),
-                'optimizer_state_dict': trainer.optimizer.state_dict()
-            }
-            torch.save(checkpoint, "latest_jules.pth")
+            if itr % 10 == 0:
+                visualize = (itr % args.viz_freq == 0)
+                val_dist = trainer.validate_episode(visualizer, itr, visualize=visualize)
+                elapsed = time.time() - start_time
+                logging.info(f"[Sup] Iter {itr} | Loss: {loss:.4f} | Avg Ep Len: {duration} | Val Dist: {val_dist:.4f} m | Time: {elapsed:.2f}s")
+                visualizer.log_reward(itr, -val_dist)
+                visualizer.plot_loss()
+                if visualize:
+                    try:
+                        visualizer.generate_trajectory_gif()
+                    except Exception as e:
+                        logging.error(f"Error GIF: {e}")
 
-    # Save Final
+            if itr % 50 == 0:
+                ckpt = {'iteration': itr, 'model_state_dict': policy.state_dict(), 'optimizer_state_dict': trainer.optimizer.state_dict()}
+                torch.save(ckpt, "latest_jules.pth")
+
+        torch.save({'iteration': total_supervised, 'model_state_dict': policy.state_dict()}, "final_supervised.pth")
+
+        # Update start_itr for PPO
+        start_itr = max(start_itr, total_supervised + 1)
+
+    # 2. PPO Training Phase
+    if total_ppo > 0:
+        logging.info(f"Starting PPO Training: {args.num_agents} Agents, {total_ppo} Iterations")
+        ppo_trainer = PPOTrainer(env, policy, args.num_agents, args.episode_length, debug=args.debug, optimizer_type=args.optimizer)
+
+        # Reset optimizer for PPO phase as objective changed
+        # Unless we want to keep momentum? Usually better to reset or use low LR.
+        # We will start fresh optimizer for PPO.
+
+        for itr in range(start_itr, total_supervised + total_ppo + 1):
+            loss, duration, avg_reward = ppo_trainer.train_step()
+            visualizer.log_loss(itr, loss) # Log PPO loss
+
+            if itr % 10 == 0:
+                visualize = (itr % args.viz_freq == 0)
+                val_dist = ppo_trainer.validate_episode(visualizer, itr, visualize=visualize)
+                elapsed = time.time() - start_time
+                logging.info(f"[PPO] Iter {itr} | Loss: {loss:.4f} | Reward: {avg_reward:.2f} | Val Dist: {val_dist:.4f} m | Time: {elapsed:.2f}s")
+                visualizer.log_reward(itr, avg_reward) # Log actual reward for PPO
+                visualizer.plot_loss()
+                if visualize:
+                    try:
+                        visualizer.generate_trajectory_gif()
+                    except Exception as e:
+                        logging.error(f"Error GIF: {e}")
+
+            if itr % 50 == 0:
+                ckpt = {'iteration': itr, 'model_state_dict': policy.state_dict(), 'optimizer_state_dict': ppo_trainer.optimizer.state_dict()}
+                torch.save(ckpt, "latest_jules.pth")
+
     final_checkpoint = {
-        'iteration': args.iterations,
+        'iteration': total_supervised + total_ppo,
         'model_state_dict': policy.state_dict(),
-        'optimizer_state_dict': trainer.optimizer.state_dict()
     }
     torch.save(final_checkpoint, "final_jules.pth")
 
-    # Final Visualizations
     if visualizer.rewards_history:
         visualizer.plot_rewards()
     visualizer.plot_loss()
