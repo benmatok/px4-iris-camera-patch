@@ -404,8 +404,13 @@ inline void step_agents_avx2(
     rew = _mm256_add_ps(rew, bonus);
 
     __m256 mask_tilt = _mm256_cmp_ps(r33, c05, _CMP_LT_OQ);
+    __m256 mask_dist_fail = _mm256_cmp_ps(dist, _mm256_set1_ps(300.0f), _CMP_GT_OQ);
+    __m256 mask_high_fail = _mm256_cmp_ps(pz, _mm256_set1_ps(100.0f), _CMP_GT_OQ);
+
     __m256 penalty = c0;
     penalty = _mm256_add_ps(penalty, _mm256_and_ps(mask_tilt, _mm256_set1_ps(10.0f)));
+    penalty = _mm256_add_ps(penalty, _mm256_and_ps(mask_dist_fail, _mm256_set1_ps(10.0f)));
+    penalty = _mm256_add_ps(penalty, _mm256_and_ps(mask_high_fail, _mm256_set1_ps(10.0f)));
     penalty = _mm256_add_ps(penalty, _mm256_and_ps(mask_coll, _mm256_set1_ps(10.0f)));
     rew = _mm256_sub_ps(rew, penalty);
 
@@ -437,6 +442,10 @@ inline void step_agents_avx2(
     // Criterion: Success, Timeout, or Ground Collision (< 0.5m)
     __m256 mask_done = mask_success;
     mask_done = _mm256_or_ps(mask_done, mask_coll); // Add collision to termination
+    mask_done = _mm256_or_ps(mask_done, mask_tilt); // Add tilt to termination
+    mask_done = _mm256_or_ps(mask_done, mask_dist_fail); // Add distance fail
+    mask_done = _mm256_or_ps(mask_done, mask_high_fail); // Add altitude fail
+
     __m256 mask_timeout = c0;
     if (t >= episode_length) mask_timeout = c1;
     mask_done = _mm256_or_ps(mask_done, mask_timeout);

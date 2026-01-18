@@ -321,6 +321,8 @@ def step_cpu(
 
     penalty = np.zeros(num_agents, dtype=np.float32)
     penalty = np.where(r33 < 0.5, penalty + 10.0, penalty) # Tilt > 60
+    penalty = np.where(dist > 300.0, penalty + 10.0, penalty) # Out of bounds
+    penalty = np.where(pz > 100.0, penalty + 10.0, penalty) # Too high
     penalty = np.where(collision, penalty + 10.0, penalty)
 
     rew -= penalty
@@ -344,7 +346,10 @@ def step_cpu(
     d_flag = np.where(dist < 1.0, 1.0, d_flag)
     # Criterion: Success, Timeout, or Ground Collision (< 0.5m)
     d_flag = np.where(pz < 0.5, 1.0, d_flag)
-    # d_flag = np.where(r33 < 0.5, 1.0, d_flag)
+    # Crash / Fail Conditions
+    d_flag = np.where(r33 < 0.5, 1.0, d_flag)
+    d_flag = np.where(dist > 300.0, 1.0, d_flag)
+    d_flag = np.where(pz > 100.0, 1.0, d_flag)
 
     done_flags[:] = d_flag
 
