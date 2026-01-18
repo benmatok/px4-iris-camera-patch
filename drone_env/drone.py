@@ -558,6 +558,10 @@ class DroneEnv(CUDAEnvironmentState):
         all_indices = np.arange(self.num_agents, dtype=np.int32)
         self.data_dictionary["reset_indices"][:] = all_indices
 
+        # Reset done_flags
+        if "done_flags" in self.data_dictionary:
+            self.data_dictionary["done_flags"][:] = 0.0
+
         # Resolve args
         kwargs = self.get_reset_function_kwargs()
         args = {}
