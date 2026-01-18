@@ -495,11 +495,11 @@ cdef void _reset_agent_scalar_wrapper(
     traj_params[4, i] = 0.01 + rand_float() * 0.03 # Fy reduced
     traj_params[5, i] = rand_float() * 6.28318
 
-    traj_params[6, i] = 0.0 + rand_float() * 0.1
+    traj_params[6, i] = 0.0 + rand_float() * 0.05
     traj_params[7, i] = 0.01 + rand_float() * 0.05 # Fz reduced
     traj_params[8, i] = rand_float() * 6.28318
-    # Limit target height above ground to 2m. We set Mean Z (Oz) to 2.0.
-    traj_params[9, i] = 2.0
+    # Limit target height above ground to 0.1m. We set Mean Z (Oz) to 0.05.
+    traj_params[9, i] = 0.05
 
     rnd_cmd = rand_float()
     tvx=0.0; tvy=0.0; tvz=0.0; tyr=0.0
@@ -547,6 +547,8 @@ cdef void _reset_agent_scalar_wrapper(
     cdef float sz, cz
     sincosf(pz_p, &sz, &cz)
     cdef float vtz_val = oz_p + az_p * sz
+    if vtz_val > 0.1: vtz_val = 0.1
+    if vtz_val < 0.0: vtz_val = 0.0
     cdef float vtvz_val = az_p * fz_p * cz
 
     # Store Initial Target Position
@@ -686,6 +688,8 @@ def reset_cython(
                 target_trajectory[t_idx, i, 0] = traj_params[0, i] * sin(traj_params[1, i] * <float>t_idx + traj_params[2, i])
                 target_trajectory[t_idx, i, 1] = traj_params[3, i] * sin(traj_params[4, i] * <float>t_idx + traj_params[5, i])
                 target_trajectory[t_idx, i, 2] = traj_params[9, i] + traj_params[6, i] * sin(traj_params[7, i] * <float>t_idx + traj_params[8, i])
+                if target_trajectory[t_idx, i, 2] > 0.1: target_trajectory[t_idx, i, 2] = 0.1
+                if target_trajectory[t_idx, i, 2] < 0.0: target_trajectory[t_idx, i, 2] = 0.0
 
     # Reset step counts
     if reset_indices.shape[0] > 0:
@@ -705,3 +709,5 @@ def update_target_trajectory_from_params(
                 target_trajectory[t_idx, i, 0] = traj_params[0, i] * sin(traj_params[1, i] * <float>t_idx + traj_params[2, i])
                 target_trajectory[t_idx, i, 1] = traj_params[3, i] * sin(traj_params[4, i] * <float>t_idx + traj_params[5, i])
                 target_trajectory[t_idx, i, 2] = traj_params[9, i] + traj_params[6, i] * sin(traj_params[7, i] * <float>t_idx + traj_params[8, i])
+                if target_trajectory[t_idx, i, 2] > 0.1: target_trajectory[t_idx, i, 2] = 0.1
+                if target_trajectory[t_idx, i, 2] < 0.0: target_trajectory[t_idx, i, 2] = 0.0

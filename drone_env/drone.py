@@ -98,6 +98,7 @@ def step_cpu(
     vty_val = traj_params[3] * np.sin(traj_params[4] * t_f + traj_params[5])
     # z = Oz + Az * sin(Fz * t + Pz)
     vtz_val = traj_params[9] + traj_params[6] * np.sin(traj_params[7] * t_f + traj_params[8])
+    vtz_val = np.clip(vtz_val, 0.0, 0.1)
 
     vt_x[:] = vtx_val
     vt_y[:] = vty_val
@@ -383,11 +384,11 @@ def reset_cpu(
     traj_params[4] = 0.01 + np.random.rand(num_agents) * 0.03 # Fy (reduced)
     traj_params[5] = np.random.rand(num_agents) * 2 * np.pi # Py
 
-    traj_params[6] = 0.0 + np.random.rand(num_agents) * 0.1 # Az (Minimimal oscillation)
+    traj_params[6] = 0.0 + np.random.rand(num_agents) * 0.05 # Az (Minimimal oscillation)
     traj_params[7] = 0.01 + np.random.rand(num_agents) * 0.05 # Fz (reduced)
     traj_params[8] = np.random.rand(num_agents) * 2 * np.pi # Pz
-    # Limit target height above ground to 2m. We set Mean Z (Oz) to 2.0.
-    traj_params[9] = 2.0 # Oz
+    # Limit target height above ground to 0.1m. We set Mean Z (Oz) to 0.05.
+    traj_params[9] = 0.05 # Oz
 
     rnd_cmd = np.random.rand(num_agents)
 
@@ -423,6 +424,7 @@ def reset_cpu(
     vtvy_val = traj_params[3] * traj_params[4] * np.cos(traj_params[5])
 
     vtz_val = traj_params[9] + traj_params[6] * np.sin(traj_params[8])
+    vtz_val = np.clip(vtz_val, 0.0, 0.1)
     vtvz_val = traj_params[6] * traj_params[7] * np.cos(traj_params[8])
 
     # Store Initial Target Position
