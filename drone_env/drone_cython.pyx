@@ -363,6 +363,14 @@ cdef void _step_agent_scalar(
     if r33 < 0.5:
         penalty += 10.0
 
+    # Excessive Distance Penalty (prevent flying away)
+    if dist > 300.0:
+        penalty += 10.0
+
+    # Excessive Altitude Penalty
+    if pz > 100.0:
+        penalty += 10.0
+
     if collision == 1:
         penalty += 10.0
 
@@ -389,8 +397,19 @@ cdef void _step_agent_scalar(
     # Criterion: Success, Timeout, or Ground Collision (< 0.5m)
     if pz < 0.5:
         d_flag = 1.0
-    # if r33 < 0.5:
-    #    d_flag = 1.0
+
+    # Crash / Fail Conditions
+    # 1. Unstable (Tilt > 60 deg)
+    if r33 < 0.5:
+        d_flag = 1.0
+
+    # 2. Out of Bounds (Distance > 300m)
+    if dist > 300.0:
+        d_flag = 1.0
+
+    # 3. Too High (Altitude > 100m)
+    if pz > 100.0:
+        d_flag = 1.0
 
     done_flags[i] = d_flag
 

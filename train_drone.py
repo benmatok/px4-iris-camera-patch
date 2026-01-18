@@ -264,7 +264,9 @@ class SupervisedTrainer:
             if d['done_flags'].all() == 1.0:
                  break
 
-        return total_loss / (t + 1)
+        # Log duration
+        duration = t + 1
+        return total_loss / duration, duration
 
     def validate_episode(self, visualizer=None, iteration=0, visualize=False):
         """
@@ -406,7 +408,7 @@ def main():
 
     for itr in range(start_itr, args.iterations + 1):
         # Train
-        loss = trainer.train_episode()
+        loss, duration = trainer.train_episode()
         visualizer.log_loss(itr, loss)
 
         # Validate (every 10 iters)
@@ -415,7 +417,7 @@ def main():
             val_dist = trainer.validate_episode(visualizer, itr, visualize=visualize)
 
             elapsed = time.time() - start_time
-            logging.info(f"Iter {itr} | Loss: {loss:.4f} | Val Dist: {val_dist:.4f} m | Time: {elapsed:.2f}s")
+            logging.info(f"Iter {itr} | Loss: {loss:.4f} | Avg Ep Len: {duration} | Val Dist: {val_dist:.4f} m | Time: {elapsed:.2f}s")
 
             visualizer.log_reward(itr, -val_dist) # Log negative distance as 'reward' for plot
             visualizer.plot_loss()
