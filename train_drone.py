@@ -261,52 +261,58 @@ class LinearPlanner:
 
         # Optimization Loop
         steps = 20
+        horizon = 10 # Predict 10 steps ahead (~0.5s) to penalize drift/climbing
+
         for _ in range(steps):
             opt.zero_grad()
 
-            # Predict Next State
             # Clamp Actions
             act_clamped = torch.zeros_like(act_tensor)
             act_clamped[:, 0] = torch.clamp(act_tensor[:, 0], 0.0, 1.0) # Thrust
             act_clamped[:, 1:] = torch.clamp(act_tensor[:, 1:], -10.0, 10.0) # Rates
 
-            next_pos, next_vel, next_att, cam_uv = self._differentiable_step(
-                pos_t, vel_t, att_t, act_clamped, mass_t, drag_t, thrust_coeff_t, target_t
-            )
+            # Unroll Trajectory
+            curr_pos = pos_t
+            curr_vel = vel_t
+            curr_att = att_t
 
-            # Compute Loss
-            # 1. Distance Loss (Get Closer)
-            dist = torch.norm(next_pos - target_t, dim=1)
-            loss_dist = dist.mean()
+            total_loss = 0.0
 
-            # 2. Gaze Loss (Keep in View)
-            # u, v should be close to 0.
-            # If target is deep down, u,v might be large if we pitch up.
-            # We want to minimize gaze error.
-            # But getting closer is priority.
-            # If we simply minimize distance, the drone might dive or fly blindly.
-            # We add a penalty for losing the target (u,v outside bounds).
-            # FOV is ~1.732 (tan 60).
-            u, v = cam_uv[:, 0], cam_uv[:, 1]
-            gaze_err = u**2 + v**2
+            for h in range(horizon):
+                next_pos, next_vel, next_att, cam_uv = self._differentiable_step(
+                    curr_pos, curr_vel, curr_att, act_clamped, mass_t, drag_t, thrust_coeff_t, target_t
+                )
 
-            # Penalty for being out of FOV
-            fov_limit = 1.7
-            out_of_view = (u.abs() > fov_limit) | (v.abs() > fov_limit)
-            loss_view = (gaze_err).mean()
+                # 1. Distance Loss (Get Closer)
+                dist = torch.norm(next_pos - target_t, dim=1)
+                loss_dist = dist.mean()
 
-            # 3. Z-Loss (Don't crash)
-            # Penalize z < 0.5
-            z_pred = next_pos[:, 2]
-            loss_crash = torch.relu(0.5 - z_pred).mean() * 100.0
+                # 2. Altitude Loss (Stay close to Target Z)
+                # Penalize deviation from target Z specifically to discourage climbing
+                z_err = (next_pos[:, 2] - target_t[:, 2]).abs()
+                loss_alt = z_err.mean()
 
-            # Total Loss
-            # Weighted sum. Distance is primary.
-            # If we enforce View too strictly, it fights forward motion.
-            # We use a smaller weight for view.
-            loss = 1.0 * loss_dist + 0.1 * loss_view + loss_crash
+                # 3. Gaze Loss (Keep in View)
+                u, v = cam_uv[:, 0], cam_uv[:, 1]
+                gaze_err = u**2 + v**2
+                loss_view = (gaze_err).mean()
 
-            loss.backward()
+                # 4. Crash Loss
+                z_pred = next_pos[:, 2]
+                loss_crash = torch.relu(0.5 - z_pred).mean() * 100.0
+
+                # Accumulate Loss
+                # We weight Altitude Loss heavily to prevent "climbing away"
+                step_loss = 1.0 * loss_dist + 2.0 * loss_alt + 0.1 * loss_view + loss_crash
+                total_loss += step_loss
+
+                # Update for next step
+                curr_pos = next_pos
+                curr_vel = next_vel
+                curr_att = next_att
+
+            total_loss = total_loss / horizon
+            total_loss.backward()
             opt.step()
 
         # Retrieve optimized actions
