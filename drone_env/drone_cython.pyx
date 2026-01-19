@@ -59,12 +59,14 @@ cdef void _step_agent_scalar(
     float[:] masses, float[:] drag_coeffs, float[:] thrust_coeffs,
     float[:] target_vx, float[:] target_vy, float[:] target_vz, float[:] target_yaw_rate,
     float[:] vt_x, float[:] vt_y, float[:] vt_z,
+    float[:, :] traj_params, # Needs traj_params for reset
     float[:, :, :] target_trajectory, # Precomputed Trajectory (episode_length+1, num_agents, 3)
     float[:, :, :] pos_history, # Shape (episode_length, num_agents, 3)
     float[:, :] observations,
     float[:] rewards,
     float[:, :] reward_components,
     float[:] done_flags,
+    int[:] step_counts,
     float[:] actions,
     int episode_length,
     int t
@@ -143,50 +145,85 @@ cdef void _step_agent_scalar(
     # 302 total. 10..300 -> 0..290
     memmove(&observations[i, 0], &observations[i, 10], 290 * 4)
 
-    # Substeps (Physics Update) - Only if not done
-    if done_flags[i] == 0.0:
-        for s in range(substeps):
-            # 1. Dynamics
-            r += roll_rate_cmd * dt
-            p += pitch_rate_cmd * dt
-            y_ang += yaw_rate_cmd * dt
+    # Auto-Reset Check
+    if done_flags[i] > 0.5:
+        # Reset Logic
+        _reset_agent_scalar_wrapper(
+            i,
+            pos_x, pos_y, pos_z,
+            vel_x, vel_y, vel_z,
+            roll, pitch, yaw,
+            masses, drag_coeffs, thrust_coeffs,
+            target_vx, target_vy, target_vz, target_yaw_rate,
+            vt_x, vt_y, vt_z,
+            traj_params,
+            observations
+        )
+        done_flags[i] = 0.0
+        # Reset Step Count locally if used, but t comes from outside.
+        step_counts[i] = 0
 
-            max_thrust = 20.0 * thrust_coeff
-            thrust_force = thrust_cmd * max_thrust
+        # RELOAD state variables
+        px = pos_x[i]
+        py = pos_y[i]
+        pz = pos_z[i]
+        vx = vel_x[i]
+        vy = vel_y[i]
+        vz = vel_z[i]
+        r = roll[i]
+        p = pitch[i]
+        y_ang = yaw[i]
 
-            sincosf(r, &sr, &cr)
-            sincosf(p, &sp, &cp)
-            sincosf(y_ang, &sy, &cy)
+        mass = masses[i]
+        drag = drag_coeffs[i]
+        thrust_coeff = thrust_coeffs[i]
 
-            ax_thrust = thrust_force * (cy * sp * cr + sy * sr) / mass
-            ay_thrust = thrust_force * (sy * sp * cr - cy * sr) / mass
-            az_thrust = thrust_force * (cp * cr) / mass
+    # Substeps (Physics Update)
+    for s in range(substeps):
+        # 1. Dynamics
+        r += roll_rate_cmd * dt
+        p += pitch_rate_cmd * dt
+        y_ang += yaw_rate_cmd * dt
 
-            az_gravity = -g
+        max_thrust = 20.0 * thrust_coeff
+        # Thrust Clipping
+        if thrust_cmd > 1.0: thrust_cmd = 1.0
+        if thrust_cmd < 0.0: thrust_cmd = 0.0
+        thrust_force = thrust_cmd * max_thrust
 
-            ax_drag = -drag * vx
-            ay_drag = -drag * vy
-            az_drag = -drag * vz
+        sincosf(r, &sr, &cr)
+        sincosf(p, &sp, &cp)
+        sincosf(y_ang, &sy, &cy)
 
-            ax = ax_thrust + ax_drag
-            ay = ay_thrust + ay_drag
-            az = az_thrust + az_gravity + az_drag
+        ax_thrust = thrust_force * (cy * sp * cr + sy * sr) / mass
+        ay_thrust = thrust_force * (sy * sp * cr - cy * sr) / mass
+        az_thrust = thrust_force * (cp * cr) / mass
 
-            vx += ax * dt
-            vy += ay * dt
-            vz += az * dt
+        az_gravity = -g
 
-            px += vx * dt
-            py += vy * dt
-            pz += vz * dt
+        ax_drag = -drag * vx
+        ay_drag = -drag * vy
+        az_drag = -drag * vz
 
-            # Terrain Collision
-            terr_z = 0.0
-            if pz < terr_z:
-                pz = terr_z
-                vx = 0.0
-                vy = 0.0
-                vz = 0.0
+        ax = ax_thrust + ax_drag
+        ay = ay_thrust + ay_drag
+        az = az_thrust + az_gravity + az_drag
+
+        vx += ax * dt
+        vy += ay * dt
+        vz += az * dt
+
+        px += vx * dt
+        py += vy * dt
+        pz += vz * dt
+
+        # Terrain Collision
+        terr_z = 0.0
+        if pz < terr_z:
+            pz = terr_z
+            vx = 0.0
+            vy = 0.0
+            vz = 0.0
 
     # Final terrain check
     terr_z = 0.0
@@ -439,6 +476,31 @@ def step_cython(
     # Determine split for AVX (multiples of 8)
     cdef int limit_avx = (num_agents // 8) * 8
 
+    # Check for Resets (Scalar Loop for Safety)
+    # This must be done BEFORE stepping, so that if reset, the agent steps from t=0 state.
+    # Note: step_counts[0] (global t) is incremented. If we reset an agent, we want its internal state to be t=0-like.
+    # But step_counts[0] is global.
+    # We will just reset state and let it step.
+    for i in range(num_agents):
+        if done_flags[i] > 0.5:
+             # Reset
+             _reset_agent_scalar_wrapper(
+                i,
+                pos_x, pos_y, pos_z,
+                vel_x, vel_y, vel_z,
+                roll, pitch, yaw,
+                masses, drag_coeffs, thrust_coeffs,
+                target_vx, target_vy, target_vz, target_yaw_rate,
+                vt_x, vt_y, vt_z,
+                traj_params,
+                observations
+             )
+             done_flags[i] = 0.0
+             # Note: step_counts[i] reset happens inside scalar wrapper check in _step if passed,
+             # but step_counts is INT array passed to step_cython.
+             # We should reset it here too?
+             step_counts[i] = 0
+
     with nogil:
         # AVX Loop (stride 8)
         for i in prange(0, limit_avx, 8):
@@ -472,12 +534,14 @@ def step_cython(
                 masses, drag_coeffs, thrust_coeffs,
                 target_vx, target_vy, target_vz, target_yaw_rate,
                 vt_x, vt_y, vt_z,
+                traj_params, # Passed traj_params
                 target_trajectory,
                 pos_history,
                 observations,
                 rewards,
                 reward_components,
                 done_flags,
+                step_counts, # Passed step_counts
                 actions,
                 episode_length,
                 t
@@ -497,6 +561,7 @@ cdef void _reset_agent_scalar_wrapper(
 ) noexcept nogil:
     cdef float rnd_cmd
     cdef float tvx, tvy, tvz, tyr
+    cdef float init_angle_r, dist_xy_desired_r, sa_r, ca_r
 
     # Randomize Dynamics
     masses[i] = 0.5 + rand_float() * 1.0
@@ -575,13 +640,12 @@ cdef void _reset_agent_scalar_wrapper(
     vt_z[i] = vtz_val
 
     # Initial Position: From 5m to 200m from target
-    cdef float init_angle = rand_float() * 6.2831853
-    cdef float dist_xy_desired = 5.0 + rand_float() * 195.0
-    cdef float sa, ca
-    sincosf(init_angle, &sa, &ca)
+    init_angle_r = rand_float() * 6.2831853
+    dist_xy_desired_r = 5.0 + rand_float() * 195.0
+    sincosf(init_angle_r, &sa_r, &ca_r)
 
-    pos_x[i] = vtx_val + dist_xy_desired * ca
-    pos_y[i] = vty_val + dist_xy_desired * sa
+    pos_x[i] = vtx_val + dist_xy_desired_r * ca_r
+    pos_y[i] = vty_val + dist_xy_desired_r * sa_r
     pos_z[i] = 10.0 + rand_float() * 5.0
 
     # Initial Velocity: Slow speed (0-2 m/s)

@@ -133,16 +133,10 @@ inline void step_agents_avx2(
     // ------------------------------------------------------------------------
     shift_observations_avx(observations, i);
 
-    // Active Mask (Freeze if done)
+    // Active Mask (Freeze if done) - REMOVED for Auto-Reset (Reset handled in Cython)
     // done_flags[i] is already set from previous step.
-    __m256 done_prev = _mm256_loadu_ps(&done_flags[i]);
-    __m256 mask_active = _mm256_cmp_ps(done_prev, c0, _CMP_EQ_OQ); // true (0xFF) if 0.0
-
-    // Store old state to restore if done (or just mask update)
-    // Easiest is to compute new state, then blend.
-    __m256 px_old = px; __m256 py_old = py; __m256 pz_old = pz;
-    __m256 vx_old = vx; __m256 vy_old = vy; __m256 vz_old = vz;
-    __m256 r_old = r; __m256 p_old = p; __m256 y_old = y;
+    // __m256 done_prev = _mm256_loadu_ps(&done_flags[i]);
+    // __m256 mask_active = _mm256_cmp_ps(done_prev, c0, _CMP_EQ_OQ); // true (0xFF) if 0.0
 
     // Substeps
     for (int s = 0; s < SUBSTEPS; s++) {
@@ -152,7 +146,9 @@ inline void step_agents_avx2(
         y = _mm256_add_ps(y, _mm256_mul_ps(yaw_rate_cmd, dt_v));
 
         __m256 max_thrust = _mm256_mul_ps(c20, t_coeff);
-        __m256 thrust_force = _mm256_mul_ps(thrust_cmd, max_thrust);
+        // Thrust Clipping [0, 1]
+        __m256 thrust_clipped = _mm256_max_ps(c0, _mm256_min_ps(c1, thrust_cmd));
+        __m256 thrust_force = _mm256_mul_ps(thrust_clipped, max_thrust);
 
         // Dynamics Sincos (LUT)
         __m256 sr = lut_sin256_ps(r);
@@ -201,17 +197,6 @@ inline void step_agents_avx2(
         vy = _mm256_blendv_ps(vy, c0, mask_under);
         vz = _mm256_blendv_ps(vz, c0, mask_under);
     }
-
-    // Blend Logic: If not active (done), restore old state
-    px = _mm256_blendv_ps(px_old, px, mask_active);
-    py = _mm256_blendv_ps(py_old, py, mask_active);
-    pz = _mm256_blendv_ps(pz_old, pz, mask_active);
-    vx = _mm256_blendv_ps(vx_old, vx, mask_active);
-    vy = _mm256_blendv_ps(vy_old, vy, mask_active);
-    vz = _mm256_blendv_ps(vz_old, vz, mask_active);
-    r = _mm256_blendv_ps(r_old, r, mask_active);
-    p = _mm256_blendv_ps(p_old, p, mask_active);
-    y = _mm256_blendv_ps(y_old, y, mask_active);
 
     _mm256_storeu_ps(&pos_x[i], px);
     _mm256_storeu_ps(&pos_y[i], py);
