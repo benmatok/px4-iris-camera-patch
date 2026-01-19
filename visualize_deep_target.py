@@ -19,8 +19,8 @@ def visualize_deep_target_scenario():
     """
     logging.info("Starting Deep Target Visualization Scenario...")
 
-    # 1 Agent, short episode
-    env = DroneEnv(num_agents=1, episode_length=50, use_cuda=False)
+    # 1 Agent, longer episode to demonstrate tracking over time
+    env = DroneEnv(num_agents=1, episode_length=400, use_cuda=False)
     oracle = LinearPlanner(num_agents=1)
 
     # Manual Reset to specific state
@@ -56,10 +56,11 @@ def visualize_deep_target_scenario():
     pitch_hist = []
     thrust_hist = []
 
-    for t in range(50):
+    # Run until 400 or done (crash/term)
+    for t in range(400):
         # Move target slowly to create a dynamic scenario (e.g. moving away or circle)
         # Circular motion:
-        angle = t * 0.1
+        angle = t * 0.05 # Slower circle for longer duration
         radius = 5.0
         # Target circles around (15, 10)
         curr_target = target_pos_static + np.array([np.cos(angle)*radius, np.sin(angle)*radius, 0.0])
@@ -97,7 +98,7 @@ def visualize_deep_target_scenario():
             d["pos_history"], d["observations"],
             d["rewards"], d["reward_components"],
             d["done_flags"], d["step_counts"], d["actions"],
-            1, 50, d["env_ids"]
+            1, 400, d["env_ids"]
         ]
         env.step_function(*step_args)
 
@@ -117,6 +118,10 @@ def visualize_deep_target_scenario():
 
         # (Target update is handled at start of loop)
 
+        if d['done_flags'][0] > 0.5:
+            logging.info(f"Episode terminated at step {t}")
+            break
+
     # Visualization
     pos_hist = np.array(pos_hist)
     tgt_hist = np.array(tgt_hist)
@@ -129,6 +134,8 @@ def visualize_deep_target_scenario():
 
     viz = Visualizer()
     # Log with dummy wrapper for compatibility
+    # Pad to expected shape if needed, or Visualizer handles varying lengths?
+    # Visualizer handles shape[1] as length.
     viz.log_trajectory(0, pos_hist[None, :, :], targets=tgt_hist[None, :, :], tracker_data=track_hist[None, :, :])
 
     # Save a specific plot or gif with ACTUAL tracker data
