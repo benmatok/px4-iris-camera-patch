@@ -109,17 +109,71 @@ def step_cpu(
     # Shift 10..300 -> 0..290
     observations[:, 0:290] = observations[:, 10:300]
 
-    # Active mask (Freeze done agents)
-    active_mask = (done_flags == 0.0)
-    dt_vec = dt * active_mask
+    # Auto-Reset Logic: If done_flags was 1 coming in, reset this agent now.
+    # (The previous step set it to 1, now we see it).
+    reset_mask = (done_flags > 0.5)
+    if np.any(reset_mask):
+        indices = np.where(reset_mask)[0]
+        # Call Reset Logic for these indices
+        # We need to replicate reset logic here or call a helper.
+        # Since reset_cpu handles indices, let's assume we can call it?
+        # But reset_cpu signature is large.
+        # Minimal reset for dynamics/target:
+        # Note: In standard WarpDrive, reset is handled by controller or wrapper.
+        # But user requested "instead of freezing... reset".
+        # We will reset basic state for these agents.
+
+        # Reset Logic inline (simplified)
+        # Randomize Dynamics
+        masses[indices] = 0.5 + np.random.rand(len(indices)) * 1.0
+        drag_coeffs[indices] = 0.05 + np.random.rand(len(indices)) * 0.1
+        thrust_coeffs[indices] = 0.8 + np.random.rand(len(indices)) * 0.4
+
+        # Randomize Trajectory
+        traj_params[0, indices] = 3.0 + np.random.rand(len(indices)) * 4.0
+        traj_params[1, indices] = 0.01 + np.random.rand(len(indices)) * 0.03
+        traj_params[2, indices] = np.random.rand(len(indices)) * np.pi
+        traj_params[3, indices] = 3.0 + np.random.rand(len(indices)) * 4.0
+        traj_params[4, indices] = 0.01 + np.random.rand(len(indices)) * 0.03
+        traj_params[5, indices] = np.random.rand(len(indices)) * 2 * np.pi
+        traj_params[6, indices] = 0.0 + np.random.rand(len(indices)) * 0.05
+        traj_params[7, indices] = 0.01 + np.random.rand(len(indices)) * 0.05
+        traj_params[8, indices] = np.random.rand(len(indices)) * 2 * np.pi
+        traj_params[9, indices] = 0.05
+
+        # Reset Position/Velocity
+        # Recompute Target at t=0
+        vtx_val_r = traj_params[0, indices] * np.sin(traj_params[2, indices])
+        vty_val_r = traj_params[3, indices] * np.sin(traj_params[5, indices])
+        # vtz_val_r ...
+
+        # Place Drone
+        init_angle = np.random.rand(len(indices)) * 2 * np.pi
+        dist_xy = 5.0 + np.random.rand(len(indices)) * 195.0
+        px[indices] = vtx_val_r + dist_xy * np.cos(init_angle)
+        py[indices] = vty_val_r + dist_xy * np.sin(init_angle)
+        pz[indices] = 10.0 + np.random.rand(len(indices)) * 5.0
+
+        vx[indices] = 0.0
+        vy[indices] = 0.0
+        vz[indices] = 0.0
+        r[indices] = 0.0
+        p[indices] = 0.1
+        y_ang[indices] = 0.0 # Simplify
+
+        step_counts[indices] = 0
+        observations[indices, :] = 0.0
+        done_flags[indices] = 0.0 # Clear Done
 
     for s in range(substeps):
         # 1. Dynamics Update
-        r += roll_rate * dt_vec
-        p += pitch_rate * dt_vec
-        y_ang += yaw_rate * dt_vec
+        r += roll_rate * dt
+        p += pitch_rate * dt
+        y_ang += yaw_rate * dt
 
         max_thrust = 20.0 * thrust_coeffs
+        # Thrust Clipping [0, 1]
+        thrust_cmd = np.clip(thrust_cmd, 0.0, 1.0)
         thrust_force = thrust_cmd * max_thrust
 
         sr, cr = np.sin(r), np.cos(r)
@@ -140,13 +194,13 @@ def step_cpu(
         ay = ay_thrust + ay_drag
         az = az_thrust + az_gravity + az_drag
 
-        vx += ax * dt_vec
-        vy += ay * dt_vec
-        vz += az * dt_vec
+        vx += ax * dt
+        vy += ay * dt
+        vz += az * dt
 
-        px += vx * dt_vec
-        py += vy * dt_vec
-        pz += vz * dt_vec
+        px += vx * dt
+        py += vy * dt
+        pz += vz * dt
 
         # Terrain Collision
         terr_z = 0.0
