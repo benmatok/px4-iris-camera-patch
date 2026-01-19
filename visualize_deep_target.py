@@ -131,6 +131,7 @@ def visualize_deep_target_scenario():
     d_start = np.linalg.norm(pos_hist[0] - tgt_hist[0])
     d_end = np.linalg.norm(pos_hist[-1] - tgt_hist[-1])
     logging.info(f"Distance Start: {d_start:.2f} m, End: {d_end:.2f} m")
+    logging.info(f"Altitude Start: {pos_hist[0][2]:.2f} m, End: {pos_hist[-1][2]:.2f} m")
 
     viz = Visualizer()
     # Log with dummy wrapper for compatibility
