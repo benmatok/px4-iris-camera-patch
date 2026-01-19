@@ -133,6 +133,17 @@ inline void step_agents_avx2(
     // ------------------------------------------------------------------------
     shift_observations_avx(observations, i);
 
+    // Active Mask (Freeze if done)
+    // done_flags[i] is already set from previous step.
+    __m256 done_prev = _mm256_loadu_ps(&done_flags[i]);
+    __m256 mask_active = _mm256_cmp_ps(done_prev, c0, _CMP_EQ_OQ); // true (0xFF) if 0.0
+
+    // Store old state to restore if done (or just mask update)
+    // Easiest is to compute new state, then blend.
+    __m256 px_old = px; __m256 py_old = py; __m256 pz_old = pz;
+    __m256 vx_old = vx; __m256 vy_old = vy; __m256 vz_old = vz;
+    __m256 r_old = r; __m256 p_old = p; __m256 y_old = y;
+
     // Substeps
     for (int s = 0; s < SUBSTEPS; s++) {
         // Dynamics
@@ -190,6 +201,17 @@ inline void step_agents_avx2(
         vy = _mm256_blendv_ps(vy, c0, mask_under);
         vz = _mm256_blendv_ps(vz, c0, mask_under);
     }
+
+    // Blend Logic: If not active (done), restore old state
+    px = _mm256_blendv_ps(px_old, px, mask_active);
+    py = _mm256_blendv_ps(py_old, py, mask_active);
+    pz = _mm256_blendv_ps(pz_old, pz, mask_active);
+    vx = _mm256_blendv_ps(vx_old, vx, mask_active);
+    vy = _mm256_blendv_ps(vy_old, vy, mask_active);
+    vz = _mm256_blendv_ps(vz_old, vz, mask_active);
+    r = _mm256_blendv_ps(r_old, r, mask_active);
+    p = _mm256_blendv_ps(p_old, p, mask_active);
+    y = _mm256_blendv_ps(y_old, y, mask_active);
 
     _mm256_storeu_ps(&pos_x[i], px);
     _mm256_storeu_ps(&pos_y[i], py);
@@ -408,7 +430,7 @@ inline void step_agents_avx2(
     __m256 mask_high_fail = _mm256_cmp_ps(pz, _mm256_set1_ps(100.0f), _CMP_GT_OQ);
 
     __m256 penalty = c0;
-    penalty = _mm256_add_ps(penalty, _mm256_and_ps(mask_tilt, _mm256_set1_ps(10.0f)));
+    // penalty = _mm256_add_ps(penalty, _mm256_and_ps(mask_tilt, _mm256_set1_ps(10.0f))); (REMOVED)
     penalty = _mm256_add_ps(penalty, _mm256_and_ps(mask_dist_fail, _mm256_set1_ps(10.0f)));
     penalty = _mm256_add_ps(penalty, _mm256_and_ps(mask_high_fail, _mm256_set1_ps(10.0f)));
     penalty = _mm256_add_ps(penalty, _mm256_and_ps(mask_coll, _mm256_set1_ps(10.0f)));
@@ -442,7 +464,7 @@ inline void step_agents_avx2(
     // Criterion: Success, Timeout, or Ground Collision (< 0.5m)
     __m256 mask_done = mask_success;
     mask_done = _mm256_or_ps(mask_done, mask_coll); // Add collision to termination
-    mask_done = _mm256_or_ps(mask_done, mask_tilt); // Add tilt to termination
+    // mask_done = _mm256_or_ps(mask_done, mask_tilt); // Add tilt to termination (REMOVED)
     mask_done = _mm256_or_ps(mask_done, mask_dist_fail); // Add distance fail
     mask_done = _mm256_or_ps(mask_done, mask_high_fail); // Add altitude fail
 

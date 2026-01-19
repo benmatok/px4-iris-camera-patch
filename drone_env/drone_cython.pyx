@@ -143,49 +143,50 @@ cdef void _step_agent_scalar(
     # 302 total. 10..300 -> 0..290
     memmove(&observations[i, 0], &observations[i, 10], 290 * 4)
 
-    # Substeps (Physics Update)
-    for s in range(substeps):
-        # 1. Dynamics
-        r += roll_rate_cmd * dt
-        p += pitch_rate_cmd * dt
-        y_ang += yaw_rate_cmd * dt
+    # Substeps (Physics Update) - Only if not done
+    if done_flags[i] == 0.0:
+        for s in range(substeps):
+            # 1. Dynamics
+            r += roll_rate_cmd * dt
+            p += pitch_rate_cmd * dt
+            y_ang += yaw_rate_cmd * dt
 
-        max_thrust = 20.0 * thrust_coeff
-        thrust_force = thrust_cmd * max_thrust
+            max_thrust = 20.0 * thrust_coeff
+            thrust_force = thrust_cmd * max_thrust
 
-        sincosf(r, &sr, &cr)
-        sincosf(p, &sp, &cp)
-        sincosf(y_ang, &sy, &cy)
+            sincosf(r, &sr, &cr)
+            sincosf(p, &sp, &cp)
+            sincosf(y_ang, &sy, &cy)
 
-        ax_thrust = thrust_force * (cy * sp * cr + sy * sr) / mass
-        ay_thrust = thrust_force * (sy * sp * cr - cy * sr) / mass
-        az_thrust = thrust_force * (cp * cr) / mass
+            ax_thrust = thrust_force * (cy * sp * cr + sy * sr) / mass
+            ay_thrust = thrust_force * (sy * sp * cr - cy * sr) / mass
+            az_thrust = thrust_force * (cp * cr) / mass
 
-        az_gravity = -g
+            az_gravity = -g
 
-        ax_drag = -drag * vx
-        ay_drag = -drag * vy
-        az_drag = -drag * vz
+            ax_drag = -drag * vx
+            ay_drag = -drag * vy
+            az_drag = -drag * vz
 
-        ax = ax_thrust + ax_drag
-        ay = ay_thrust + ay_drag
-        az = az_thrust + az_gravity + az_drag
+            ax = ax_thrust + ax_drag
+            ay = ay_thrust + ay_drag
+            az = az_thrust + az_gravity + az_drag
 
-        vx += ax * dt
-        vy += ay * dt
-        vz += az * dt
+            vx += ax * dt
+            vy += ay * dt
+            vz += az * dt
 
-        px += vx * dt
-        py += vy * dt
-        pz += vz * dt
+            px += vx * dt
+            py += vy * dt
+            pz += vz * dt
 
-        # Terrain Collision
-        terr_z = 0.0
-        if pz < terr_z:
-            pz = terr_z
-            vx = 0.0
-            vy = 0.0
-            vz = 0.0
+            # Terrain Collision
+            terr_z = 0.0
+            if pz < terr_z:
+                pz = terr_z
+                vx = 0.0
+                vy = 0.0
+                vz = 0.0
 
     # Final terrain check
     terr_z = 0.0
@@ -360,8 +361,7 @@ cdef void _step_agent_scalar(
 
     # Fail: Tilt > 60 deg (r33 < 0.5)
     cdef float penalty = 0.0
-    if r33 < 0.5:
-        penalty += 10.0
+    # if r33 < 0.5: penalty += 10.0 (REMOVED)
 
     # Excessive Distance Penalty (prevent flying away)
     if dist > 300.0:
@@ -400,8 +400,7 @@ cdef void _step_agent_scalar(
 
     # Crash / Fail Conditions
     # 1. Unstable (Tilt > 60 deg)
-    if r33 < 0.5:
-        d_flag = 1.0
+    # if r33 < 0.5: d_flag = 1.0 (REMOVED)
 
     # 2. Out of Bounds (Distance > 300m)
     if dist > 300.0:
