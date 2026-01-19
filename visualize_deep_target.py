@@ -52,6 +52,7 @@ def visualize_deep_target_scenario():
     # Run loop
     pos_hist = []
     tgt_hist = []
+    track_hist = [] # Capture u, v, size, conf
     pitch_hist = []
     thrust_hist = []
 
@@ -103,8 +104,15 @@ def visualize_deep_target_scenario():
         # Record
         pos = np.array([d['pos_x'][0], d['pos_y'][0], d['pos_z'][0]])
         tgt = np.array([d['vt_x'][0], d['vt_y'][0], d['vt_z'][0]])
+
+        # Tracker data from observations [u, v, size, conf]
+        # u is at 298, v at 299, size at 300, conf at 301
+        obs = d['observations'][0]
+        track = np.array([obs[298], obs[299], obs[300], obs[301]])
+
         pos_hist.append(pos)
         tgt_hist.append(tgt)
+        track_hist.append(track)
         pitch_hist.append(d['pitch'][0])
 
         # (Target update is handled at start of loop)
@@ -112,6 +120,7 @@ def visualize_deep_target_scenario():
     # Visualization
     pos_hist = np.array(pos_hist)
     tgt_hist = np.array(tgt_hist)
+    track_hist = np.array(track_hist)
 
     # Calculate Distances
     d_start = np.linalg.norm(pos_hist[0] - tgt_hist[0])
@@ -119,10 +128,11 @@ def visualize_deep_target_scenario():
     logging.info(f"Distance Start: {d_start:.2f} m, End: {d_end:.2f} m")
 
     viz = Visualizer()
-    viz.log_trajectory(0, pos_hist[None, :, :], targets=tgt_hist[None, :, :], tracker_data=np.zeros((1, 50, 4)))
+    # Log with dummy wrapper for compatibility
+    viz.log_trajectory(0, pos_hist[None, :, :], targets=tgt_hist[None, :, :], tracker_data=track_hist[None, :, :])
 
-    # Save a specific plot or gif
-    viz.save_episode_gif(999, pos_hist, targets=tgt_hist, tracker_data=np.zeros((50, 4)))
+    # Save a specific plot or gif with ACTUAL tracker data
+    viz.save_episode_gif(999, pos_hist, targets=tgt_hist, tracker_data=track_hist)
 
     # Pitch > 0 is Nose Down (Forward). Expected ~50 deg for deep target.
     logging.info(f"Final Pitch: {np.degrees(pitch_hist[-1]):.2f} deg")
