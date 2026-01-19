@@ -175,14 +175,13 @@ class LinearPlanner:
         # To look DOWN at target (angle `elevation_rad` below horizon),
         # We need Camera Axis to point at -elevation_rad.
         # Body Pitch + 30 = -elevation_rad
-        # Body Pitch = -30 - elevation_rad.
-        # If elevation is 45 deg (down), Pitch = -75 deg.
-        # This is very steep.
+        # Body Pitch = 30 + elevation_rad. (Positive Pitch is Nose Down/Forward)
+        # If elevation is 45 deg (down), Pitch = 75 deg.
 
-        look_down_pitch = -np.deg2rad(30.0) - elevation_rad
-        # Limit pitch to -50 degrees to ensure we retain enough vertical thrust component to climb.
-        # Max sustainable pitch is ~60 deg (at 2g thrust). -50 deg gives ~0.64g vertical headroom.
-        look_down_pitch = np.clip(look_down_pitch, -np.deg2rad(50.0), 0.0)
+        look_down_pitch = np.deg2rad(30.0) + elevation_rad
+        # Limit pitch to +50 degrees to ensure we retain enough vertical thrust component to climb.
+        # Max sustainable pitch is ~60 deg (at 2g thrust). +50 deg gives ~0.64g vertical headroom.
+        look_down_pitch = np.clip(look_down_pitch, 0.0, np.deg2rad(50.0))
 
         # Apply override
         pitch_des = np.where(mask_deep_down, look_down_pitch, pitch_des)
@@ -231,7 +230,206 @@ class LinearPlanner:
         actions[:, 2] = np.clip(pitch_rate_cmd, -10.0, 10.0)
         actions[:, 3] = np.clip(yaw_rate_cmd, -10.0, 10.0)
 
-        return actions
+        # --- Differentiable Optimization Step (Gradient-Based MPC) ---
+        # The user requested "optimize control using gradients to optimize getting closer".
+        # We perform a few steps of Gradient Descent on the proposed action using a differentiable physics model.
+        # This refines the heuristic action.
+
+        # 1. Convert to Torch
+        device = 'cpu'
+
+        # Action Parameter (Initialized with heuristic)
+        # Shape (N, 4).
+        # We need to optimize logits or raw actions.
+        # Since physics takes action in range [0,1] or clipped, we use Raw action and clamp in model.
+        # Or better: Parameterize as u_unconstrained, action = sigmoid(u) * scale + shift.
+        # For simplicity, optimize `actions` directly and clamp in loss.
+
+        act_tensor = torch.tensor(actions, dtype=torch.float32, requires_grad=True, device=device)
+
+        # Optimizer
+        opt = torch.optim.SGD([act_tensor], lr=0.1, momentum=0.5)
+
+        # State tensors
+        pos_t = torch.tensor(np.stack([px, py, pz], axis=1), dtype=torch.float32, device=device)
+        vel_t = torch.tensor(np.stack([vx, vy, vz], axis=1), dtype=torch.float32, device=device)
+        att_t = torch.tensor(np.stack([roll, pitch, yaw], axis=1), dtype=torch.float32, device=device)
+        target_t = torch.tensor(target_pos, dtype=torch.float32, device=device)
+        mass_t = torch.tensor(mass, dtype=torch.float32, device=device).unsqueeze(1)
+        drag_t = torch.tensor(drag, dtype=torch.float32, device=device).unsqueeze(1)
+        thrust_coeff_t = torch.tensor(thrust_coeff, dtype=torch.float32, device=device).unsqueeze(1)
+
+        # Optimization Loop
+        steps = 20
+        for _ in range(steps):
+            opt.zero_grad()
+
+            # Predict Next State
+            # Clamp Actions
+            act_clamped = torch.zeros_like(act_tensor)
+            act_clamped[:, 0] = torch.clamp(act_tensor[:, 0], 0.0, 1.0) # Thrust
+            act_clamped[:, 1:] = torch.clamp(act_tensor[:, 1:], -10.0, 10.0) # Rates
+
+            next_pos, next_vel, next_att, cam_uv = self._differentiable_step(
+                pos_t, vel_t, att_t, act_clamped, mass_t, drag_t, thrust_coeff_t, target_t
+            )
+
+            # Compute Loss
+            # 1. Distance Loss (Get Closer)
+            dist = torch.norm(next_pos - target_t, dim=1)
+            loss_dist = dist.mean()
+
+            # 2. Gaze Loss (Keep in View)
+            # u, v should be close to 0.
+            # If target is deep down, u,v might be large if we pitch up.
+            # We want to minimize gaze error.
+            # But getting closer is priority.
+            # If we simply minimize distance, the drone might dive or fly blindly.
+            # We add a penalty for losing the target (u,v outside bounds).
+            # FOV is ~1.732 (tan 60).
+            u, v = cam_uv[:, 0], cam_uv[:, 1]
+            gaze_err = u**2 + v**2
+
+            # Penalty for being out of FOV
+            fov_limit = 1.7
+            out_of_view = (u.abs() > fov_limit) | (v.abs() > fov_limit)
+            loss_view = (gaze_err).mean()
+
+            # 3. Z-Loss (Don't crash)
+            # Penalize z < 0.5
+            z_pred = next_pos[:, 2]
+            loss_crash = torch.relu(0.5 - z_pred).mean() * 100.0
+
+            # Total Loss
+            # Weighted sum. Distance is primary.
+            # If we enforce View too strictly, it fights forward motion.
+            # We use a smaller weight for view.
+            loss = 1.0 * loss_dist + 0.1 * loss_view + loss_crash
+
+            loss.backward()
+            opt.step()
+
+        # Retrieve optimized actions
+        optimized_actions = act_tensor.detach().cpu().numpy()
+        # Clamp final output
+        optimized_actions[:, 0] = np.clip(optimized_actions[:, 0], 0.0, 1.0)
+        optimized_actions[:, 1:] = np.clip(optimized_actions[:, 1:], -10.0, 10.0)
+
+        return optimized_actions
+
+    def _differentiable_step(self, pos, vel, att, action, mass, drag, thrust_coeff, target):
+        """
+        Single step Euler integration in PyTorch.
+        Returns next state and camera projection.
+        """
+        dt = self.dt
+        g = self.g
+
+        # Unpack
+        # att: (N, 3) [roll, pitch, yaw]
+        r, p, y = att[:, 0], att[:, 1], att[:, 2]
+
+        # Action
+        thrust_cmd = action[:, 0:1] # (N, 1)
+        rates = action[:, 1:] # (N, 3)
+
+        # Dynamics
+        # Update Attitude
+        next_att = att + rates * dt
+        # Wrap angles? Not strictly needed for gradient of one step.
+
+        # Update Velocity
+        # Forces
+        max_thrust = 20.0 * thrust_coeff
+        thrust_force = thrust_cmd * max_thrust
+
+        sr = torch.sin(r); cr = torch.cos(r)
+        sp = torch.sin(p); cp = torch.cos(p)
+        sy = torch.sin(y); cy = torch.cos(y)
+
+        # Acceleration (World Frame)
+        # R_body_to_world dot [0, 0, F]
+        # From drone.py:
+        # ax = F/m * (cy*sp*cr + sy*sr)
+        # ay = F/m * (sy*sp*cr - cy*sr)
+        # az = F/m * (cp*cr) - g
+
+        ax = thrust_force * (cy*sp*cr + sy*sr) / mass
+        ay = thrust_force * (sy*sp*cr - cy*sr) / mass
+        az = thrust_force * (cp*cr) / mass - g
+
+        # Drag
+        # F_drag = -drag * vel
+        # a_drag = -drag * vel / m ?
+        # In drone.py: ax_drag = -drag_coeffs * vx (No mass division? Drag coeff is c/m effectively? check drone.py)
+        # drone.py: ax_drag = -drag_coeffs * vx.
+        # Yes, drag_coeffs in drone.py seems to be drag/mass or just a coeff.
+        # Wait, in drone.py reset: drag_coeffs = 0.05..0.15.
+        # Physics: ax = ax_thrust + ax_drag.
+        # So it is an acceleration term.
+
+        ax_drag = -drag * vel[:, 0:1]
+        ay_drag = -drag * vel[:, 1:2]
+        az_drag = -drag * vel[:, 2:3]
+
+        acc = torch.cat([ax, ay, az], dim=1) + torch.cat([ax_drag, ay_drag, az_drag], dim=1)
+
+        next_vel = vel + acc * dt
+        next_pos = pos + next_vel * dt
+
+        # Camera Projection (for Gaze Loss)
+        # R from Body to World is R_bw.
+        # We need World to Body to project target.
+        # R_wb = R_bw^T.
+
+        # Target in World
+        dx_w = target[:, 0] - next_pos[:, 0]
+        dy_w = target[:, 1] - next_pos[:, 1]
+        dz_w = target[:, 2] - next_pos[:, 2]
+
+        # Rotate to Body
+        # R_bw rows are [r11, r12, r13], ...
+        # V_b = R_bw^T * V_w.
+        # V_bx = r11*dx + r21*dy + r31*dz
+
+        # Recalculate R for NEXT attitude (approx using current r,p,y for grad is okay, but better use next)
+        # But rates * dt is small. Using r,p,y is fine for one step gradient.
+        # Let's use current R for simplicity of graph.
+
+        r11 = cy * cp
+        r12 = sy * cp
+        r13 = -sp
+        r21 = cy * sp * sr - sy * cr
+        r22 = sy * sp * sr + cy * cr
+        r23 = cp * sr
+        r31 = cy * sp * cr + sy * sr
+        r32 = sy * sp * cr - cy * sr
+        r33 = cp * cr
+
+        # Projection must match drone.py exactly
+        xb = r11 * dx_w + r12 * dy_w + r13 * dz_w
+        yb = r21 * dx_w + r22 * dy_w + r23 * dz_w
+        zb = r31 * dx_w + r32 * dy_w + r33 * dz_w
+
+        # Camera Frame (Up 30 deg)
+        # s30 = 0.5, c30 = 0.866
+        s30 = 0.5; c30 = 0.866025
+
+        # drone.py:
+        # xc = yb (Standard Body Y is Camera X? Left/Right)
+        # yc = -s30 * xb + c30 * zb (Camera Y is Up on image?)
+        # zc = c30 * xb + s30 * zb (Camera Z is Depth)
+
+        xc = yb
+        yc = -s30 * xb + c30 * zb
+        zc = c30 * xb + s30 * zb
+
+        # Projection
+        zc_safe = torch.clamp(zc, min=0.1)
+        u = xc / zc_safe
+        v = yc / zc_safe
+
+        return next_pos, next_vel, next_att, torch.stack([u, v], dim=1)
 
 class SupervisedTrainer:
     def __init__(self, env, policy, oracle, num_agents, episode_length, learning_rate=3e-4, debug=False):
