@@ -109,11 +109,15 @@ def step_cpu(
     # Shift 10..300 -> 0..290
     observations[:, 0:290] = observations[:, 10:300]
 
+    # Active mask (Freeze done agents)
+    active_mask = (done_flags == 0.0)
+    dt_vec = dt * active_mask
+
     for s in range(substeps):
         # 1. Dynamics Update
-        r += roll_rate * dt
-        p += pitch_rate * dt
-        y_ang += yaw_rate * dt
+        r += roll_rate * dt_vec
+        p += pitch_rate * dt_vec
+        y_ang += yaw_rate * dt_vec
 
         max_thrust = 20.0 * thrust_coeffs
         thrust_force = thrust_cmd * max_thrust
@@ -136,13 +140,13 @@ def step_cpu(
         ay = ay_thrust + ay_drag
         az = az_thrust + az_gravity + az_drag
 
-        vx += ax * dt
-        vy += ay * dt
-        vz += az * dt
+        vx += ax * dt_vec
+        vy += ay * dt_vec
+        vz += az * dt_vec
 
-        px += vx * dt
-        py += vy * dt
-        pz += vz * dt
+        px += vx * dt_vec
+        py += vy * dt_vec
+        pz += vz * dt_vec
 
         # Terrain Collision
         terr_z = 0.0
@@ -320,7 +324,7 @@ def step_cpu(
     rew += bonus
 
     penalty = np.zeros(num_agents, dtype=np.float32)
-    penalty = np.where(r33 < 0.5, penalty + 10.0, penalty) # Tilt > 60
+    # penalty = np.where(r33 < 0.5, penalty + 10.0, penalty) # Tilt > 60 (REMOVED)
     penalty = np.where(dist > 300.0, penalty + 10.0, penalty) # Out of bounds
     penalty = np.where(pz > 100.0, penalty + 10.0, penalty) # Too high
     penalty = np.where(collision, penalty + 10.0, penalty)
@@ -347,7 +351,7 @@ def step_cpu(
     # Criterion: Success, Timeout, or Ground Collision (< 0.5m)
     d_flag = np.where(pz < 0.5, 1.0, d_flag)
     # Crash / Fail Conditions
-    d_flag = np.where(r33 < 0.5, 1.0, d_flag)
+    # d_flag = np.where(r33 < 0.5, 1.0, d_flag) # REMOVED
     d_flag = np.where(dist > 300.0, 1.0, d_flag)
     d_flag = np.where(pz > 100.0, 1.0, d_flag)
 

@@ -59,7 +59,22 @@ class LinearPlanner:
         elevation_rad = np.arctan2(rel_h, dist_xy)
         threshold_rad = np.deg2rad(10.0)
 
-        # Virtual Target Logic
+        # "Target Clip" Logic: If target is too far below (> 30 deg depression),
+        # force a "Look Down" maneuver instead of normal pursuit.
+        # Depression angle: if rel_h > 0 (above), atan2(rel_h, dist_xy) is large.
+        # If target is at 45 deg down, elevation_rad is 45 deg.
+        # If target is at 80 deg down (underneath), elevation_rad is 80 deg.
+        # FOV limit: Camera +30 deg. Bottom of FOV is -30 deg relative to body.
+        # If body is level, we see down to -30 deg.
+        # So if target is > 30 deg down (elevation_rad > 30 deg), we lose it if level.
+        # Strategy: If elevation_rad > 30 deg:
+        #   1. Pitch Down to `-(elevation_rad - 30deg)` or more. e.g. -45 deg.
+        #   2. Climb (vz > 0) to "go up a bit".
+        #   3. Yaw to target.
+
+        mask_deep_down = elevation_rad > np.deg2rad(30.0)
+
+        # Virtual Target Logic (for non-deep agents)
         # If elevation < 10 deg, aim higher.
         target_z_eff = tz.copy()
         mask_low = elevation_rad < threshold_rad
@@ -67,7 +82,6 @@ class LinearPlanner:
         # For low agents, set target Z higher
         target_angle_rad = np.deg2rad(15.0)
         req_h = dist_xy * np.tan(target_angle_rad)
-
         target_z_eff[mask_low] = tz[mask_low] + req_h[mask_low]
 
         # Recalculate Delta with effective target
@@ -111,11 +125,6 @@ class LinearPlanner:
         # Yaw Alignment: Point nose at target (xy plane)
         yaw_des = np.arctan2(dy, dx)
 
-        # Better:
-        # xb_temp = [cos(yaw), sin(yaw), 0]
-        # yb = cross(zb, xb_temp)
-        # xb = cross(yb, zb)
-
         xb_temp_x = np.cos(yaw_des)
         xb_temp_y = np.sin(yaw_des)
         xb_temp_z = np.zeros_like(yaw_des)
@@ -138,6 +147,66 @@ class LinearPlanner:
         # Extract Roll/Pitch from R = [xb, yb, zb]
         pitch_des = -np.arcsin(np.clip(xb_z, -1.0, 1.0))
         roll_des = np.arctan2(yb_z, zbz)
+
+        # --- Override for "Look Down" Mode ---
+        # If target is deep down, we override Pitch and Thrust.
+        # "Go up a bit" -> Thrust should be > hover.
+        # "Just Pitch" -> Pitch down.
+
+        # Calculate desired pitch to center target in view
+        # Camera is +30 deg. To see target at elevation_rad (down),
+        # Body Pitch + 30 = -elevation_rad
+        # Body Pitch = -elevation_rad - 30 deg (in rads)
+        # Note: elevation_rad is positive for target BELOW drone (rel_h > 0)
+        # Wait, rel_h = pz - tz. If pz=10, tz=0, rel_h=10 (pos).
+        # atan2(10, 0) = 90 deg.
+        # So "down" angle is elevation_rad.
+        # Camera vector is usually Forward-Up relative to body?
+        # Standard: Z is down? No, Z is UP in this sim usually?
+        # In this sim: Z is Up.
+        # Camera is: `yc = -s30 * xb + c30 * zb`. `zc = c30 * xb + s30 * zb`.
+        # This implies Camera Z (optical axis usually Z or X?)
+        # Let's assume standard camera frame: Z is forward.
+        # `zc` is "forward" distance? `u = xc/zc`.
+        # `zc = c30 * xb + s30 * zb`.
+        # `zb` is Body Up. `xb` is Body Forward.
+        # Camera Axis `zc` is tilted UP 30 deg from Body Forward `xb`.
+        # So Camera points 30 deg UP.
+        # To look DOWN at target (angle `elevation_rad` below horizon),
+        # We need Camera Axis to point at -elevation_rad.
+        # Body Pitch + 30 = -elevation_rad
+        # Body Pitch = -30 - elevation_rad.
+        # If elevation is 45 deg (down), Pitch = -75 deg.
+        # This is very steep.
+
+        look_down_pitch = -np.deg2rad(30.0) - elevation_rad
+        # Limit pitch to -50 degrees to ensure we retain enough vertical thrust component to climb.
+        # Max sustainable pitch is ~60 deg (at 2g thrust). -50 deg gives ~0.64g vertical headroom.
+        look_down_pitch = np.clip(look_down_pitch, -np.deg2rad(50.0), 0.0)
+
+        # Apply override
+        pitch_des = np.where(mask_deep_down, look_down_pitch, pitch_des)
+
+        # Override thrust to "Go up a bit" (Climb)
+        # To climb while pitched down:
+        # F_z_world = Thrust * cos(pitch) * cos(roll)
+        # We need F_z_world > mg.
+        # F_z_req = mg + m * 2.0 (accel up)
+        # Thrust = F_z_req / (cos(pitch)*cos(roll))
+        # This can be very large if pitch is steep.
+
+        hover_thrust = mass * 9.81 / max_thrust_force
+        climb_thrust = hover_thrust * 1.5 # 50% more thrust to climb/hold
+        # Scale by 1/cos(pitch)
+        pitch_clamped = np.clip(pitch_des, -1.4, 1.4)
+        cos_p = np.cos(pitch_clamped)
+        climb_thrust = climb_thrust / (cos_p + 0.1) # Avoid div zero
+
+        thrust_cmd = np.where(mask_deep_down, climb_thrust, thrust_cmd)
+        thrust_cmd = np.clip(thrust_cmd, 0.0, 1.0)
+
+        # Roll should be zero in look down mode to prevent spiraling
+        roll_des = np.where(mask_deep_down, 0.0, roll_des)
 
         # Rate P-Controller
         Kp_att = 5.0
