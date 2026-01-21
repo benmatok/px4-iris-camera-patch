@@ -287,9 +287,11 @@ class LinearPlanner:
                 dist = torch.norm(next_pos - target_t, dim=1)
                 loss_dist = dist.mean()
 
-                # 2. Altitude Loss (Stay close to Target Z)
-                # Penalize deviation from target Z specifically to discourage climbing
-                z_err = (next_pos[:, 2] - target_t[:, 2]).abs()
+                # 2. Altitude Loss (Stay close to Target Z + Safety Margin)
+                # Aim to be 2 meters ABOVE the target (or 1.5m) to avoid ground collision
+                # target_t[:, 2] is 0.0 in deep target scenario.
+                safe_z = target_t[:, 2] + 2.0
+                z_err = (next_pos[:, 2] - safe_z).abs()
                 loss_alt = z_err.mean()
 
                 # 3. Gaze Loss (Keep in View)
@@ -298,8 +300,9 @@ class LinearPlanner:
                 loss_view = (gaze_err).mean()
 
                 # 4. Crash Loss
+                # Increase margin to 1.0m to be safe
                 z_pred = next_pos[:, 2]
-                loss_crash = torch.relu(0.5 - z_pred).mean() * 100.0
+                loss_crash = torch.relu(1.0 - z_pred).mean() * 100.0
 
                 # Accumulate Loss
                 # We weight Altitude Loss heavily to prevent "climbing away"
