@@ -55,6 +55,7 @@ def visualize_deep_target_scenario():
     track_hist = [] # Capture u, v, size, conf
     pitch_hist = []
     thrust_hist = []
+    vz_hist = [] # Capture Vertical Velocity
 
     # Run until 400 or done (crash/term)
     for t in range(400):
@@ -115,6 +116,7 @@ def visualize_deep_target_scenario():
         tgt_hist.append(tgt)
         track_hist.append(track)
         pitch_hist.append(d['pitch'][0])
+        vz_hist.append(d['vel_z'][0])
 
         # (Target update is handled at start of loop)
 
@@ -126,6 +128,7 @@ def visualize_deep_target_scenario():
     pos_hist = np.array(pos_hist)
     tgt_hist = np.array(tgt_hist)
     track_hist = np.array(track_hist)
+    vz_hist = np.array(vz_hist)
 
     # Calculate Distances
     d_start = np.linalg.norm(pos_hist[0] - tgt_hist[0])
@@ -145,6 +148,7 @@ def visualize_deep_target_scenario():
     # Pitch > 0 is Nose Down (Forward). Expected ~50 deg for deep target.
     logging.info(f"Final Pitch: {np.degrees(pitch_hist[-1]):.2f} deg")
     logging.info(f"Mean Thrust: {np.mean(thrust_hist):.2f}")
+    logging.info(f"Min Vz: {np.min(vz_hist):.2f} m/s (Should act be limited to approx -3.0)")
     logging.info("Generated visualization in visualizations/ (traj_999.gif)")
 
 if __name__ == "__main__":

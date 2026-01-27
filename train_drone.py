@@ -294,6 +294,13 @@ class LinearPlanner:
                 z_err = (next_pos[:, 2] - safe_z).abs()
                 loss_alt = z_err.mean()
 
+                # 2b. Descent Rate Loss (Soft Constraint on Falling Speed)
+                # Penalize if falling faster than 3 m/s
+                # next_vel[:, 2] is vz. Positive is Up.
+                # Falling is vz < 0.
+                # If vz = -5, penalty = relu(5 - 3) = 2.
+                loss_descent = torch.relu(-next_vel[:, 2] - 3.0).mean()
+
                 # 3. Gaze Loss (Keep in View)
                 u, v = cam_uv[:, 0], cam_uv[:, 1]
                 gaze_err = u**2 + v**2
@@ -306,7 +313,8 @@ class LinearPlanner:
 
                 # Accumulate Loss
                 # We weight Altitude Loss heavily to prevent "climbing away"
-                step_loss = 1.0 * loss_dist + 2.0 * loss_alt + 0.1 * loss_view + loss_crash
+                # Added descent loss to prevent free fall
+                step_loss = 1.0 * loss_dist + 2.0 * loss_alt + 1.0 * loss_descent + 0.1 * loss_view + loss_crash
                 total_loss += step_loss
 
                 # Update for next step
