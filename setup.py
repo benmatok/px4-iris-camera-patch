@@ -23,6 +23,13 @@ extensions = [
         include_dirs=[numpy.get_include()],
         extra_compile_args=["-O3", "-fopenmp", "-ffast-math", "-mavx2", "-mfma"],
         extra_link_args=["-fopenmp"],
+    ),
+    Extension(
+        "ghost_dpc.ghost_dpc",
+        ["ghost_dpc/ghost_dpc.pyx"],
+        include_dirs=[numpy.get_include(), "ghost_dpc"],
+        extra_compile_args=["-O3", "-fopenmp", "-ffast-math", "-mavx2", "-mfma"],
+        extra_link_args=["-fopenmp"],
     )
 ]
 
