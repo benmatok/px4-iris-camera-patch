@@ -57,7 +57,7 @@ RUN sed -i 's/matplotlib>=3.0.*/matplotlib>=3.0.0/' requirements.txt && \
 
 RUN echo 'source /opt/ros/humble/setup.bash' >> ~/.bashrc
 
-WORKDIR /src
+WORKDIR /home/px4user
 RUN git clone https://github.com/benmatok/px4-iris-camera-patch.git && \
     cd px4-iris-camera-patch && chmod +x apply_patch.sh && ./apply_patch.sh
 
