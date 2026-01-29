@@ -89,3 +89,22 @@ This 4-week sprint aims to migrate the "Ghost" Differentiable Predictive Control
     -   Document tuning parameters and lessons learned.
 
 **Deliverable:** `GAZEBO_VALIDATION_REPORT.md` and associated plots.
+
+---
+
+## Addendum: Adaptation for Minimal State (GPS-Denied)
+**Scenario:** No Position (`px, py`) or Velocity (`vx, vy`) data. Available: Attitude (`roll, pitch, yaw`), Altitude (`pz`), Control History, and IMU (`ax, ay, az`).
+
+**Strategy:**
+1.  **Velocity Estimation (Dead Reckoning):**
+    -   **Objective:** Reconstruct velocity state internally since external `vx, vy` are unavailable.
+    -   **Implementation:** Modify `GhostEstimator` to integrate IMU acceleration:
+        `v[t+1] = v[t] + (R * a_imu - g) * dt`
+    -   **Correction:** Use Barometer (`pz`) to correct vertical velocity drift. Lateral velocity will drift but can be partially bounded by drag models.
+2.  **Drag-Based Observability:**
+    -   **Principle:** Drag forces are velocity-dependent ($F_d \propto v^2$). Incorrect velocity estimates in the Ghost Models will produce incorrect acceleration predictions.
+    -   **Benefit:** The MMAE system can infer crude velocity information by selecting models that best explain the observed IMU deceleration patterns during maneuvers.
+3.  **Control Objective Shift:**
+    -   **Standard:** Minimize $||P_{drone} - P_{target}||$ (Position Control).
+    -   **Adapted:** Minimize $||V_{drone} - V_{cmd}||$ (Velocity Control) or $||Attitude - Attitude_{cmd}||$ (Attitude Stabilization).
+    -   **Logic:** Without position feedback, drift is inevitable. The controller should focus on maintaining stable flight characteristics or executing "Blind" velocity commands (e.g., "Fly North at 5m/s").
