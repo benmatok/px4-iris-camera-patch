@@ -4,7 +4,9 @@ from mavsdk import System
 
 async def run():
     drone = System()
-    await drone.connect(system_address="udp://:14540")
+    # Netstat showed 14580 is open (likely instance 2)
+    print("Connecting to drone on udp://:14580...")
+    await drone.connect(system_address="udp://:14580")
 
     print("Waiting for drone to connect...")
     async for state in drone.core.connection_state():
@@ -18,7 +20,6 @@ async def run():
     async def print_position():
         async for pos in drone.telemetry.position():
             print(f"Position (LLA): Lat={pos.latitude_deg:.6f}, Lon={pos.longitude_deg:.6f}, Alt={pos.relative_altitude_m:.2f}m")
-            # For brevity, only print once per second (logic handled by caller or sleep)
             await asyncio.sleep(1.0)
 
     async def print_attitude():
