@@ -34,7 +34,7 @@ This sprint focuses on integrating the Ghost-DPC core with a vision system to tr
 ### Phase 1: The "Brain" on the Bench (Core Kernel)
 **Goal:** Validate the C++ math and physics models in isolation before touching any simulation or robot.
 
-*   **Step 1.1: Gradient Check Unit Test**
+*   **Step 1.1: Gradient Check Unit Test** [x]
     *   **File:** `tests/test_ghost_gradients.py`
     *   **Logic:**
         *   Instantiate `PyGhostModel`.
@@ -46,7 +46,7 @@ This sprint focuses on integrating the Ghost-DPC core with a vision system to tr
         *   **Sanity Check:** Ensure gradients are *non-zero* for Thrust and Pitch (if pitch != 0).
         *   **Failure Mode:** If error > 1e-2, check `ghost_model.hpp` for missing terms in the Jacobian chain rule (especially angular rate couplings).
 
-*   **Step 1.2: Estimator Convergence Test**
+*   **Step 1.2: Estimator Convergence Test** [x]
     *   **File:** `tests/test_estimator.py`
     *   **Logic:**
         *   Create `PyGhostEstimator` with "Light" (1.0kg) and "Heavy" (2.0kg) models.
@@ -60,7 +60,7 @@ This sprint focuses on integrating the Ghost-DPC core with a vision system to tr
             3.  Plot shows monotonic increase in "Heavy" probability.
         *   **Failure Mode:** If weights oscillate or stay 0.5, check the `likelihood` function variance (sigma). It might be too large (ignoring errors) or too small (numerical underflow).
 
-*   **Step 1.3: Solver Latency Benchmark**
+*   **Step 1.3: Solver Latency Benchmark** [x]
     *   **File:** `tests/benchmark_solver.py`
     *   **Logic:**
         *   Run `PyDPCSolver.solve()` 1,000 times in a loop.
@@ -73,7 +73,7 @@ This sprint focuses on integrating the Ghost-DPC core with a vision system to tr
 ### Phase 2: The "Nervous System" (Simulation Bridge)
 **Goal:** Ensure data flows correctly between Gazebo/PX4 and your Python script.
 
-*   **Step 2.1: Telemetry Sanity Check**
+*   **Step 2.1: Telemetry Sanity Check** [x]
     *   **File:** `tools/check_telemetry.py`
     *   **Logic:**
         *   Subscribe to MAVSDK telemetry.
@@ -87,7 +87,7 @@ This sprint focuses on integrating the Ghost-DPC core with a vision system to tr
                 *   *Action:* Tilt drone Nose Down. `Pitch` must be positive (if using standard aero convention).
         *   **Failure Mode:** If `IMU.z` is near 0, physics is paused. If `Pitch` sign is flipped, control will invert (crash).
 
-*   **Step 2.2: The "Wiggle" Test (Actuation)**
+*   **Step 2.2: The "Wiggle" Test (Actuation)** [x]
     *   **File:** `tools/test_actuation.py`
     *   **Logic:**
         *   Arm -> Offboard.
@@ -102,7 +102,7 @@ This sprint focuses on integrating the Ghost-DPC core with a vision system to tr
 ### Phase 3: The "Eyes" (Perception Layer)
 **Goal:** Build and verify the vision system.
 
-*   **Step 3.1: Red Blob Detector**
+*   **Step 3.1: Red Blob Detector** [x]
     *   **File:** `vision/detector.py`
     *   **Logic:** HSV Thresholding + Contour extraction.
     *   **Critical Validation:**
@@ -113,7 +113,7 @@ This sprint focuses on integrating the Ghost-DPC core with a vision system to tr
             3.  Console prints `Found object: Center=(320, 240), Area=1500`.
         *   **Failure Mode:** False positives on shadows? Adjust HSV lower bound `V` (Value) > 50.
 
-*   **Step 3.2: Ray-Casting Math**
+*   **Step 3.2: Ray-Casting Math** [x]
     *   **File:** `vision/projection.py`
     *   **Logic:** Pinhole Camera Model + Homography to $z=0$ plane.
     *   **Critical Validation:**
@@ -127,7 +127,7 @@ This sprint focuses on integrating the Ghost-DPC core with a vision system to tr
 ### Phase 4: Closed-Loop Integration (The "Gauntlet")
 **Goal:** Autonomous flight.
 
-*   **Step 4.1: The "Z-Hold" Test**
+*   **Step 4.1: The "Z-Hold" Test** [x]
     *   **File:** `video_viewer.py` (Controller Node)
     *   **Logic:** Target = `[CurX, CurY, 5.0]`. Vision Disabled.
     *   **Critical Validation:**
@@ -138,7 +138,7 @@ This sprint focuses on integrating the Ghost-DPC core with a vision system to tr
             3.  **Drift:** XY Position drift < 1.0m (without GPS, this relies on Optical Flow/Vision, or Simulator Truth).
         *   **Failure Mode:** Oscillations > 1Hz indicate `D-gain` is too low. Slow wander indicates `I-gain` needed or `P-gain` too low.
 
-*   **Step 4.2: The "Statue" Test (Stationary Tracking)**
+*   **Step 4.2: The "Statue" Test (Stationary Tracking)** [x]
     *   **File:** `video_viewer.py`
     *   **Logic:** Vision Enabled. Target Red Object @ (10, 10).
     *   **Critical Validation:**
@@ -149,7 +149,7 @@ This sprint focuses on integrating the Ghost-DPC core with a vision system to tr
             3.  **Convergence:** Reaches target within 10 seconds.
         *   **Failure Mode:** If drone circles the target, verify Camera-to-Body rotation matrix.
 
-*   **Step 4.3: The "Bullfight" (Dynamic Tracking)**
+*   **Step 4.3: The "Bullfight" (Dynamic Tracking)** [x]
     *   **File:** `video_viewer.py`
     *   **Logic:** Move target manually.
     *   **Critical Validation:**
