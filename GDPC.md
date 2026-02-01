@@ -159,3 +159,52 @@ To use this for a Plane/UAV:
     *   **Stall Prevention:** Add a massive cost penalty if $v < v_{stall}$.
     *   **Bank Limit:** Constrain roll angle to $\pm 45^\circ$ for coordinated turns.
 4.  **Solver:** The Gradient Descent logic remains exactly the same; only the `step()` and `get_gradients()` functions change to reflect the new equations of motion.
+
+---
+
+## 10. Sprint: Red Object Tracking Integration
+
+**Goal:** Implement an automatic scenario where the drone detects and tracks a red object on the ground using the Ghost-DPC controller.
+
+### Gap Analysis & Missing Components
+
+The current Python scripts (`imu_test.py`, `keyboard_control.py`, `motor_test.py`, `video_viewer.py`) provide basic building blocks but lack the integration required for autonomous tracking.
+
+*   **`video_viewer.py` (To be upgraded to `controller_node.py`):**
+    *   **Missing: Object Detection:** Needs OpenCV logic to identify red pixels, compute centroid $(u, v)$, and bounding box.
+    *   **Missing: Coordinate Projection:** Needs a camera model (pinhole) to project the 2D pixel $(u, v)$ to a 3D ray and intersect it with the ground plane ($z=0$) to generate a 3D target position for the solver.
+    *   **Missing: State Estimation:** Needs to subscribe to MAVSDK telemetry (Orientation, Velocity, Acceleration) and feed it into `PyGhostEstimator`.
+    *   **Missing: Control Loop:** Needs to instantiate `PyDPCSolver`, update it with the estimated state and projected target, and publish the resulting `Attitude` setpoints.
+
+*   **`imu_test.py`:**
+    *   **Status:** Functional. Useful for verifying IMU data integrity before feeding the estimator.
+
+*   **`keyboard_control.py`:**
+    *   **Status:** Functional. Useful for manual override and safety pilot during testing.
+
+*   **`motor_test.py`:**
+    *   **Status:** Functional. verifies actuation/mixing.
+
+### Integration Plan
+
+#### Phase 1: Perception & State
+1.  **Red Object Detector:** Implement HSV color thresholding in `video_viewer.py`.
+    *   Input: `cv::Mat` (BGR).
+    *   Output: `target_u`, `target_v`, `confidence`.
+2.  **Raycasting:** Implement `screen_to_world(u, v, altitude, attitude)` function.
+    *   Assumptions: Flat ground at $z=0$, Camera pointing forward/down.
+3.  **State Monitor:** Create an async class to buffer the latest MAVSDK telemetry for the synchronous control loop.
+
+#### Phase 2: Control Integration
+1.  **Ghost-DPC Bindings:** Import `ghost_dpc` in the Python node.
+2.  **Estimator Setup:** Initialize `PyGhostEstimator` with nominal, heavy, and draggy hypotheses.
+3.  **Solver Loop:**
+    *   Frequency: 20Hz.
+    *   Step 1: Update Estimator with IMU data.
+    *   Step 2: Project visual target to 3D world coordinates.
+    *   Step 3: Run `solver.solve()` targeting the 3D position.
+    *   Step 4: Send `Attitude` command to PX4.
+
+#### Phase 3: Simulation Scenario
+1.  **Gazebo World:** Ensure a red box or sphere is spawned at $(x=10, y=0)$ in the simulation world.
+2.  **Automated Start:** The script should arm, takeoff to 5m, and switch to OFFBOARD mode automatically.
