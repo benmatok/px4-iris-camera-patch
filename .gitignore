@@ -20,3 +20,6 @@ jules_trajectory.gif
 rrt_trajectory_verified.gif
 jules_model.pth
 validation_artifacts/
+PX4-Autopilot/
+px4-iris-camera-patch/
+venv/
