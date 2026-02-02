@@ -63,6 +63,7 @@ class DroneInterface:
     async def set_attitude_rate(self, roll, pitch, yaw, thrust): raise NotImplementedError
     async def land(self): raise NotImplementedError
     def get_latest_image(self): return None # Returns cv2 image or None
+    def get_dpc_state_sync(self): return None # Returns dict or None
 
 class RealDroneInterface(DroneInterface):
     def __init__(self, system_address="udp://:14540"):
@@ -112,6 +113,9 @@ class RealDroneInterface(DroneInterface):
 
     def get_latest_image(self):
         return self.latest_image
+
+    def get_dpc_state_sync(self):
+        return None
 
 # Mock Classes for Sim Interface
 class MockAttitudeEuler:
@@ -354,6 +358,33 @@ class SimDroneInterface(DroneInterface):
 
         return img
 
+    def get_dpc_state_sync(self):
+        # Return state directly from DroneEnv arrays (Zero Latency)
+        # NED Conversion
+        n = self.px[0]
+        e = self.py[0]
+        d = -self.pz[0]
+
+        vn = self.vx[0]
+        ve = self.vy[0]
+        vd = -self.vz[0]
+
+        # Euler (Radians)
+        # Sim is Rads. DPC expects Rads.
+        # But DPC expects NED Euler?
+        # Sim (Z-Up) to NED (Z-Down).
+        # Pitch_ned = -Pitch_sim (as discussed)
+        # Yaw_ned = -Yaw_sim
+        r = self.roll[0]
+        p = -self.pitch[0]
+        y = -self.yaw[0]
+
+        return {
+            'px': n, 'py': e, 'pz': d,
+            'vx': vn, 'vy': ve, 'vz': vd,
+            'roll': r, 'pitch': p, 'yaw': y
+        }
+
 # -----------------------------------------------------------------------------
 # Benchmarking
 # -----------------------------------------------------------------------------
@@ -438,7 +469,7 @@ class BenchmarkLogger:
         print("="*40)
         print(json.dumps(report, indent=4))
         print("="*40 + "\n")
-
+        print("Saving report to JSON...")
         with open(self.output_file, 'w') as f:
             json.dump(report, f, indent=4)
         print(f"Report saved to {self.output_file}")
@@ -516,6 +547,12 @@ class TheShow(Node):
         await asyncio.gather(att_loop(), pos_vel_loop())
 
     def get_dpc_state(self):
+        # Try Sync State first (for Sim)
+        sync_state = self.interface.get_dpc_state_sync()
+        if sync_state is not None:
+            return sync_state
+
+        # Fallback to Telemetry (for Real)
         if self.pos_ned is None or self.vel_ned is None or self.att_euler is None:
             return None
 
@@ -636,6 +673,7 @@ class TheShow(Node):
                 self.loops += 1
 
         except KeyboardInterrupt:
+            print("Caught KeyboardInterrupt in control_loop")
             pass
         finally:
             print("Stopping...")
@@ -723,4 +761,7 @@ def main():
         rclpy.shutdown()
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass
