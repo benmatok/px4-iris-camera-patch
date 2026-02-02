@@ -11,12 +11,15 @@ from cv_bridge import CvBridge
 from mavsdk import System
 from mavsdk.offboard import AttitudeRate, OffboardError
 
-# Add current directory to path to find vision module
+# Add current directory to path
 sys.path.append(os.getcwd())
+
 try:
     from vision.detector import RedObjectDetector
-except ImportError:
-    print("Error: Could not import vision.detector. Make sure you are in the repo root.")
+    from vision.projection import Projector
+    from ghost_dpc.ghost_dpc import PyDPCSolver
+except ImportError as e:
+    print(f"Error: Could not import project modules: {e}")
     sys.exit(1)
 
 """
@@ -41,15 +44,9 @@ if the default model is white/grey).
 """
 
 # Constants
-TARGET_ALT = 50.0        # Meters (Relative)
-HOVER_THRUST = 0.58      # Approximate hover thrust (0-1)
-SCAN_YAW_RATE = 15.0     # deg/s
-HOMING_PITCH = -12.0     # deg (Nose down to fly forward)
-HOMING_THRUST = 0.52     # Slightly less than hover to descend while pitching down
-Kp_YAW = 40.0            # Yaw P-gain
-Kp_PITCH = 2.0           # Pitch P-gain (for stabilization)
-Kp_ROLL = 2.0            # Roll P-gain
-Kp_ALT = 0.05            # Altitude P-gain (Thrust)
+TARGET_ALT = 50.0        # Meters (Relative) - Target Altitude
+SCAN_YAW_RATE = 15.0     # deg/s (Override for scanning)
+DT = 0.05                # 20Hz
 
 class TheShow(Node):
     def __init__(self):
@@ -58,25 +55,35 @@ class TheShow(Node):
         self.latest_image = None
         self.detector = RedObjectDetector()
 
+        # Projector Config (Matches video_viewer.py)
+        # 1280x800, 110 deg FOV, 30 deg Tilt
+        self.projector = Projector(width=1280, height=800, fov_deg=110.0, tilt_deg=30.0)
+
+        # DPC Solver
+        self.solver = PyDPCSolver()
+        # Nominal Model (Mass ~3.33kg to match video_viewer logic, or adaptive?)
+        # User requested GDPC because mass/thrust is unknown.
+        # We use a bank of models or a robust nominal.
+        # For now, sticking to the single model from video_viewer.py as a baseline.
+        self.models = [{'mass': 3.33, 'drag_coeff': 0.3, 'thrust_coeff': 54.5}]
+        self.weights = [1.0]
+        self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
+
         # Subscribe to camera
         self.create_subscription(Image, '/forward_camera/image_raw', self.img_cb, 10)
 
         self.drone = System()
 
-        # Telemetry State
-        self.roll = 0.0
-        self.pitch = 0.0
-        self.yaw = 0.0
-        self.altitude = 0.0
+        # Telemetry State (MAVSDK)
+        self.pos_ned = None
+        self.vel_ned = None
+        self.att_euler = None
         self.connected = False
 
         # Logic State
         self.state = "INIT"
-        self.target_yaw_rate = 0.0
-        self.target_pitch = 0.0
-        self.target_roll = 0.0
-        self.target_thrust = HOVER_THRUST
         self.loops = 0
+        self.dpc_target = [0.0, 0.0, -TARGET_ALT] # Default target
 
     def img_cb(self, msg):
         try:
@@ -100,15 +107,33 @@ class TheShow(Node):
     async def telemetry_loop(self):
         async def att_loop():
             async for att in self.drone.telemetry.attitude_euler():
-                self.roll = att.roll_deg
-                self.pitch = att.pitch_deg
-                self.yaw = att.yaw_deg
+                self.att_euler = att
 
-        async def alt_loop():
-            async for pos in self.drone.telemetry.position():
-                self.altitude = pos.relative_altitude_m
+        async def pos_vel_loop():
+            async for pv in self.drone.telemetry.position_velocity_ned():
+                self.pos_ned = pv.position
+                self.vel_ned = pv.velocity
 
-        await asyncio.gather(att_loop(), alt_loop())
+        await asyncio.gather(att_loop(), pos_vel_loop())
+
+    def get_dpc_state(self):
+        if self.pos_ned is None or self.vel_ned is None or self.att_euler is None:
+            return None
+
+        # Convert MAVSDK state to DPC state dict
+        # MAVSDK Euler: deg. DPC: rad.
+        # MAVSDK NED: m, m/s. Matches DPC physics.
+        return {
+            'px': self.pos_ned.north_m,
+            'py': self.pos_ned.east_m,
+            'pz': self.pos_ned.down_m, # NED Z (Positive Down)
+            'vx': self.vel_ned.north_m_s,
+            'vy': self.vel_ned.east_m_s,
+            'vz': self.vel_ned.down_m_s,
+            'roll': math.radians(self.att_euler.roll_deg),
+            'pitch': math.radians(self.att_euler.pitch_deg),
+            'yaw': math.radians(self.att_euler.yaw_deg)
+        }
 
     async def control_loop(self):
         # Arm and Start Offboard
@@ -117,6 +142,10 @@ class TheShow(Node):
             await self.drone.action.arm()
         except:
             print("Arming failed (might be already armed).")
+
+        print("Wait for Telemetry...")
+        while self.pos_ned is None:
+            await asyncio.sleep(0.1)
 
         print("Starting Offboard...")
         # Send initial setpoint
@@ -129,7 +158,13 @@ class TheShow(Node):
             return
 
         self.state = "TAKEOFF"
-        print(f"State: {self.state} - Target Alt: {TARGET_ALT}m")
+
+        # Set initial target directly above current position
+        start_x = self.pos_ned.north_m
+        start_y = self.pos_ned.east_m
+        self.dpc_target = [start_x, start_y, -TARGET_ALT]
+
+        print(f"State: {self.state} - Target: {self.dpc_target}")
 
         cv2.namedWindow("The Show", cv2.WINDOW_NORMAL)
 
@@ -137,47 +172,60 @@ class TheShow(Node):
             while rclpy.ok():
                 rclpy.spin_once(self, timeout_sec=0.001)
 
-                # Logic Update
-                await self.update_logic()
+                # 1. Get State
+                dpc_state = self.get_dpc_state()
+                if dpc_state is None:
+                    await asyncio.sleep(0.01)
+                    continue
 
-                # Send Controls
-                # Convert Desired Angles to Rates (P-Controller)
-                # Roll/Pitch Rates to stabilize or reach target angle
+                # 2. Logic Update (Determines Target)
+                self.update_logic(dpc_state)
 
-                roll_rate = Kp_ROLL * (self.target_roll - self.roll)
+                # 3. Solve Control (GDPC)
+                # action_out: {'thrust', 'roll_rate', 'pitch_rate', 'yaw_rate'}
+                action_out = self.solver.solve(
+                    dpc_state,
+                    self.dpc_target,
+                    self.last_action,
+                    self.models,
+                    self.weights,
+                    DT
+                )
+                self.last_action = action_out
 
-                # If in Homing, we might drive Pitch Rate directly or use Angle Target
-                # In this implementation, I set target_pitch in update_logic.
-                pitch_rate = Kp_PITCH * (self.target_pitch - self.pitch)
+                # 4. Apply Overrides (Scanning)
+                roll_rate = math.degrees(action_out['roll_rate'])
+                pitch_rate = math.degrees(action_out['pitch_rate'])
+                yaw_rate = math.degrees(action_out['yaw_rate'])
+                thrust = action_out['thrust']
 
-                # Yaw Rate is usually set directly
-                yaw_rate = self.target_yaw_rate
+                if self.state == "SCAN":
+                    yaw_rate = SCAN_YAW_RATE
 
-                thrust = self.target_thrust
-
-                # Clamp
+                # Clamp Thrust
                 thrust = max(0.0, min(1.0, thrust))
 
+                # 5. Send to Drone
                 await self.drone.offboard.set_attitude_rate(
                     AttitudeRate(roll_rate, pitch_rate, yaw_rate, thrust)
                 )
 
-                # Visualization
+                # 6. Visualization
                 if self.latest_image is not None:
                     disp = self.latest_image.copy()
                     cv2.putText(disp, f"State: {self.state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-                    cv2.putText(disp, f"Alt: {self.altitude:.1f}m", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                    cv2.putText(disp, f"Alt: {-dpc_state['pz']:.1f}m", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                    cv2.putText(disp, f"Tgt: [{self.dpc_target[0]:.1f}, {self.dpc_target[1]:.1f}, {self.dpc_target[2]:.1f}]", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1)
 
                     if self.state == "HOMING":
                         center, area, _ = self.detector.detect(self.latest_image)
                         if center:
                             cv2.circle(disp, (int(center[0]), int(center[1])), 10, (0, 0, 255), 2)
-                            cv2.putText(disp, f"Area: {area:.0f}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
                     cv2.imshow("The Show", disp)
                     cv2.waitKey(1)
 
-                await asyncio.sleep(0.05) # 20Hz
+                await asyncio.sleep(DT)
                 self.loops += 1
 
         except KeyboardInterrupt:
@@ -191,30 +239,17 @@ class TheShow(Node):
             except:
                 pass
 
-    async def update_logic(self):
+    def update_logic(self, state):
+        current_alt = -state['pz'] # Up is negative Z in NED, so Alt is -pz
+
         if self.state == "TAKEOFF":
-            self.target_roll = 0.0
-            self.target_pitch = 0.0
-            self.target_yaw_rate = 0.0
-
-            # Altitude Control
-            err_alt = TARGET_ALT - self.altitude
-            self.target_thrust = HOVER_THRUST + Kp_ALT * err_alt
-
-            # Transition
-            if self.altitude >= TARGET_ALT - 2.0:
+            # Check if reached altitude (within 2m)
+            if current_alt >= TARGET_ALT - 2.0:
                 print("Altitude Reached. Switching to SCAN.")
                 self.state = "SCAN"
+                # Keep same target (Hover)
 
         elif self.state == "SCAN":
-            # Hold Altitude
-            err_alt = TARGET_ALT - self.altitude
-            self.target_thrust = HOVER_THRUST + Kp_ALT * err_alt
-
-            self.target_roll = 0.0
-            self.target_pitch = 0.0
-            self.target_yaw_rate = SCAN_YAW_RATE
-
             # Check Vision
             if self.latest_image is not None:
                 center, area, bbox = self.detector.detect(self.latest_image)
@@ -227,51 +262,33 @@ class TheShow(Node):
                 return
 
             center, area, bbox = self.detector.detect(self.latest_image)
-            h, w, _ = self.latest_image.shape
 
             if not center:
-                # Lost target, go back to scan? Or Scan briefly?
-                print("Lost target...")
-                self.target_yaw_rate = 0.0
-                # Could switch back to SCAN or Hold
-                # Let's switch back to SCAN after a moment?
-                # For now, just hover/drift
-                self.target_pitch = 0.0
-                self.target_thrust = HOVER_THRUST
+                # Lost target logic
+                # For now, hold position (or previous target)
                 return
 
-            cx, cy = center
+            # Project to World
+            # Center is (u, v)
+            world_pt = self.projector.pixel_to_world(center[0], center[1], state)
 
-            # Yaw Control (Horizontal Center)
-            err_x = (cx - w/2) / (w/2)
-            self.target_yaw_rate = Kp_YAW * err_x
+            if world_pt:
+                # Update DPC Target
+                # Target: [ObjX, ObjY, -2.0 (Hover 2m above)]
+                self.dpc_target = [world_pt[0], world_pt[1], -2.0]
 
-            # Pitch Control (Vertical Center / Forward Motion)
-            # We want to maintain a forward dive.
-            self.target_pitch = HOMING_PITCH
+                # Check for completion
+                # If we are close to the target (XY) and altitude is low
+                dist_xy = math.sqrt((state['px'] - world_pt[0])**2 + (state['py'] - world_pt[1])**2)
+                dist_z = abs(state['pz'] - (-2.0))
 
-            # If target is too low (y large), pitch down more?
-            # If target is too high (y small), pitch up (less neg)?
-            # err_y = (cy - h/2) / (h/2)
-            # self.target_pitch += 5.0 * err_y
-
-            self.target_roll = 0.0
-
-            # Thrust Control (Descent/Speed)
-            # If area is large, we are close.
-            if area > (w * h * 0.15):
-                print("Target Reached! Stopping.")
-                self.state = "DONE"
-
-            self.target_thrust = HOMING_THRUST
+                if dist_xy < 1.0 and dist_z < 1.0:
+                     print("Target Reached! Stopping.")
+                     self.state = "DONE"
 
         elif self.state == "DONE":
-            self.target_pitch = 15.0 # Flare?
-            self.target_thrust = 0.0 # Cut motors? Or Land?
-            # Let's just Land
-            self.target_yaw_rate = 0.0
-            # MAVSDK Land will take over if we break loop, but here we just wait
-            raise KeyboardInterrupt # Trigger cleanup/land
+             # Just Land
+             raise KeyboardInterrupt
 
 def main():
     rclpy.init()
