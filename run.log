@@ -1,0 +1,24 @@
+Warning: ROS2 (rclpy) not found. Real mode will fail. Sim mode might work.
+Connected to Sim Drone.
+Arming...
+Sim: Armed.
+Wait for Telemetry...
+Starting Offboard...
+Sim: Offboard Started.
+State: TAKEOFF - Target: [np.float32(0.0), np.float32(0.0), -50.0]
+Traceback (most recent call last):
+  File "/app/theshow.py", line 726, in <module>
+    main()
+  File "/app/theshow.py", line 719, in main
+    loop.run_until_complete(node.control_loop())
+  File "/home/jules/.pyenv/versions/3.12.12/lib/python3.12/asyncio/base_events.py", line 678, in run_until_complete
+    self.run_forever()
+  File "/home/jules/.pyenv/versions/3.12.12/lib/python3.12/asyncio/base_events.py", line 645, in run_forever
+    self._run_once()
+  File "/home/jules/.pyenv/versions/3.12.12/lib/python3.12/asyncio/base_events.py", line 1961, in _run_once
+    event_list = self._selector.select(timeout)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jules/.pyenv/versions/3.12.12/lib/python3.12/selectors.py", line 468, in select
+    fd_event_list = self._selector.poll(timeout, max_ev)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt

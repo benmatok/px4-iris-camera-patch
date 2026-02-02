@@ -4,12 +4,33 @@ import asyncio
 import math
 import numpy as np
 import cv2
-import rclpy
-from rclpy.node import Node
-from sensor_msgs.msg import Image
-from cv_bridge import CvBridge
+import time
+import json
+import argparse
+try:
+    import rclpy
+    from rclpy.node import Node
+    from sensor_msgs.msg import Image
+    from cv_bridge import CvBridge
+    _HAS_ROS = True
+except ImportError:
+    print("Warning: ROS2 (rclpy) not found. Real mode will fail. Sim mode might work.")
+    _HAS_ROS = False
+    class Node:
+        def __init__(self, name): pass
+        def create_subscription(self, *args): pass
+        def destroy_node(self): pass
+        def get_logger(self):
+             class Logger:
+                 def error(self, msg): print(f"Error: {msg}")
+             return Logger()
+    class CvBridge:
+        def imgmsg_to_cv2(self, msg, encoding="bgr8"): return None
+
+# MAVSDK Imports
 from mavsdk import System
 from mavsdk.offboard import AttitudeRate, OffboardError
+# Removed explicit telemetry imports to avoid version issues
 
 # Add current directory to path
 sys.path.append(os.getcwd())
@@ -18,42 +39,429 @@ try:
     from vision.detector import RedObjectDetector
     from vision.projection import Projector
     from ghost_dpc.ghost_dpc import PyDPCSolver
+    from drone_env.drone import DroneEnv  # For Sim Mode
 except ImportError as e:
     print(f"Error: Could not import project modules: {e}")
     sys.exit(1)
-
-"""
-================================================================================
-INSTRUCTIONS: ADDING A RED OBJECT TO BAYLANDS WORLD
-================================================================================
-To run this scenario, you need a red object in the simulation environment.
-1. Ensure Gazebo is running with the Baylands world.
-2. In the Gazebo UI, go to the 'Insert' tab (left panel).
-3. Find a simple shape like 'Box' or 'Sphere'.
-4. Drag and drop it into the scene, ideally 20-50m away from the drone's spawn point.
-5. Right-click the object -> 'Edit Model' (or use the Link Inspector).
-6. Go to the 'Visual' tab, find 'Material', and set it to 'Gazebo/Red'.
-   - Alternatively, use 'Gazebo/RedBright'.
-7. Save/Apply if necessary.
-
-Alternatively, you can use ROS2 to spawn a red box (if gazebo_ros is active):
-ros2 run gazebo_ros spawn_entity.py -entity red_target -database unit_box -x 30 -y 30 -z 0.5 -R 0 -P 0 -Y 0
-(Note: You might need to manually set the color to red in Gazebo after spawning
-if the default model is white/grey).
-================================================================================
-"""
 
 # Constants
 TARGET_ALT = 50.0        # Meters (Relative) - Target Altitude
 SCAN_YAW_RATE = 15.0     # deg/s (Override for scanning)
 DT = 0.05                # 20Hz
 
+# -----------------------------------------------------------------------------
+# Interfaces
+# -----------------------------------------------------------------------------
+
+class DroneInterface:
+    async def connect(self): raise NotImplementedError
+    def attitude_euler(self): raise NotImplementedError # async generator
+    def position_velocity_ned(self): raise NotImplementedError # async generator
+    async def arm(self): raise NotImplementedError
+    async def offboard_start(self): raise NotImplementedError
+    async def offboard_stop(self): raise NotImplementedError
+    async def set_attitude_rate(self, roll, pitch, yaw, thrust): raise NotImplementedError
+    async def land(self): raise NotImplementedError
+    def get_latest_image(self): return None # Returns cv2 image or None
+
+class RealDroneInterface(DroneInterface):
+    def __init__(self, system_address="udp://:14540"):
+        self.drone = System()
+        self.system_address = system_address
+        self.latest_image = None # Updated by external callback
+
+    async def connect(self):
+        print(f"Connecting to drone on {self.system_address}...")
+        await self.drone.connect(system_address=self.system_address)
+        async for state in self.drone.core.connection_state():
+            if state.is_connected:
+                print("Drone Connected!")
+                break
+
+    async def attitude_euler(self):
+        async for x in self.drone.telemetry.attitude_euler():
+            yield x
+
+    async def position_velocity_ned(self):
+        async for x in self.drone.telemetry.position_velocity_ned():
+            yield x
+
+    async def arm(self):
+        await self.drone.action.arm()
+
+    async def offboard_start(self):
+        await self.drone.offboard.set_attitude_rate(AttitudeRate(0.0, 0.0, 0.0, 0.0))
+        await self.drone.offboard.start()
+
+    async def offboard_stop(self):
+        try:
+            await self.drone.offboard.stop()
+        except:
+            pass
+
+    async def set_attitude_rate(self, roll_deg, pitch_deg, yaw_deg, thrust):
+        await self.drone.offboard.set_attitude_rate(
+            AttitudeRate(roll_deg, pitch_deg, yaw_deg, thrust)
+        )
+
+    async def land(self):
+        await self.drone.action.land()
+
+    def set_latest_image(self, img):
+        self.latest_image = img
+
+    def get_latest_image(self):
+        return self.latest_image
+
+# Mock Classes for Sim Interface
+class MockAttitudeEuler:
+    def __init__(self, r, p, y):
+        self.roll_deg = r
+        self.pitch_deg = p
+        self.yaw_deg = y
+
+class MockPosition:
+    def __init__(self, n, e, d):
+        self.north_m = n
+        self.east_m = e
+        self.down_m = d
+
+class MockVelocity:
+    def __init__(self, n, e, d):
+        self.north_m_s = n
+        self.east_m_s = e
+        self.down_m_s = d
+
+class MockPositionVelocityNed:
+    def __init__(self, n, e, d, vn, ve, vd):
+        self.position = MockPosition(n, e, d)
+        self.velocity = MockVelocity(vn, ve, vd)
+
+class SimDroneInterface(DroneInterface):
+    def __init__(self, projector):
+        self.projector = projector
+        # Initialize DroneEnv
+        # Single Agent
+        self.env = DroneEnv(num_agents=1, episode_length=100000)
+        self.env.reset_all_envs()
+
+        # Access raw arrays
+        self.dd = self.env.data_dictionary
+        self.px = self.dd['pos_x']
+        self.py = self.dd['pos_y']
+        self.pz = self.dd['pos_z'] # Positive Up in DroneEnv??
+        # Wait, DroneEnv `step_cpu`: `pz += vz * dt`.
+        # `az_gravity = -g`.
+        # This implies Z is Up (Gravity acts down).
+        # MAVSDK is NED (Z Down).
+        # I need to convert.
+        # In DroneEnv:
+        # z=0 is ground? `underground = pz < terr_z`.
+        # So Z is Up.
+
+        # Force start on ground (but above 0.5m to avoid immediate DroneEnv termination)
+        self.px[0] = 0.0
+        self.py[0] = 0.0
+        self.pz[0] = 1.0
+
+        self.vx = self.dd['vel_x']
+        self.vy = self.dd['vel_y']
+        self.vz = self.dd['vel_z']
+
+        self.roll = self.dd['roll']
+        self.pitch = self.dd['pitch']
+        self.yaw = self.dd['yaw']
+
+        self.masses = self.dd['masses']
+        self.masses[0] = 3.33 # Matched to Controller Model
+        self.thrust_coeffs = self.dd['thrust_coeffs']
+        self.thrust_coeffs[0] = 2.725 # Match Controller TC=54.5 (20 * 2.725 = 54.5)
+        # step_cpu: `max_thrust = 20.0 * thrust_coeffs`.
+
+        # Red Object Position (World Frame - Sim Frame Z Up)
+        self.target_pos = [30.0, 30.0, 0.0]
+
+        # State for Async Generators
+        self.running = True
+
+    async def connect(self):
+        print("Connected to Sim Drone.")
+
+    async def attitude_euler(self):
+        while self.running:
+            # DroneEnv R,P,Y are radians.
+            # MAVSDK expects degrees.
+            # DroneEnv Frame: Z Up. MAVSDK: NED.
+            # Sim R,P,Y -> NED R,P,Y?
+            # If Z_sim = -Z_ned.
+            # Rotations:
+            # Roll (about X): Same.
+            # Pitch (about Y): Inverted?
+            # Yaw (about Z): Inverted?
+            # Let's keep it simple: assume Sim is aligned ENU (East North Up).
+            # NED: North, East, Down.
+            # X_sim=East?? usually X=Forward.
+            # Let's assume Sim is: X=North, Y=East, Z=Up.
+            # NED: X=North, Y=East, Z=Down.
+            # So Z_ned = -Z_sim.
+            # P_ned = -P_sim. (Pitch up is + in Sim, - in NED? No, Pitch up is + in both usually).
+            # Pitching Nose Up:
+            # Sim: Rot around Y. Z goes back.
+            # NED: Rot around Y. Z goes forward.
+            # Let's trust standard conversion.
+            # Pitch_ned = -Pitch_sim.
+            # Yaw_ned = -Yaw_sim + 90? (ENU to NED).
+            # Let's stick to X=North, Y=East, Z=Up convention for Sim.
+
+            r_deg = math.degrees(self.roll[0])
+            p_deg = math.degrees(self.pitch[0]) # Pitch Up is positive in sim?
+            # step_cpu: `az_thrust = thrust_force * (cp * cr) / masses`.
+            # `az_gravity = -g`.
+            # So Thrust +Z opposes Gravity -Z.
+            # If Pitch=0, Thrust is Up.
+            # This is standard Quadcopter Z-Up.
+            # Pitching positive usually means Nose Up.
+
+            # MAVSDK (NED): Pitching Positive is Nose Up.
+            # So Pitch_deg = Pitch_sim_deg.
+
+            # Yaw:
+            # Sim: X=North.
+            # NED: X=North.
+            # Yaw=0 -> North.
+            # Sim: Counter-Clockwise is positive?
+            # NED: Clockwise is positive.
+            # So Yaw_ned = -Yaw_sim.
+
+            y_deg = math.degrees(self.yaw[0])
+
+            yield MockAttitudeEuler(r_deg, p_deg, -y_deg)
+            await asyncio.sleep(0.01)
+
+    async def position_velocity_ned(self):
+        while self.running:
+            # Sim (Z-Up) to NED (Z-Down)
+            n = self.px[0]
+            e = self.py[0]
+            d = -self.pz[0]
+
+            vn = self.vx[0]
+            ve = self.vy[0]
+            vd = -self.vz[0]
+
+            yield MockPositionVelocityNed(n, e, d, vn, ve, vd)
+            await asyncio.sleep(0.01)
+
+    async def arm(self):
+        print("Sim: Armed.")
+
+    async def offboard_start(self):
+        print("Sim: Offboard Started.")
+
+    async def offboard_stop(self):
+        print("Sim: Offboard Stopped.")
+
+    async def set_attitude_rate(self, roll_deg, pitch_deg, yaw_deg, thrust):
+        # Enforce Model Parameters (in case of auto-reset)
+        self.masses[0] = 3.33
+        # Boost Thrust for 60deg tilt climb (T/W > 2.0 required)
+        self.thrust_coeffs[0] = 5.0
+
+        # Step Physics
+        # Map inputs to actions array
+        # Actions: [Thrust, RollRate, PitchRate, YawRate]
+        # MAVSDK: thrust [0,1].
+        # Sim: thrust [0,1].
+
+        # Rates: MAVSDK deg/s. Sim rad/s.
+        rr = math.radians(roll_deg)
+        pr = math.radians(pitch_deg)
+        # NED Yaw Rate (+Clockwise). Sim Yaw Rate (+Counter-Clockwise).
+        # So yr = -radians(yaw_deg)
+        yr = -math.radians(yaw_deg)
+
+        actions = np.array([thrust, rr, pr, yr], dtype=np.float32)
+
+        # Step
+        # step_cpu expects flattened actions for all agents
+        # We need to construct arguments for step_cpu manually or use `env.step_function`.
+        # The `env.step_function` signature is huge.
+        # But `env.step` is not implemented in DroneEnv (it's WarpDrive style).
+        # We can call `env.step_function` with kwargs.
+
+        self.dd['actions'][:] = actions
+
+        kwargs = self.env.get_step_function_kwargs()
+        # Resolve args from data_dictionary
+        args = {}
+        for k, v in kwargs.items():
+            if v in self.dd:
+                args[k] = self.dd[v]
+            elif k == "num_agents":
+                args[k] = self.env.num_agents
+            elif k == "episode_length":
+                args[k] = self.env.episode_length
+            else:
+                 pass
+
+        self.env.step_function(**args)
+        # Prevent DroneEnv internal resets (we handle logic in TheShow)
+        self.dd['done_flags'][:] = 0.0
+
+    async def land(self):
+        print("Sim: Landing.")
+        self.running = False
+
+    def get_latest_image(self):
+        # Generate Synthetic Image
+        width = 1280
+        height = 800
+        img = np.zeros((height, width, 3), dtype=np.uint8)
+
+        # Drone State for Projection
+        # Projector expects NED?
+        # `pixel_to_world` uses `drone_state['pz']` (NED Z).
+        # `drone_state['roll']`, etc.
+        # If I pass NED state to Projector, it should work.
+
+        drone_state = {
+            'px': self.px[0],
+            'py': self.py[0],
+            'pz': -self.pz[0], # NED
+            'roll': self.roll[0],
+            'pitch': self.pitch[0],
+            'yaw': -self.yaw[0] # NED
+        }
+
+        # Target Pos (Sim Z-Up to World NED? No, Target is World Coords.)
+        # If Projector expects World NED, then Target Z should be negative if up?
+        # Actually `Projector` defines Z=0 as ground usually.
+        # `pixel_to_world`: `intersection = p0 + t * vec_w`. `t = -p0[2] / vz`.
+        # If p0[2] (Drone Z NED) is -10 (10m Up).
+        # intersection Z will be 0.
+        # So Target Z=0 corresponds to Ground.
+
+        tx, ty, tz = self.target_pos
+        # Sim Target is at Z=0.
+
+        uv = self.projector.world_to_pixel(tx, ty, tz, drone_state)
+
+        if uv:
+            u, v = uv
+            if 0 <= u < width and 0 <= v < height:
+                # Draw Red Circle
+                cv2.circle(img, (int(u), int(v)), 20, (0, 0, 255), -1)
+
+        return img
+
+# -----------------------------------------------------------------------------
+# Benchmarking
+# -----------------------------------------------------------------------------
+
+class BenchmarkLogger:
+    def __init__(self, output_file="benchmark_results.json"):
+        self.output_file = output_file
+        self.start_time = None
+        self.homing_start_time = None
+        self.end_time = None
+        self.trajectory = []
+        self.control_history = []
+        self.events = []
+        self.target_detected = False
+        self.success = False
+
+    def log_event(self, name, timestamp=None):
+        t = timestamp if timestamp is not None else time.time()
+        self.events.append({'time': t, 'event': name})
+        if name == "HOMING_START":
+            self.homing_start_time = t
+        if name == "DONE":
+            self.end_time = t
+            self.success = True
+
+    def log_step(self, state, target, action, phase, timestamp=None):
+        # state: DPC state dict
+        t = timestamp if timestamp is not None else time.time()
+        if self.start_time is None:
+            self.start_time = t
+
+        entry = {
+            'time': t,
+            'phase': phase,
+            'pos': [state['px'], state['py'], state['pz']],
+            'target': target,
+            'action': action # dict
+        }
+        self.trajectory.append(entry)
+
+    def save_report(self):
+        if not self.trajectory:
+            print("No trajectory logged.")
+            return
+
+        total_time = self.trajectory[-1]['time'] - self.trajectory[0]['time']
+
+        # Homing Metrics
+        homing_duration = 0.0
+        homing_path_len = 0.0
+        final_error = 0.0
+
+        homing_entries = [e for e in self.trajectory if e['phase'] == "HOMING"]
+        if homing_entries:
+            homing_duration = homing_entries[-1]['time'] - homing_entries[0]['time']
+
+            # Path Length
+            pts = np.array([e['pos'] for e in homing_entries])
+            diffs = np.diff(pts, axis=0)
+            dists = np.linalg.norm(diffs, axis=1)
+            homing_path_len = np.sum(dists)
+
+            # Final Error (Distance to Estimated Target)
+            last_pos = np.array(homing_entries[-1]['pos'])
+            last_tgt = np.array(homing_entries[-1]['target'])
+            # Target is [x, y, -2].
+            # Error in XY?
+            err_xy = np.linalg.norm(last_pos[:2] - last_tgt[:2])
+            final_error = err_xy
+
+        report = {
+            "success": self.success,
+            "total_duration": total_time,
+            "homing_duration": homing_duration,
+            "homing_path_length": homing_path_len,
+            "final_position_error_xy": final_error,
+            "num_steps": len(self.trajectory)
+        }
+
+        print("\n" + "="*40)
+        print("BENCHMARK REPORT")
+        print("="*40)
+        print(json.dumps(report, indent=4))
+        print("="*40 + "\n")
+
+        with open(self.output_file, 'w') as f:
+            json.dump(report, f, indent=4)
+        print(f"Report saved to {self.output_file}")
+
+
+# -----------------------------------------------------------------------------
+# The Show Node
+# -----------------------------------------------------------------------------
+
 class TheShow(Node):
-    def __init__(self):
+    def __init__(self, interface: DroneInterface, benchmark=False, headless=False):
         super().__init__('the_show')
         self.bridge = CvBridge()
-        self.latest_image = None
         self.detector = RedObjectDetector()
+
+        self.interface = interface
+        self.benchmark = benchmark
+        self.headless = headless
+
+        if self.benchmark:
+            self.logger = BenchmarkLogger()
+        else:
+            self.logger = None
 
         # Projector Config (Matches video_viewer.py)
         # 1280x800, 110 deg FOV, 30 deg Tilt
@@ -61,20 +469,17 @@ class TheShow(Node):
 
         # DPC Solver
         self.solver = PyDPCSolver()
-        # Nominal Model (Mass ~3.33kg to match video_viewer logic, or adaptive?)
-        # User requested GDPC because mass/thrust is unknown.
-        # We use a bank of models or a robust nominal.
-        # For now, sticking to the single model from video_viewer.py as a baseline.
         self.models = [{'mass': 3.33, 'drag_coeff': 0.3, 'thrust_coeff': 54.5}]
         self.weights = [1.0]
         self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
 
-        # Subscribe to camera
-        self.create_subscription(Image, '/forward_camera/image_raw', self.img_cb, 10)
+        # Subscriptions (Only for Real mode)
+        # If Sim mode, the interface handles image generation internally or we poll it.
+        # But for Real mode we need ROS subscription.
+        if isinstance(interface, RealDroneInterface):
+            self.create_subscription(Image, '/forward_camera/image_raw', self.img_cb, 10)
 
-        self.drone = System()
-
-        # Telemetry State (MAVSDK)
+        # Telemetry State
         self.pos_ned = None
         self.vel_ned = None
         self.att_euler = None
@@ -83,34 +488,28 @@ class TheShow(Node):
         # Logic State
         self.state = "INIT"
         self.loops = 0
-        self.dpc_target = [0.0, 0.0, -TARGET_ALT] # Default target
+        self.dpc_target = [0.0, 0.0, -TARGET_ALT]
+        self.start_time_real = None
 
     def img_cb(self, msg):
         try:
-            self.latest_image = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+            img = self.bridge.imgmsg_to_cv2(msg, "bgr8")
+            self.interface.set_latest_image(img)
         except Exception as e:
             self.get_logger().error(f"CV Bridge error: {e}")
 
     async def connect_drone(self):
-        print("Connecting to drone on udp://:14540...")
-        await self.drone.connect(system_address="udp://:14540")
-
-        async for state in self.drone.core.connection_state():
-            if state.is_connected:
-                print("Drone Connected!")
-                self.connected = True
-                break
-
-        # Start Telemetry Tasks
+        await self.interface.connect()
+        self.connected = True
         asyncio.create_task(self.telemetry_loop())
 
     async def telemetry_loop(self):
         async def att_loop():
-            async for att in self.drone.telemetry.attitude_euler():
+            async for att in self.interface.attitude_euler():
                 self.att_euler = att
 
         async def pos_vel_loop():
-            async for pv in self.drone.telemetry.position_velocity_ned():
+            async for pv in self.interface.position_velocity_ned():
                 self.pos_ned = pv.position
                 self.vel_ned = pv.velocity
 
@@ -120,13 +519,10 @@ class TheShow(Node):
         if self.pos_ned is None or self.vel_ned is None or self.att_euler is None:
             return None
 
-        # Convert MAVSDK state to DPC state dict
-        # MAVSDK Euler: deg. DPC: rad.
-        # MAVSDK NED: m, m/s. Matches DPC physics.
         return {
             'px': self.pos_ned.north_m,
             'py': self.pos_ned.east_m,
-            'pz': self.pos_ned.down_m, # NED Z (Positive Down)
+            'pz': self.pos_ned.down_m,
             'vx': self.vel_ned.north_m_s,
             'vy': self.vel_ned.east_m_s,
             'vz': self.vel_ned.down_m_s,
@@ -136,53 +532,62 @@ class TheShow(Node):
         }
 
     async def control_loop(self):
-        # Arm and Start Offboard
         print("Arming...")
         try:
-            await self.drone.action.arm()
+            await self.interface.arm()
         except:
-            print("Arming failed (might be already armed).")
+            print("Arming failed.")
 
         print("Wait for Telemetry...")
         while self.pos_ned is None:
             await asyncio.sleep(0.1)
 
         print("Starting Offboard...")
-        # Send initial setpoint
-        await self.drone.offboard.set_attitude_rate(AttitudeRate(0.0, 0.0, 0.0, 0.0))
-
         try:
-            await self.drone.offboard.start()
-        except OffboardError as e:
+            await self.interface.offboard_start()
+        except Exception as e:
             print(f"Offboard failed: {e}")
             return
 
         self.state = "TAKEOFF"
-
-        # Set initial target directly above current position
         start_x = self.pos_ned.north_m
         start_y = self.pos_ned.east_m
         self.dpc_target = [start_x, start_y, -TARGET_ALT]
 
         print(f"State: {self.state} - Target: {self.dpc_target}")
 
-        cv2.namedWindow("The Show", cv2.WINDOW_NORMAL)
+        if not self.headless:
+            try:
+                cv2.namedWindow("The Show", cv2.WINDOW_NORMAL)
+            except:
+                print("Warning: Could not create window. Headless?")
+
+        if self.start_time_real is None:
+            self.start_time_real = time.time()
 
         try:
-            while rclpy.ok():
-                rclpy.spin_once(self, timeout_sec=0.001)
+            while True:
+                if _HAS_ROS:
+                    if not rclpy.ok():
+                        break
+                    rclpy.spin_once(self, timeout_sec=0.001)
 
-                # 1. Get State
+                # Time Management
+                if isinstance(self.interface, SimDroneInterface):
+                    current_time = self.loops * DT
+                else:
+                    current_time = time.time() - self.start_time_real
+
                 dpc_state = self.get_dpc_state()
                 if dpc_state is None:
                     await asyncio.sleep(0.01)
                     continue
 
-                # 2. Logic Update (Determines Target)
-                self.update_logic(dpc_state)
+                # Get Image
+                img = self.interface.get_latest_image()
 
-                # 3. Solve Control (GDPC)
-                # action_out: {'thrust', 'roll_rate', 'pitch_rate', 'yaw_rate'}
+                self.update_logic(dpc_state, img, timestamp=current_time)
+
                 action_out = self.solver.solve(
                     dpc_state,
                     self.dpc_target,
@@ -193,7 +598,6 @@ class TheShow(Node):
                 )
                 self.last_action = action_out
 
-                # 4. Apply Overrides (Scanning)
                 roll_rate = math.degrees(action_out['roll_rate'])
                 pitch_rate = math.degrees(action_out['pitch_rate'])
                 yaw_rate = math.degrees(action_out['yaw_rate'])
@@ -202,23 +606,26 @@ class TheShow(Node):
                 if self.state == "SCAN":
                     yaw_rate = SCAN_YAW_RATE
 
-                # Clamp Thrust
+                # Takeoff Assist: Force climb if low
+                if self.state == "TAKEOFF" and -dpc_state['pz'] < 2.0:
+                    thrust = 0.8 # Force climb
+
                 thrust = max(0.0, min(1.0, thrust))
 
-                # 5. Send to Drone
-                await self.drone.offboard.set_attitude_rate(
-                    AttitudeRate(roll_rate, pitch_rate, yaw_rate, thrust)
-                )
+                await self.interface.set_attitude_rate(roll_rate, pitch_rate, yaw_rate, thrust)
 
-                # 6. Visualization
-                if self.latest_image is not None:
-                    disp = self.latest_image.copy()
+                # Logging
+                if self.logger:
+                    self.logger.log_step(dpc_state, self.dpc_target, action_out, self.state, timestamp=current_time)
+
+                # Visualization
+                if img is not None and not self.headless:
+                    disp = img.copy()
                     cv2.putText(disp, f"State: {self.state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
                     cv2.putText(disp, f"Alt: {-dpc_state['pz']:.1f}m", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-                    cv2.putText(disp, f"Tgt: [{self.dpc_target[0]:.1f}, {self.dpc_target[1]:.1f}, {self.dpc_target[2]:.1f}]", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1)
 
                     if self.state == "HOMING":
-                        center, area, _ = self.detector.detect(self.latest_image)
+                        center, _, _ = self.detector.detect(img)
                         if center:
                             cv2.circle(disp, (int(center[0]), int(center[1])), 10, (0, 0, 255), 2)
 
@@ -232,67 +639,78 @@ class TheShow(Node):
             pass
         finally:
             print("Stopping...")
-            cv2.destroyAllWindows()
+            if not self.headless:
+                cv2.destroyAllWindows()
             try:
-                await self.drone.offboard.stop()
-                await self.drone.action.land()
+                await self.interface.offboard_stop()
+                await self.interface.land()
             except:
                 pass
 
-    def update_logic(self, state):
-        current_alt = -state['pz'] # Up is negative Z in NED, so Alt is -pz
+            if self.logger:
+                self.logger.save_report()
+
+    def update_logic(self, state, img, timestamp=None):
+        current_alt = -state['pz']
 
         if self.state == "TAKEOFF":
-            # Check if reached altitude (within 2m)
-            if current_alt >= TARGET_ALT - 2.0:
+            if current_alt >= TARGET_ALT - 5.0: # Relaxed check
                 print("Altitude Reached. Switching to SCAN.")
                 self.state = "SCAN"
-                # Keep same target (Hover)
+                if self.logger: self.logger.log_event("SCAN_START", timestamp=timestamp)
 
         elif self.state == "SCAN":
-            # Check Vision
-            if self.latest_image is not None:
-                center, area, bbox = self.detector.detect(self.latest_image)
+            if img is not None:
+                center, area, bbox = self.detector.detect(img)
                 if center:
                     print("Target Detected! Switching to HOMING.")
                     self.state = "HOMING"
+                    if self.logger: self.logger.log_event("HOMING_START", timestamp=timestamp)
 
         elif self.state == "HOMING":
-            if self.latest_image is None:
+            if img is None:
                 return
 
-            center, area, bbox = self.detector.detect(self.latest_image)
+            center, area, bbox = self.detector.detect(img)
 
             if not center:
-                # Lost target logic
-                # For now, hold position (or previous target)
                 return
 
-            # Project to World
-            # Center is (u, v)
             world_pt = self.projector.pixel_to_world(center[0], center[1], state)
 
             if world_pt:
-                # Update DPC Target
-                # Target: [ObjX, ObjY, -2.0 (Hover 2m above)]
                 self.dpc_target = [world_pt[0], world_pt[1], -2.0]
 
-                # Check for completion
-                # If we are close to the target (XY) and altitude is low
                 dist_xy = math.sqrt((state['px'] - world_pt[0])**2 + (state['py'] - world_pt[1])**2)
                 dist_z = abs(state['pz'] - (-2.0))
 
                 if dist_xy < 1.0 and dist_z < 1.0:
                      print("Target Reached! Stopping.")
                      self.state = "DONE"
+                     if self.logger: self.logger.log_event("DONE", timestamp=timestamp)
 
         elif self.state == "DONE":
-             # Just Land
              raise KeyboardInterrupt
 
 def main():
-    rclpy.init()
-    node = TheShow()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=["real", "sim"], default="real", help="Run mode")
+    parser.add_argument("--benchmark", action="store_true", help="Enable benchmarking")
+    parser.add_argument("--headless", action="store_true", help="Run without visualization window")
+    args = parser.parse_args()
+
+    if _HAS_ROS:
+        rclpy.init()
+
+    if args.mode == "real":
+        interface = RealDroneInterface()
+    else:
+        # Pass projector to SimInterface so it can render correct view
+        # Initialize Projector (Same params as in TheShow)
+        proj = Projector(width=1280, height=800, fov_deg=110.0, tilt_deg=30.0)
+        interface = SimDroneInterface(proj)
+
+    node = TheShow(interface, benchmark=args.benchmark, headless=args.headless)
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -301,7 +719,8 @@ def main():
     loop.run_until_complete(node.control_loop())
 
     node.destroy_node()
-    rclpy.shutdown()
+    if _HAS_ROS:
+        rclpy.shutdown()
 
 if __name__ == "__main__":
     main()
