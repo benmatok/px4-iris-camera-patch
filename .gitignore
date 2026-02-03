@@ -9,17 +9,13 @@ visualizations/temp_frames/
 training_log_final.txt
 jules_trajectory.gif
 rrt_trajectory_verified.gif
-visualizations/temp_frames/
-training_log_final.txt
-jules_trajectory.gif
-rrt_trajectory_verified.gif
-jules_model.pth
-visualizations/temp_frames/
-training_log_final.txt
-jules_trajectory.gif
-rrt_trajectory_verified.gif
 jules_model.pth
 validation_artifacts/
 PX4-Autopilot/
 px4-iris-camera-patch/
 venv/
+# Generated Cython files
+drone_env/drone_cython.cpp
+drone_env/texture_features.c
+drone_env/tracker.c
+ghost_dpc/ghost_dpc.cpp
