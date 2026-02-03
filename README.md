@@ -119,3 +119,61 @@ The simulation is built on a custom **Cython-optimized** engine (`drone_env/`) f
 
 ### Backend
 - **Cython**: The default backend (`drone_env/drone_cython.pyx`) uses OpenMP to parallelize physics updates across CPU cores, achieving >10x speedup over pure Python/NumPy.
+
+## Ghost-DPC Homing Demo (`theshow.py`)
+
+The `theshow.py` script demonstrates the Ghost-DPC control algorithm performing a full homing mission (Takeoff -> Scan -> Homing -> Land). It supports multiple operating modes to facilitate testing, benchmarking, and real-world deployment.
+
+### Modes
+
+1.  **Real Mode (Default)**: Connects to a PX4/MAVSDK drone (real or SITL Gazebo).
+    *   **Full**: Requires ROS2 for camera images (`/forward_camera/image_raw`).
+    *   **Headless**: If ROS2 is unavailable, it falls back to **Synthetic Vision** using MAVSDK telemetry. This allows running high-fidelity physics simulations (Gazebo Headless) without the computational overhead of image rendering and streaming.
+    ```bash
+    python3 theshow.py --mode real
+    ```
+
+2.  **Sim Mode**: Runs entirely within the internal `DroneEnv` physics engine. This is extremely fast and useful for algorithmic benchmarking without any external dependencies (Gazebo/PX4).
+    ```bash
+    python3 theshow.py --mode sim --benchmark --headless
+    ```
+
+### Arguments
+- `--mode`: `real` (default) or `sim`.
+- `--benchmark`: Logs flight metrics (duration, path length, error) to `benchmark_results.json`.
+- `--headless`: Disables the OpenCV visualization window.
+- `--target-pos`: Sets the target position in World NED coordinates (default: `30.0 30.0 0.0`).
+
+### Architecture Data Flow
+
+```mermaid
+graph TD
+    subgraph "Sim Mode (Internal Physics)"
+        SE[DroneEnv Physics] -->|State Arrays| SI[SimDroneInterface]
+        SI -->|State Dictionary| TS[TheShow Controller]
+        TS -->|Action| SI
+        SI -->|Step Physics| SE
+        P1[Projector] -.->|Synthetic Image| SI
+        SI -->|Synthetic Image| TS
+    end
+
+    subgraph "Real Mode (Full ROS2)"
+        GZ[Gazebo / Real Drone] -->|Telemetry| MAV[MAVSDK]
+        GZ -->|Camera Stream| ROS[ROS2 Node]
+        MAV -->|Telemetry| RI[RealDroneInterface]
+        ROS -->|Image| RI
+        RI -->|State & Image| TS2[TheShow Controller]
+        TS2 -->|Action| RI
+        RI -->|MAVLink| MAV
+    end
+
+    subgraph "Real Mode (Headless / Synthetic)"
+        GZ2[Gazebo Headless] -->|Telemetry| MAV2[MAVSDK]
+        MAV2 -->|Telemetry| RI2[RealDroneInterface]
+        RI2 -->|State| TS3[TheShow Controller]
+        P2[Projector] -.->|Synthetic Image| RI2
+        RI2 -->|Synthetic Image| TS3
+        TS3 -->|Action| RI2
+        RI2 -->|MAVLink| MAV2
+    end
+```
