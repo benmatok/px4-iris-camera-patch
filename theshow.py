@@ -14,7 +14,7 @@ try:
     from cv_bridge import CvBridge
     _HAS_ROS = True
 except ImportError:
-    print("Warning: ROS2 (rclpy) not found. Real mode will fail. Sim mode might work.")
+    print("Warning: ROS2 (rclpy) not found. Real mode will run in HEADLESS configuration (Synthetic Vision via MAVSDK only).")
     _HAS_ROS = False
     class Node:
         def __init__(self, name): pass
