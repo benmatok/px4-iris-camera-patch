@@ -66,10 +66,16 @@ class DroneInterface:
     def get_dpc_state_sync(self): return None # Returns dict or None
 
 class RealDroneInterface(DroneInterface):
-    def __init__(self, system_address="udp://:14540"):
+    def __init__(self, projector=None, target_pos=None, system_address="udp://:14540"):
         self.drone = System()
         self.system_address = system_address
         self.latest_image = None # Updated by external callback
+        self.projector = projector
+        self.target_pos = target_pos if target_pos is not None else [30.0, 30.0, 0.0]
+
+        # Cache state for synthetic vision
+        self.last_pos = None
+        self.last_att = None
 
     async def connect(self):
         print(f"Connecting to drone on {self.system_address}...")
@@ -81,10 +87,12 @@ class RealDroneInterface(DroneInterface):
 
     async def attitude_euler(self):
         async for x in self.drone.telemetry.attitude_euler():
+            self.last_att = x
             yield x
 
     async def position_velocity_ned(self):
         async for x in self.drone.telemetry.position_velocity_ned():
+            self.last_pos = x
             yield x
 
     async def arm(self):
@@ -112,7 +120,35 @@ class RealDroneInterface(DroneInterface):
         self.latest_image = img
 
     def get_latest_image(self):
-        return self.latest_image
+        # If ROS is available and provided an image, use it
+        if self.latest_image is not None:
+            return self.latest_image
+
+        # Fallback: Synthetic Vision if Projector is available
+        if self.projector is not None and self.last_pos is not None and self.last_att is not None:
+            width = 1280
+            height = 800
+            img = np.zeros((height, width, 3), dtype=np.uint8)
+
+            drone_state = {
+                'px': self.last_pos.position.north_m,
+                'py': self.last_pos.position.east_m,
+                'pz': self.last_pos.position.down_m,
+                'roll': math.radians(self.last_att.roll_deg),
+                'pitch': math.radians(self.last_att.pitch_deg),
+                'yaw': math.radians(self.last_att.yaw_deg)
+            }
+
+            tx, ty, tz = self.target_pos
+            uv = self.projector.world_to_pixel(tx, ty, tz, drone_state)
+
+            if uv:
+                u, v = uv
+                if 0 <= u < width and 0 <= v < height:
+                    cv2.circle(img, (int(u), int(v)), 20, (0, 0, 255), -1)
+            return img
+
+        return None
 
     def get_dpc_state_sync(self):
         return None
@@ -506,8 +542,8 @@ class TheShow(Node):
 
         # Subscriptions (Only for Real mode)
         # If Sim mode, the interface handles image generation internally or we poll it.
-        # But for Real mode we need ROS subscription.
-        if isinstance(interface, RealDroneInterface):
+        # But for Real mode we need ROS subscription if ROS is available.
+        if isinstance(interface, RealDroneInterface) and _HAS_ROS:
             self.create_subscription(Image, '/forward_camera/image_raw', self.img_cb, 10)
 
         # Telemetry State
@@ -735,18 +771,21 @@ def main():
     parser.add_argument("--mode", choices=["real", "sim"], default="real", help="Run mode")
     parser.add_argument("--benchmark", action="store_true", help="Enable benchmarking")
     parser.add_argument("--headless", action="store_true", help="Run without visualization window")
+    parser.add_argument("--target-pos", nargs=3, type=float, default=[30.0, 30.0, 0.0], help="Target Position X Y Z")
     args = parser.parse_args()
 
     if _HAS_ROS:
         rclpy.init()
 
+    # Shared Projector Config
+    proj = Projector(width=1280, height=800, fov_deg=110.0, tilt_deg=30.0)
+
     if args.mode == "real":
-        interface = RealDroneInterface()
+        # Pass projector to Real interface for Synthetic Vision fallback
+        interface = RealDroneInterface(projector=proj, target_pos=args.target_pos)
     else:
-        # Pass projector to SimInterface so it can render correct view
-        # Initialize Projector (Same params as in TheShow)
-        proj = Projector(width=1280, height=800, fov_deg=110.0, tilt_deg=30.0)
         interface = SimDroneInterface(proj)
+        interface.target_pos = args.target_pos # Ensure Sim uses same target
 
     node = TheShow(interface, benchmark=args.benchmark, headless=args.headless)
 
@@ -754,14 +793,17 @@ def main():
     asyncio.set_event_loop(loop)
 
     loop.run_until_complete(node.connect_drone())
-    loop.run_until_complete(node.control_loop())
 
-    node.destroy_node()
-    if _HAS_ROS:
-        rclpy.shutdown()
+    try:
+        loop.run_until_complete(node.control_loop())
+    except KeyboardInterrupt:
+        print("Loop Interrupted")
+    finally:
+        if node.logger:
+            node.logger.save_report()
+        node.destroy_node()
+        if _HAS_ROS:
+            rclpy.shutdown()
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        pass
+    main()

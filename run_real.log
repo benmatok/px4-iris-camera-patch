@@ -1,0 +1,11 @@
+Warning: ROS2 (rclpy) not found. Real mode will fail. Sim mode might work.
+Traceback (most recent call last):
+  File "/app/theshow.py", line 804, in <module>
+    main()
+  File "/app/theshow.py", line 790, in main
+    node = TheShow(interface, benchmark=args.benchmark, headless=args.headless)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/theshow.py", line 547, in __init__
+    self.create_subscription(Image, '/forward_camera/image_raw', self.img_cb, 10)
+                             ^^^^^
+NameError: name 'Image' is not defined
