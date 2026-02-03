@@ -367,9 +367,10 @@ class TheShow:
     async def start_server(self):
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
-        site = web.TCPSite(self.runner, '0.0.0.0', 8080)
+        # Port 3000 for Live Preview tool compatibility
+        site = web.TCPSite(self.runner, '0.0.0.0', 3000)
         await site.start()
-        print("Web Server started at http://localhost:8080")
+        print("Web Server started at http://localhost:3000")
 
     async def broadcast_state(self, state, target, ghosts):
         if not self.websockets: return

@@ -60,7 +60,7 @@ scene.add(dirLight);
 // WebSocket
 const infoDiv = document.getElementById('info');
 const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-const wsHost = window.location.host || 'localhost:8080';
+const wsHost = window.location.host || 'localhost:3000';
 const wsUrl = `${wsProtocol}//${wsHost}/ws`;
 
 const ws = new WebSocket(wsUrl);
