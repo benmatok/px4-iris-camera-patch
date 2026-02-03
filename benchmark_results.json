@@ -1,8 +1,0 @@
-{
-    "success": false,
-    "total_duration": 4.05,
-    "homing_duration": 0.0,
-    "homing_path_length": 0.0,
-    "final_position_error_xy": 0.0,
-    "num_steps": 82
-}

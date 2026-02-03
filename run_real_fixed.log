@@ -1,3 +1,0 @@
-Connection using udp:// is deprecated, please use udpin:// or udpout:// (cli_arg.cpp:28)
-Warning: ROS2 (rclpy) not found. Real mode will fail. Sim mode might work.
-Connecting to drone on udp://:14540...
