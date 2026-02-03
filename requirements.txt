@@ -9,3 +9,5 @@ matplotlib
 imageio
 pandas
 numba
+aiohttp
+opencv-python
