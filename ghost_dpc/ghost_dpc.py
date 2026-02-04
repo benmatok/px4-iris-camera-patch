@@ -207,6 +207,56 @@ class PyGhostModel:
 
         return J, grad_mass
 
+    def get_param_sensitivities(self, state_dict, action_dict):
+        """
+        Returns scalar sensitivity of acceleration magnitude w.r.t parameters.
+        Returns: {'mass': val, 'drag': val, 'thrust_coeff': val, 'wind': val}
+        """
+        # Unpack
+        roll, pitch, yaw = state_dict['roll'], state_dict['pitch'], state_dict['yaw']
+        thrust = action_dict['thrust']
+
+        cr = math.cos(roll); sr = math.sin(roll)
+        cp = math.cos(pitch); sp = math.sin(pitch)
+        cy = math.cos(yaw); sy = math.sin(yaw)
+
+        # Force Directions
+        ax_dir = cy * sp * cr + sy * sr
+        ay_dir = sy * sp * cr - cy * sr
+        az_dir = cp * cr
+
+        max_thrust = self.MAX_THRUST_BASE * self.thrust_coeff
+        F = thrust * max_thrust
+
+        # 1. Mass Sensitivity: da/dm = -F/m^2
+        # accel_thrust = F/m. d(F/m)/dm = -F/m^2.
+        # Magnitude is F/m^2.
+        sens_mass = (F / (self.mass * self.mass))
+
+        # 2. Thrust Coeff Sensitivity: da/dk = (T_cmd * BaseMax) / m
+        sens_thrust_coeff = (thrust * self.MAX_THRUST_BASE) / self.mass
+
+        # 3. Drag Sensitivity: da/dCd = -(v - wind)
+        # Magnitude is |v - wind|
+        vx = state_dict['vx'] - self.wind_x
+        vy = state_dict['vy'] - self.wind_y
+        vz = state_dict['vz']
+        v_mag = math.sqrt(vx*vx + vy*vy + vz*vz)
+        sens_drag = v_mag
+
+        # 4. Wind Sensitivity: da/dW = Cd
+        # Accel_drag = -Cd * (v - W) = -Cd*v + Cd*W
+        # da/dW = Cd.
+        sens_wind = self.drag_coeff
+
+        return {
+            'mass': sens_mass,
+            'drag_coeff': sens_drag,
+            'thrust_coeff': sens_thrust_coeff,
+            'wind_x': sens_wind,
+            'wind_y': sens_wind
+        }
+
     def get_state_jacobian(self, state_dict, action_dict, dt):
         """
         Returns State Jacobian (9x9)
@@ -320,6 +370,43 @@ class PyGhostEstimator:
         self.probabilities = np.ones(len(self.models), dtype=np.float32) / len(self.models)
         self.lambda_param = 5.0
 
+        # Initialize Stable Parameters (Weighted Avg of Priors)
+        self.stable_params = self._compute_weighted_params()
+
+        # History for Analysis
+        self.history = {
+            'raw_estimates': [],
+            'observability_scores': []
+        }
+
+        # Current Observability Scores
+        self.observability_scores = {
+            'mass': 0.0, 'drag_coeff': 0.0, 'thrust_coeff': 0.0, 'wind_x': 0.0, 'wind_y': 0.0
+        }
+
+    def _compute_weighted_params(self):
+        avg_mass = 0.0
+        avg_drag = 0.0
+        avg_thrust = 0.0
+        avg_wind_x = 0.0
+        avg_wind_y = 0.0
+
+        for i, m in enumerate(self.models):
+            p = self.probabilities[i]
+            avg_mass += m.mass * p
+            avg_drag += m.drag_coeff * p
+            avg_thrust += m.thrust_coeff * p
+            avg_wind_x += m.wind_x * p
+            avg_wind_y += m.wind_y * p
+
+        return {
+            'mass': avg_mass,
+            'drag_coeff': avg_drag,
+            'thrust_coeff': avg_thrust,
+            'wind_x': avg_wind_x,
+            'wind_y': avg_wind_y
+        }
+
     def update(self, state_dict, action_dict, measured_accel_list, dt):
         likelihoods = np.zeros(len(self.models), dtype=np.float32)
 
@@ -374,31 +461,57 @@ class PyGhostEstimator:
         self.probabilities = np.maximum(self.probabilities, 1e-6)
         self.probabilities /= np.sum(self.probabilities)
 
+        # --- Observability Gating ---
+
+        # 1. Get Raw Estimate (MMAE Output)
+        raw_est = self._compute_weighted_params()
+
+        # 2. Compute Sensitivities using current stable parameters (as linearization point)
+        # Create temp model
+        temp_model = PyGhostModel(
+            self.stable_params['mass'], self.stable_params['drag_coeff'], self.stable_params['thrust_coeff'],
+            self.stable_params['wind_x'], self.stable_params['wind_y']
+        )
+        sens = temp_model.get_param_sensitivities(state_dict, action_dict)
+
+        # 3. Compute Observability Scores & Update
+        # Gains need to be tuned.
+        # Mass: accel ~ 5-20 m/s^2. Sens ~ F/m^2 ~ 20. Gain 0.05 -> score 1.0.
+        # Drag: v ~ 0-10 m/s. Sens ~ v. Gain 0.1 -> score 1.0 at 10m/s.
+
+        gains = {
+            'mass': 0.05,
+            'drag_coeff': 0.1,
+            'thrust_coeff': 0.05,
+            'wind_x': 2.0, # wind sens is small (0.1), so high gain needed?
+            'wind_y': 2.0
+        }
+
+        for k in self.stable_params.keys():
+            s_val = sens.get(k, 0.0)
+            score = s_val * gains.get(k, 1.0)
+            score = max(0.0, min(1.0, score)) # Clamp [0, 1]
+
+            self.observability_scores[k] = score
+
+            # Gated Update: new = old + score * (raw - old)
+            self.stable_params[k] += score * (raw_est[k] - self.stable_params[k])
+
+        # 4. History
+        self.history['raw_estimates'].append(raw_est)
+        self.history['observability_scores'].append(self.observability_scores.copy())
+
     def get_probabilities(self):
         return self.probabilities
 
     def get_weighted_model(self):
-        avg_mass = 0.0
-        avg_drag = 0.0
-        avg_thrust = 0.0
-        avg_wind_x = 0.0
-        avg_wind_y = 0.0
+        return self.stable_params
 
-        for i, m in enumerate(self.models):
-            p = self.probabilities[i]
-            avg_mass += m.mass * p
-            avg_drag += m.drag_coeff * p
-            avg_thrust += m.thrust_coeff * p
-            avg_wind_x += m.wind_x * p
-            avg_wind_y += m.wind_y * p
+    def get_observability_scores(self):
+        return self.observability_scores
 
-        return {
-            'mass': avg_mass,
-            'drag_coeff': avg_drag,
-            'thrust_coeff': avg_thrust,
-            'wind_x': avg_wind_x,
-            'wind_y': avg_wind_y
-        }
+    def get_history(self):
+        return self.history
 
 class PyDPCSolver:
     def __init__(self):
