@@ -514,8 +514,8 @@ class PyGhostEstimator:
         return self.history
 
 class PyDPCSolver:
-    def __init__(self):
-        self.horizon = 10
+    def __init__(self, horizon=20):
+        self.horizon = horizon
         self.iterations = 10
         self.learning_rate = 0.05
 

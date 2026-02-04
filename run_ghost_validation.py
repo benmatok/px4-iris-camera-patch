@@ -65,7 +65,19 @@ class GhostController:
         m3 = base.copy()
         m3['wind_x'] = -5.0
         solver_models.append(m3)
-        solver_weights.append(0.2)
+        solver_weights.append(0.1)
+
+        # Hypothesis 4: High Drag (Distance Ghost Short)
+        m4 = base.copy()
+        m4['drag_coeff'] = base['drag_coeff'] * 1.5
+        solver_models.append(m4)
+        solver_weights.append(0.1)
+
+        # Hypothesis 5: Low Drag (Distance Ghost Long)
+        m5 = base.copy()
+        m5['drag_coeff'] = base['drag_coeff'] * 0.5
+        solver_models.append(m5)
+        solver_weights.append(0.1)
 
         # 4. Solve
         opt_action = self.solver.solve(state, target_pos, self.last_action, solver_models, solver_weights, self.dt)
@@ -125,10 +137,15 @@ def run_scenario(name, duration_sec=5.0):
 
         elif name == "Blind Dive":
             # Target 45 deg down. Unmodeled Crosswind 10m/s.
-            # Target at (10, 0, 0). Drone at (0, 0, 10).
+            # Start High (50m). Target at (50, 0, 0).
             # Crosswind Y = 10.
             real_model = PyGhostModel(mass=1.0, drag=0.1, thrust_coeff=1.0, wind_y=10.0)
-            target_pos = [10.0, 0.0, 0.0]
+            target_pos = [50.0, 0.0, 0.0]
+            # Override Initial State in run_scenario?
+            # run_scenario inits at (0,0,10). We need to change that.
+            # We'll handle it by teleporting if t==0.
+            if t == 0:
+                state['pz'] = 50.0
 
         elif name == "Wind Gusts":
             # 0-2s: 0 wind. 2-4s: 8.0 wind_x. 4-6s: 0 wind.
