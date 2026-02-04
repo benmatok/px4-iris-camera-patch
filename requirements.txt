@@ -11,4 +11,5 @@ pandas
 numba
 fastapi
 uvicorn
+websockets
 opencv-python

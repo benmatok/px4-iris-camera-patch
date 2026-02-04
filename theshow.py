@@ -5,10 +5,15 @@ import math
 import numpy as np
 import cv2
 import json
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+
+# Configure Logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Add current directory to path
 sys.path.append(os.getcwd())
@@ -19,7 +24,7 @@ try:
     from ghost_dpc.ghost_dpc import PyDPCSolver, PyGhostModel
     from drone_env.drone import DroneEnv
 except ImportError as e:
-    print(f"Error: Could not import project modules: {e}")
+    logger.error(f"Could not import project modules: {e}")
     sys.exit(1)
 
 # Constants
@@ -29,19 +34,24 @@ DT = 0.05
 class SimDroneInterface:
     def __init__(self, projector):
         self.projector = projector
-        self.env = DroneEnv(num_agents=1, episode_length=100000)
-        self.env.reset_all_envs()
-        self.dd = self.env.data_dictionary
+        try:
+            self.env = DroneEnv(num_agents=1, episode_length=100000)
+            self.env.reset_all_envs()
+            self.dd = self.env.data_dictionary
 
-        # Init State
-        self.dd['pos_x'][0] = 0.0
-        self.dd['pos_y'][0] = 0.0
-        self.dd['pos_z'][0] = 1.0 # 1m Up (Sim Z is Up)
+            # Init State
+            self.dd['pos_x'][0] = 0.0
+            self.dd['pos_y'][0] = 0.0
+            self.dd['pos_z'][0] = 1.0 # 1m Up (Sim Z is Up)
 
-        self.masses = self.dd['masses']
-        self.masses[0] = 3.33
-        self.thrust_coeffs = self.dd['thrust_coeffs']
-        self.thrust_coeffs[0] = 2.725 # Matches 54.5 total
+            self.masses = self.dd['masses']
+            self.masses[0] = 3.33
+            self.thrust_coeffs = self.dd['thrust_coeffs']
+            self.thrust_coeffs[0] = 2.725 # Matches 54.5 total
+            logger.info("DroneEnv initialized successfully.")
+        except Exception as e:
+            logger.error(f"Failed to initialize DroneEnv: {e}")
+            raise
 
     def step(self, action):
         # Action: [thrust, roll_rate, pitch_rate, yaw_rate]
@@ -105,21 +115,26 @@ class SimDroneInterface:
 
 class TheShow:
     def __init__(self):
-        self.projector = Projector(width=640, height=480, fov_deg=110.0, tilt_deg=30.0)
-        self.sim = SimDroneInterface(self.projector)
-        self.detector = RedObjectDetector()
+        try:
+            self.projector = Projector(width=640, height=480, fov_deg=110.0, tilt_deg=30.0)
+            self.sim = SimDroneInterface(self.projector)
+            self.detector = RedObjectDetector()
 
-        self.solver = PyDPCSolver()
-        self.models_config = [{'mass': 3.33, 'drag_coeff': 0.3, 'thrust_coeff': 54.5}]
-        self.weights = [1.0]
+            self.solver = PyDPCSolver()
+            self.models_config = [{'mass': 3.33, 'drag_coeff': 0.3, 'thrust_coeff': 54.5}]
+            self.weights = [1.0]
 
-        self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
+            self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
 
-        self.state = "INIT"
-        self.dpc_target = [0.0, 0.0, -TARGET_ALT] # NED Target
-        self.loops = 0
+            self.state = "INIT"
+            self.dpc_target = [0.0, 0.0, -TARGET_ALT] # NED Target
+            self.loops = 0
 
-        self.websockets = set()
+            self.websockets = set()
+            logger.info("TheShow initialized successfully.")
+        except Exception as e:
+            logger.error(f"Failed to initialize TheShow: {e}")
+            raise
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
@@ -154,7 +169,7 @@ class TheShow:
         return ghosts
 
     async def control_loop(self):
-        print("Starting Control Loop...")
+        logger.info("Starting Control Loop...")
         self.state = "TAKEOFF"
         target_pos_sim = [30.0, 30.0, 0.0] # World Z=0
 
@@ -247,21 +262,27 @@ class TheShow:
                 await asyncio.sleep(delay)
 
         except asyncio.CancelledError:
-            print("Loop Cancelled")
+            logger.info("Loop Cancelled")
         except Exception as e:
-            print(f"Loop Error: {e}")
+            logger.error(f"Loop Error: {e}")
             import traceback
             traceback.print_exc()
 
 # Global Controller Instance
-the_show = TheShow()
+try:
+    the_show = TheShow()
+except:
+    logger.critical("Failed to create Global Controller. Application will exit.")
+    sys.exit(1)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    logger.info("Lifespan Startup...")
     loop_task = asyncio.create_task(the_show.control_loop())
     yield
     # Shutdown
+    logger.info("Lifespan Shutdown...")
     loop_task.cancel()
     try:
         await loop_task
@@ -284,7 +305,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 web_dir = os.path.join(current_dir, "web")
 
 if os.path.isdir(web_dir):
-    print(f"Serving web content from {web_dir}")
+    logger.info(f"Serving web content from {web_dir}")
 
     # Explicit route for root to ensure index.html is served
     @app.get("/")
@@ -294,8 +315,9 @@ if os.path.isdir(web_dir):
     # Mount static files at root for other assets (main.js, etc)
     app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")
 else:
-    print(f"Warning: 'web' directory not found at {web_dir}. Static files will not be served.")
+    logger.warning(f"Warning: 'web' directory not found at {web_dir}. Static files will not be served.")
 
 if __name__ == "__main__":
     import uvicorn
+    # Use 0.0.0.0 to bind to all interfaces
     uvicorn.run(app, host="0.0.0.0", port=8080)
