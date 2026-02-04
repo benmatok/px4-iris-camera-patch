@@ -94,10 +94,12 @@ def run_scenario(name, duration_sec=5.0):
     # Data Logging
     history = {
         't': [], 'mass_est': [], 'mass_true': [],
+        'mass_raw_est': [],
         'wind_true_x': [], 'thrust_coeff_true': [],
         'thrust_cmd': [], 'alt': [],
         'probs': [],
-        'pos_x': [], 'pos_y': [], 'target_x': [], 'target_y': []
+        'pos_x': [], 'pos_y': [], 'target_x': [], 'target_y': [],
+        'obs_mass': [], 'obs_drag': []
     }
 
     target_pos = [0.0, 0.0, 10.0]
@@ -163,6 +165,16 @@ def run_scenario(name, duration_sec=5.0):
         history['mass_true'].append(real_model.mass)
         history['wind_true_x'].append(real_model.wind_x)
         history['thrust_coeff_true'].append(real_model.thrust_coeff)
+
+        # Get Obs Scores and Raw Est from estimator history
+        # Since update() appends to history, the last element is current
+        est_hist = controller.estimator.get_history()
+        raw_est = est_hist['raw_estimates'][-1]
+        obs_sc = est_hist['observability_scores'][-1]
+
+        history['mass_raw_est'].append(raw_est['mass'])
+        history['obs_mass'].append(obs_sc['mass'])
+        history['obs_drag'].append(obs_sc['drag_coeff'])
 
         history['thrust_cmd'].append(action['thrust'])
         history['alt'].append(state['pz'])
@@ -244,14 +256,24 @@ def plot_wind_gusts(hist):
     print("Saved validation_wind_gusts.png")
 
 def plot_heavy_conf(hist):
-    plt.figure(figsize=(10, 5))
-    plt.plot(hist['t'], hist['mass_true'], 'k--', label='True Mass')
-    plt.plot(hist['t'], hist['mass_est'], 'r-', label='Estimated Mass')
-    plt.title("Scenario E: Heavy Configuration (Mass Estimation)")
-    plt.xlabel("Time (s)")
-    plt.ylabel("Mass (kg)")
-    plt.legend()
-    plt.grid(True)
+    fig, ax1 = plt.subplots(figsize=(10, 5))
+
+    ax1.set_xlabel('Time (s)')
+    ax1.set_ylabel('Mass (kg)', color='k')
+    ax1.plot(hist['t'], hist['mass_true'], 'k--', label='True Mass')
+    ax1.plot(hist['t'], hist['mass_est'], 'r-', label='Stable Est')
+    ax1.plot(hist['t'], hist['mass_raw_est'], 'g:', label='Raw Est')
+    ax1.tick_params(axis='y', labelcolor='k')
+    ax1.legend(loc='center left')
+
+    ax2 = ax1.twinx()
+    ax2.set_ylabel('Observability Score', color='b')
+    ax2.fill_between(hist['t'], 0, hist['obs_mass'], color='b', alpha=0.1, label='Obs Score')
+    ax2.tick_params(axis='y', labelcolor='b')
+    ax2.set_ylim(0, 1.1)
+
+    plt.title("Scenario E: Heavy Configuration (Observability Gating)")
+    fig.tight_layout()
     plt.savefig("validation_heavy_conf.png")
     print("Saved validation_heavy_conf.png")
 
@@ -292,6 +314,10 @@ def main():
     # Test F: Unmodeled Drag
     hist_f = run_scenario("Unmodeled Drag", duration_sec=5.0)
     plot_unmodeled_drag(hist_f)
+
+    # Analysis
+    mass_err = np.mean(np.abs(np.array(hist_e['mass_est']) - np.array(hist_e['mass_true'])))
+    print(f"Mean Mass Error (Heavy Conf): {mass_err:.4f}")
 
     # Dashboard Elements (Ghost Wars)
     # Plot probability evolution for Test A
