@@ -168,92 +168,97 @@ class TheShow:
             ghosts.append(path)
         return ghosts
 
+    def compute_step(self):
+        """
+        Runs one iteration of the control loop (Logic, Solver, Physics).
+        This is CPU intensive and should be run in a separate thread.
+        """
+        target_pos_sim = [30.0, 30.0, 0.0] # World Z=0
+
+        # 1. Get State (Sim Frame)
+        s = self.sim.get_state()
+
+        # Convert to NED for Solver
+        dpc_state = {
+            'px': s['px'], 'py': s['py'], 'pz': -s['pz'],
+            'vx': s['vx'], 'vy': s['vy'], 'vz': -s['vz'],
+            'roll': s['roll'], 'pitch': s['pitch'], 'yaw': -s['yaw']
+        }
+
+        # 2. Logic (Detector, State Machine)
+        img = self.sim.get_image(target_pos_sim)
+        current_alt = -dpc_state['pz']
+
+        if self.state == "TAKEOFF":
+            self.dpc_target = [s['px'], s['py'], -TARGET_ALT]
+            if current_alt >= TARGET_ALT - 5.0:
+                self.state = "SCAN"
+
+        elif self.state == "SCAN":
+            if img is not None:
+                center, _, _ = self.detector.detect(img)
+                if center:
+                    self.state = "HOMING"
+
+        elif self.state == "HOMING":
+            if img is not None:
+                center, _, _ = self.detector.detect(img)
+                if center:
+                    wp = self.projector.pixel_to_world(center[0], center[1], dpc_state)
+                    if wp:
+                        self.dpc_target = [wp[0], wp[1], -2.0]
+
+        # 3. Solve (DPC)
+        action_out = self.solver.solve(
+            dpc_state,
+            self.dpc_target,
+            self.last_action,
+            self.models_config,
+            self.weights,
+            DT
+        )
+        self.last_action = action_out
+
+        if self.state == "SCAN":
+            action_out['yaw_rate'] = math.radians(15.0)
+
+        # 4. Step Sim
+        sim_action = np.array([
+            action_out['thrust'],
+            action_out['roll_rate'],
+            action_out['pitch_rate'],
+            -action_out['yaw_rate']
+        ])
+
+        if self.state == "TAKEOFF" and current_alt < 2.0:
+             sim_action[0] = 0.8
+
+        self.sim.step(sim_action)
+
+        # 5. Rollout Ghosts
+        ghost_paths = self.rollout_ghosts(dpc_state, action_out)
+
+        # 6. Prepare Payload
+        payload = {
+            'state': self.state,
+            'drone': dpc_state,
+            'target': self.dpc_target,
+            'ghosts': ghost_paths
+        }
+        return payload
+
     async def control_loop(self):
         logger.info("Starting Control Loop...")
         self.state = "TAKEOFF"
-        target_pos_sim = [30.0, 30.0, 0.0] # World Z=0
 
         try:
             while True:
                 start_time = asyncio.get_running_loop().time()
 
-                # 1. Get State
-                s = self.sim.get_state() # Sim Frame (Z Up)
+                # Offload heavy computation to a thread
+                payload = await asyncio.to_thread(self.compute_step)
 
-                # Convert to NED for Solver
-                dpc_state = {
-                    'px': s['px'], 'py': s['py'], 'pz': -s['pz'],
-                    'vx': s['vx'], 'vy': s['vy'], 'vz': -s['vz'],
-                    'roll': s['roll'], 'pitch': s['pitch'], 'yaw': -s['yaw']
-                }
-
-                # 2. Logic
-                img = self.sim.get_image(target_pos_sim)
-                current_alt = -dpc_state['pz']
-
-                if self.state == "TAKEOFF":
-                    self.dpc_target = [s['px'], s['py'], -TARGET_ALT]
-                    if current_alt >= TARGET_ALT - 5.0:
-                        self.state = "SCAN"
-
-                elif self.state == "SCAN":
-                    # Detector
-                    if img is not None:
-                        center, _, _ = self.detector.detect(img)
-                        if center:
-                            self.state = "HOMING"
-
-                elif self.state == "HOMING":
-                    if img is not None:
-                        center, _, _ = self.detector.detect(img)
-                        if center:
-                            # Project to World
-                            # Projector needs NED state
-                            wp = self.projector.pixel_to_world(center[0], center[1], dpc_state)
-                            if wp:
-                                self.dpc_target = [wp[0], wp[1], -2.0]
-
-                # 3. Solve
-                action_out = self.solver.solve(
-                    dpc_state,
-                    self.dpc_target,
-                    self.last_action,
-                    self.models_config,
-                    self.weights,
-                    DT
-                )
-                self.last_action = action_out
-
-                if self.state == "SCAN":
-                    action_out['yaw_rate'] = math.radians(15.0) # 15 deg/s
-
-                # 4. Step Sim
-                # Convert Action to Sim expectations
-                # Yaw Rate: NED (+CW) to Sim (+CCW) -> Invert
-
-                sim_action = np.array([
-                    action_out['thrust'],
-                    action_out['roll_rate'],
-                    action_out['pitch_rate'],
-                    -action_out['yaw_rate']
-                ])
-
-                # Boost thrust for takeoff if needed
-                if self.state == "TAKEOFF" and current_alt < 2.0:
-                     sim_action[0] = 0.8
-
-                self.sim.step(sim_action)
-
-                # 5. Rollout Ghosts (Visualization)
-                ghost_paths = self.rollout_ghosts(dpc_state, action_out)
-
-                # 6. Broadcast
-                payload = {
-                    'state': self.state,
-                    'drone': dpc_state, # Send NED state to Web
-                    'target': self.dpc_target,
-                    'ghosts': ghost_paths
-                }
+                # Broadcast result (must happen on event loop)
                 await self.broadcast(payload)
 
                 self.loops += 1
