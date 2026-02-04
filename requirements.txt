@@ -9,3 +9,6 @@ matplotlib
 imageio
 pandas
 numba
+fastapi
+uvicorn
+opencv-python
