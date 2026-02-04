@@ -576,7 +576,7 @@ class PyDPCSolver:
                     # B. Altitude
                     target_safe_z = target_pos[2] + 2.0
                     dz_safe = next_state['pz'] - target_safe_z
-                    dL_dPz_alt = 4.0 * dz_safe
+                    dL_dPz_alt = 100.0 * dz_safe
 
                     # Combined dL/dS (9,)
                     dL_dS = np.zeros(9, dtype=np.float32)
@@ -584,11 +584,11 @@ class PyDPCSolver:
                     dL_dS[1] += dL_dP[1]
                     dL_dS[2] += dL_dP[2] + dL_dPz_alt
 
-                    # Velocity Damping (dL/dV = 0.1 * V)
+                    # Velocity Damping (dL/dV = 2.0 * V)
                     # Helps prevent overshoot in long dives
-                    dL_dS[3] += 0.1 * next_state['vx']
-                    dL_dS[4] += 0.1 * next_state['vy']
-                    dL_dS[5] += 0.1 * next_state['vz']
+                    dL_dS[3] += 2.0 * next_state['vx']
+                    dL_dS[4] += 2.0 * next_state['vy']
+                    dL_dS[5] += 2.0 * next_state['vz']
 
                     # Rate Penalty
                     dL_dU_rate = np.zeros(4, dtype=np.float32)

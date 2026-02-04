@@ -28,7 +28,10 @@ class GhostController:
             'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0
         }
 
-    def control(self, state, measured_accel, target_pos):
+    def control(self, state, measured_accel, target_pos, solver_dt=None):
+        if solver_dt is None:
+            solver_dt = self.dt
+
         # 1. Update Estimator
         self.estimator.update(state, self.last_action, measured_accel, self.dt)
 
@@ -53,7 +56,7 @@ class GhostController:
         m1['wind_x'] = 0.0
         m1['wind_y'] = 0.0
         solver_models.append(m1)
-        solver_weights.append(0.6)
+        solver_weights.append(0.2)
 
         # Hypothesis 2: Headwind/Crosswind A
         m2 = base.copy()
@@ -65,22 +68,22 @@ class GhostController:
         m3 = base.copy()
         m3['wind_x'] = -10.0
         solver_models.append(m3)
-        solver_weights.append(0.1)
+        solver_weights.append(0.2)
 
         # Hypothesis 4: High Drag (Distance Ghost Short)
         m4 = base.copy()
         m4['drag_coeff'] = base['drag_coeff'] * 1.5
         solver_models.append(m4)
-        solver_weights.append(0.1)
+        solver_weights.append(0.2)
 
         # Hypothesis 5: Low Drag (Distance Ghost Long)
         m5 = base.copy()
         m5['drag_coeff'] = base['drag_coeff'] * 0.5
         solver_models.append(m5)
-        solver_weights.append(0.1)
+        solver_weights.append(0.2)
 
         # 4. Solve
-        opt_action = self.solver.solve(state, target_pos, self.last_action, solver_models, solver_weights, self.dt)
+        opt_action = self.solver.solve(state, target_pos, self.last_action, solver_models, solver_weights, solver_dt)
 
         self.last_action = opt_action
         return opt_action, probs, weighted_model
@@ -137,10 +140,10 @@ def run_scenario(name, duration_sec=5.0):
 
         elif name == "Blind Dive":
             # Target 45 deg down. Unmodeled Crosswind 10m/s.
-            # Start High (50m). Target at (50, 0, 0).
+            # Start High (50m). Target at (50, 0, 10). Safety First.
             # Crosswind Y = 10.
             real_model = PyGhostModel(mass=1.0, drag=0.1, thrust_coeff=1.0, wind_y=10.0)
-            target_pos = [50.0, 0.0, 0.0]
+            target_pos = [50.0, 0.0, 10.0]
             # Override Initial State in run_scenario?
             # run_scenario inits at (0,0,10). We need to change that.
             # We'll handle it by teleporting if t==0.
@@ -174,7 +177,12 @@ def run_scenario(name, duration_sec=5.0):
         az = (next_s['vz'] - state['vz']) / dt
 
         # --- CONTROLLER ---
-        action, probs, est_model = controller.control(state, [ax, ay, az], target_pos)
+        # Optimize Blind Dive by using a coarser time step for the solver (Lookahead 0.1 * 20 = 2.0s)
+        s_dt = dt
+        if name == "Blind Dive":
+            s_dt = 0.1
+
+        action, probs, est_model = controller.control(state, [ax, ay, az], target_pos, solver_dt=s_dt)
 
         # --- LOGGING ---
         history['t'].append(t)
@@ -328,7 +336,10 @@ def main():
     ty = hist_c['target_y'][-1]
     tz = 0.0 # Target Z is 0.0 in Blind Dive
     dist = np.sqrt((final_px-tx)**2 + (final_py-ty)**2 + (final_pz-tz)**2)
+    min_z = np.min(hist_c['alt'])
+    max_z = np.max(hist_c['alt'])
     print(f"Blind Dive Final Pos: ({final_px:.2f}, {final_py:.2f}, {final_pz:.2f})")
+    print(f"Blind Dive Alt Range: [{min_z:.2f}, {max_z:.2f}]")
     print(f"Blind Dive Final Distance: {dist:.2f}m")
 
     # Test D: Wind Gusts
