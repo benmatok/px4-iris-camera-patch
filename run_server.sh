@@ -23,4 +23,4 @@ python3 setup.py build_ext --inplace
 
 # Run server
 echo "Starting The Show..."
-python3 theshow.py
+uvicorn theshow:app --host 0.0.0.0 --port 8080
