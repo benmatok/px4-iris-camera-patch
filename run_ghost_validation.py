@@ -136,13 +136,15 @@ def run_scenario(name, duration_sec=5.0):
             real_model = PyGhostModel(mass=1.0, drag=0.1, thrust_coeff=1.0, wind_x=wind)
             target_pos = [0.0, 0.0, 10.0]
 
-        elif name == "Sudden Motor Failure":
-            # 0-2s: coeff 1.0. 2s+: coeff 0.4.
-            tc = 1.0
-            if t >= 2.0:
-                tc = 0.4
-            real_model = PyGhostModel(mass=1.0, drag=0.1, thrust_coeff=tc)
+        elif name == "Heavy Configuration":
+            # Constant Mass 1.5kg
+            real_model = PyGhostModel(mass=1.5, drag=0.1, thrust_coeff=1.0)
             target_pos = [0.0, 0.0, 10.0]
+
+        elif name == "Unmodeled Drag":
+            # Constant Drag 0.5
+            real_model = PyGhostModel(mass=1.0, drag=0.5, thrust_coeff=1.0)
+            target_pos = [10.0, 0.0, 10.0] # Move to make drag apparent
 
         # --- STEP SIMULATION ---
         next_s = real_model.step(state, action, dt)
@@ -241,27 +243,29 @@ def plot_wind_gusts(hist):
     plt.savefig("validation_wind_gusts.png")
     print("Saved validation_wind_gusts.png")
 
-def plot_sudden_motor_failure(hist):
-    fig, ax1 = plt.subplots(figsize=(10, 5))
+def plot_heavy_conf(hist):
+    plt.figure(figsize=(10, 5))
+    plt.plot(hist['t'], hist['mass_true'], 'k--', label='True Mass')
+    plt.plot(hist['t'], hist['mass_est'], 'r-', label='Estimated Mass')
+    plt.title("Scenario E: Heavy Configuration (Mass Estimation)")
+    plt.xlabel("Time (s)")
+    plt.ylabel("Mass (kg)")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig("validation_heavy_conf.png")
+    print("Saved validation_heavy_conf.png")
 
-    ax1.set_xlabel('Time (s)')
-    ax1.set_ylabel('Altitude (m)', color='tab:blue')
-    ax1.plot(hist['t'], hist['alt'], color='tab:blue', label='Altitude')
-    ax1.tick_params(axis='y', labelcolor='tab:blue')
-    ax1.set_ylim(0, 15)
-
-    ax2 = ax1.twinx()
-    ax2.set_ylabel('Thrust Coeff / Cmd', color='tab:red')
-    ax2.plot(hist['t'], hist['thrust_coeff_true'], color='tab:red', linestyle='--', label='True Coeff')
-    ax2.plot(hist['t'], hist['thrust_cmd'], color='tab:green', linestyle=':', label='Command')
-    ax2.tick_params(axis='y', labelcolor='tab:red')
-    ax2.set_ylim(0, 1.5)
-    ax2.legend(loc='center right')
-
-    plt.title("Scenario E: Sudden Motor Failure")
-    fig.tight_layout()
-    plt.savefig("validation_sudden_motor_failure.png")
-    print("Saved validation_sudden_motor_failure.png")
+def plot_unmodeled_drag(hist):
+    plt.figure(figsize=(10, 5))
+    plt.plot(hist['t'], hist['pos_x'], 'b-', label='Pos X')
+    plt.plot(hist['t'], hist['target_x'], 'r--', label='Target X')
+    plt.title("Scenario F: Unmodeled Drag (Position Tracking)")
+    plt.xlabel("Time (s)")
+    plt.ylabel("Position X (m)")
+    plt.legend()
+    plt.grid(True)
+    plt.savefig("validation_unmodeled_drag.png")
+    print("Saved validation_unmodeled_drag.png")
 
 def main():
     # Test A: Payload Drop
@@ -281,9 +285,13 @@ def main():
     hist_d = run_scenario("Wind Gusts", duration_sec=6.0)
     plot_wind_gusts(hist_d)
 
-    # Test E: Sudden Motor Failure
-    hist_e = run_scenario("Sudden Motor Failure", duration_sec=5.0)
-    plot_sudden_motor_failure(hist_e)
+    # Test E: Heavy Configuration
+    hist_e = run_scenario("Heavy Configuration", duration_sec=5.0)
+    plot_heavy_conf(hist_e)
+
+    # Test F: Unmodeled Drag
+    hist_f = run_scenario("Unmodeled Drag", duration_sec=5.0)
+    plot_unmodeled_drag(hist_f)
 
     # Dashboard Elements (Ghost Wars)
     # Plot probability evolution for Test A
