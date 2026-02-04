@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Jules Drone Sim</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #111; color: white; font-family: monospace; }
+        #info { position: absolute; top: 10px; left: 10px; pointer-events: none; }
+        #status { font-weight: bold; }
+    </style>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <div id="info">
+        <h1>Jules Sim</h1>
+        <div id="status">Connecting...</div>
+        <div id="telemetry">Waiting for data...</div>
+    </div>
+    <script type="module" src="./main.js"></script>
+</body>
+</html>
