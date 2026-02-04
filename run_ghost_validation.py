@@ -139,10 +139,10 @@ def run_scenario(name, duration_sec=5.0):
             target_pos = [0.0, 0.0, 10.0]
 
         elif name == "Blind Dive":
-            # Target 45 deg down. Unmodeled Crosswind 10m/s.
+            # Target 45 deg down.
             # Start High (50m). Target at (50, 0, 10). Safety First.
-            # Crosswind Y = 10.
-            real_model = PyGhostModel(mass=1.0, drag=0.1, thrust_coeff=1.0, wind_y=10.0)
+            # User request: "For this test reduce wind to 0"
+            real_model = PyGhostModel(mass=1.0, drag=0.1, thrust_coeff=1.0, wind_y=0.0)
             target_pos = [50.0, 0.0, 10.0]
             # Override Initial State in run_scenario?
             # run_scenario inits at (0,0,10). We need to change that.
@@ -167,6 +167,11 @@ def run_scenario(name, duration_sec=5.0):
             # Constant Drag 0.5
             real_model = PyGhostModel(mass=1.0, drag=0.5, thrust_coeff=1.0)
             target_pos = [10.0, 0.0, 10.0] # Move to make drag apparent
+
+        elif name == "Forward Flight":
+            # Simple Forward Test (No Wind)
+            real_model = PyGhostModel(mass=1.0, drag=0.1, thrust_coeff=1.0)
+            target_pos = [50.0, 0.0, 10.0]
 
         # --- STEP SIMULATION ---
         next_s = real_model.step(state, action, dt)
@@ -348,6 +353,11 @@ def main():
     # Test F: Unmodeled Drag
     hist_f = run_scenario("Unmodeled Drag", duration_sec=5.0)
     plot_unmodeled_drag(hist_f)
+
+    # Test G: Forward Flight (Pitch Debug)
+    hist_g = run_scenario("Forward Flight", duration_sec=5.0)
+    final_px = hist_g['pos_x'][-1]
+    print(f"Forward Flight Final X: {final_px:.2f}m")
 
     # Analysis
     mass_err = np.mean(np.abs(np.array(hist_e['mass_est']) - np.array(hist_e['mass_true'])))
