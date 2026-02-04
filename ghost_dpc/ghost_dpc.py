@@ -573,22 +573,47 @@ class PyDPCSolver:
 
                     dL_dP = np.array([dx/dist, dy/dist, dz/dist], dtype=np.float32)
 
-                    # B. Altitude
+                    # B. Altitude & TTC Barrier
                     target_safe_z = target_pos[2] + 2.0
                     dz_safe = next_state['pz'] - target_safe_z
+
+                    # Linear Cost
                     dL_dPz_alt = 20.0 * dz_safe
+
+                    # TTC Barrier (Scale Less)
+                    # tau = dz / -vz. Cost = 1/tau.
+                    vz = next_state['vz']
+                    dL_dPz_ttc = 0.0
+                    dL_dVz_ttc = 0.0
+
+                    if dz_safe > 0 and vz < -0.1:
+                        tau = dz_safe / -vz
+                        # Barrier: J = gain / (tau + 0.1)
+                        # Scale gain by dz to make it relevant at distance?
+                        # User wants "scale less". 1/tau is frequency.
+                        # J = 10.0 / (tau + 0.1)
+
+                        gain = 10.0
+                        denom = tau + 0.1
+                        dL_dtau = -gain / (denom * denom)
+
+                        dtau_dz = 1.0 / -vz
+                        dtau_dvz = dz_safe / (vz * vz)
+
+                        dL_dPz_ttc = dL_dtau * dtau_dz
+                        dL_dVz_ttc = dL_dtau * dtau_dvz
 
                     # Combined dL/dS (9,)
                     dL_dS = np.zeros(9, dtype=np.float32)
                     dL_dS[0] += dL_dP[0]
                     dL_dS[1] += dL_dP[1]
-                    dL_dS[2] += dL_dP[2] + dL_dPz_alt
+                    dL_dS[2] += dL_dP[2] + dL_dPz_alt + dL_dPz_ttc
 
                     # Velocity Damping (dL/dV = 2.0 * V)
                     # Helps prevent overshoot in long dives
                     dL_dS[3] += 2.0 * next_state['vx']
                     dL_dS[4] += 2.0 * next_state['vy']
-                    dL_dS[5] += 2.0 * next_state['vz']
+                    dL_dS[5] += 2.0 * next_state['vz'] + dL_dVz_ttc
 
                     # Rate Penalty
                     dL_dU_rate = np.zeros(4, dtype=np.float32)
