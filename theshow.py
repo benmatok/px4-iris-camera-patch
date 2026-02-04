@@ -8,6 +8,7 @@ import json
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 # Add current directory to path
 sys.path.append(os.getcwd())
@@ -278,12 +279,22 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         the_show.disconnect(websocket)
 
-# Serve Static Files
-# Ensure the 'web' directory exists
-if os.path.isdir("web"):
-    app.mount("/", StaticFiles(directory="web", html=True), name="web")
+# Determine absolute path to web directory
+current_dir = os.path.dirname(os.path.abspath(__file__))
+web_dir = os.path.join(current_dir, "web")
+
+if os.path.isdir(web_dir):
+    print(f"Serving web content from {web_dir}")
+
+    # Explicit route for root to ensure index.html is served
+    @app.get("/")
+    async def read_index():
+        return FileResponse(os.path.join(web_dir, "index.html"))
+
+    # Mount static files at root for other assets (main.js, etc)
+    app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")
 else:
-    print("Warning: 'web' directory not found. Static files will not be served.")
+    print(f"Warning: 'web' directory not found at {web_dir}. Static files will not be served.")
 
 if __name__ == "__main__":
     import uvicorn
