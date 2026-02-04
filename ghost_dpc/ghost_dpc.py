@@ -514,10 +514,10 @@ class PyGhostEstimator:
         return self.history
 
 class PyDPCSolver:
-    def __init__(self, horizon=20):
+    def __init__(self, horizon=40):
         self.horizon = horizon
         self.iterations = 30
-        self.learning_rate = 0.05
+        self.learning_rate = 0.01
 
     def solve(self, state_dict, target_pos, initial_action_dict, models_list, weights_list, dt):
         # Convert models to PyGhostModel objects
@@ -576,7 +576,7 @@ class PyDPCSolver:
                     # B. Altitude
                     target_safe_z = target_pos[2] + 2.0
                     dz_safe = next_state['pz'] - target_safe_z
-                    dL_dPz_alt = 100.0 * dz_safe
+                    dL_dPz_alt = 20.0 * dz_safe
 
                     # Combined dL/dS (9,)
                     dL_dS = np.zeros(9, dtype=np.float32)

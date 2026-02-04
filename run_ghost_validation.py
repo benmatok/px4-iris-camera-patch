@@ -177,12 +177,7 @@ def run_scenario(name, duration_sec=5.0):
         az = (next_s['vz'] - state['vz']) / dt
 
         # --- CONTROLLER ---
-        # Optimize Blind Dive by using a coarser time step for the solver (Lookahead 0.1 * 20 = 2.0s)
-        s_dt = dt
-        if name == "Blind Dive":
-            s_dt = 0.1
-
-        action, probs, est_model = controller.control(state, [ax, ay, az], target_pos, solver_dt=s_dt)
+        action, probs, est_model = controller.control(state, [ax, ay, az], target_pos, solver_dt=dt)
 
         # --- LOGGING ---
         history['t'].append(t)
