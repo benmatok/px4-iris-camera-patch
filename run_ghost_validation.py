@@ -94,6 +94,7 @@ def run_scenario(name, duration_sec=5.0):
     # Data Logging
     history = {
         't': [], 'mass_est': [], 'mass_true': [],
+        'wind_true_x': [], 'thrust_coeff_true': [],
         'thrust_cmd': [], 'alt': [],
         'probs': [],
         'pos_x': [], 'pos_y': [], 'target_x': [], 'target_y': []
@@ -127,6 +128,22 @@ def run_scenario(name, duration_sec=5.0):
             real_model = PyGhostModel(mass=1.0, drag=0.1, thrust_coeff=1.0, wind_y=10.0)
             target_pos = [10.0, 0.0, 0.0]
 
+        elif name == "Wind Gusts":
+            # 0-2s: 0 wind. 2-4s: 8.0 wind_x. 4-6s: 0 wind.
+            wind = 0.0
+            if t >= 2.0 and t < 4.0:
+                wind = 8.0
+            real_model = PyGhostModel(mass=1.0, drag=0.1, thrust_coeff=1.0, wind_x=wind)
+            target_pos = [0.0, 0.0, 10.0]
+
+        elif name == "Sudden Motor Failure":
+            # 0-2s: coeff 1.0. 2s+: coeff 0.4.
+            tc = 1.0
+            if t >= 2.0:
+                tc = 0.4
+            real_model = PyGhostModel(mass=1.0, drag=0.1, thrust_coeff=tc)
+            target_pos = [0.0, 0.0, 10.0]
+
         # --- STEP SIMULATION ---
         next_s = real_model.step(state, action, dt)
 
@@ -141,13 +158,9 @@ def run_scenario(name, duration_sec=5.0):
         # --- LOGGING ---
         history['t'].append(t)
         history['mass_est'].append(est_model['mass'])
-        # Extract True Mass manually based on logic above or introspection?
-        # Introspection of PyGhostModel is hard (no getter exposed for specific param in step?).
-        # We know the logic.
-        if name == "Payload Drop":
-            history['mass_true'].append(0.5 if t >= 2.0 else 1.0)
-        else:
-            history['mass_true'].append(1.0)
+        history['mass_true'].append(real_model.mass)
+        history['wind_true_x'].append(real_model.wind_x)
+        history['thrust_coeff_true'].append(real_model.thrust_coeff)
 
         history['thrust_cmd'].append(action['thrust'])
         history['alt'].append(state['pz'])
@@ -207,6 +220,49 @@ def plot_blind_dive(hist):
     plt.savefig("validation_blind_dive.png")
     print("Saved validation_blind_dive.png")
 
+def plot_wind_gusts(hist):
+    fig, ax1 = plt.subplots(figsize=(10, 5))
+
+    ax1.set_xlabel('Time (s)')
+    ax1.set_ylabel('Position X (m)', color='tab:blue')
+    ax1.plot(hist['t'], hist['pos_x'], color='tab:blue', label='Pos X')
+    ax1.plot(hist['t'], hist['target_x'], 'r--', label='Target X')
+    ax1.tick_params(axis='y', labelcolor='tab:blue')
+    ax1.legend(loc='upper left')
+
+    ax2 = ax1.twinx()
+    ax2.set_ylabel('Wind X (m/s)', color='gray')
+    ax2.plot(hist['t'], hist['wind_true_x'], color='gray', linestyle='--', label='True Wind')
+    ax2.tick_params(axis='y', labelcolor='gray')
+    ax2.legend(loc='upper right')
+
+    plt.title("Scenario D: Wind Gusts (Position Holding)")
+    fig.tight_layout()
+    plt.savefig("validation_wind_gusts.png")
+    print("Saved validation_wind_gusts.png")
+
+def plot_sudden_motor_failure(hist):
+    fig, ax1 = plt.subplots(figsize=(10, 5))
+
+    ax1.set_xlabel('Time (s)')
+    ax1.set_ylabel('Altitude (m)', color='tab:blue')
+    ax1.plot(hist['t'], hist['alt'], color='tab:blue', label='Altitude')
+    ax1.tick_params(axis='y', labelcolor='tab:blue')
+    ax1.set_ylim(0, 15)
+
+    ax2 = ax1.twinx()
+    ax2.set_ylabel('Thrust Coeff / Cmd', color='tab:red')
+    ax2.plot(hist['t'], hist['thrust_coeff_true'], color='tab:red', linestyle='--', label='True Coeff')
+    ax2.plot(hist['t'], hist['thrust_cmd'], color='tab:green', linestyle=':', label='Command')
+    ax2.tick_params(axis='y', labelcolor='tab:red')
+    ax2.set_ylim(0, 1.5)
+    ax2.legend(loc='center right')
+
+    plt.title("Scenario E: Sudden Motor Failure")
+    fig.tight_layout()
+    plt.savefig("validation_sudden_motor_failure.png")
+    print("Saved validation_sudden_motor_failure.png")
+
 def main():
     # Test A: Payload Drop
     hist_a = run_scenario("Payload Drop", duration_sec=5.0)
@@ -220,6 +276,14 @@ def main():
     # Test C: Blind Dive
     hist_c = run_scenario("Blind Dive", duration_sec=5.0)
     plot_blind_dive(hist_c)
+
+    # Test D: Wind Gusts
+    hist_d = run_scenario("Wind Gusts", duration_sec=6.0)
+    plot_wind_gusts(hist_d)
+
+    # Test E: Sudden Motor Failure
+    hist_e = run_scenario("Sudden Motor Failure", duration_sec=5.0)
+    plot_sudden_motor_failure(hist_e)
 
     # Dashboard Elements (Ghost Wars)
     # Plot probability evolution for Test A
