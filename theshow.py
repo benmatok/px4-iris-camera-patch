@@ -7,7 +7,7 @@ import cv2
 import json
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
@@ -284,6 +284,21 @@ except:
 async def lifespan(app: FastAPI):
     # Startup
     logger.info("Lifespan Startup...")
+
+    # Path Diagnostics
+    cwd = os.getcwd()
+    logger.info(f"CWD: {cwd}")
+
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    web_dir = os.path.join(current_dir, "web")
+    logger.info(f"Web Dir Path: {web_dir}")
+
+    if os.path.isdir(web_dir):
+        files = os.listdir(web_dir)
+        logger.info(f"Web Dir Contents: {files}")
+    else:
+        logger.error("Web Dir DOES NOT EXIST")
+
     loop_task = asyncio.create_task(the_show.control_loop())
     yield
     # Shutdown
@@ -295,6 +310,14 @@ async def lifespan(app: FastAPI):
         pass
 
 app = FastAPI(lifespan=lifespan)
+
+# Request Logger Middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logger.info(f"Request: {request.method} {request.url}")
+    response = await call_next(request)
+    logger.info(f"Response: {response.status_code}")
+    return response
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -310,14 +333,8 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 web_dir = os.path.join(current_dir, "web")
 
 if os.path.isdir(web_dir):
-    logger.info(f"Serving web content from {web_dir}")
-
-    # Explicit route for root to ensure index.html is served
-    @app.get("/")
-    async def read_index():
-        return FileResponse(os.path.join(web_dir, "index.html"))
-
-    # Mount static files at root for other assets (main.js, etc)
+    logger.info(f"Mounting {web_dir} to /")
+    # Mount root with html=True to serve index.html
     app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")
 else:
     logger.warning(f"Warning: 'web' directory not found at {web_dir}. Static files will not be served.")
