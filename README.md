@@ -124,6 +124,16 @@ The simulation is built on a custom **Cython-optimized** engine (`drone_env/`) f
 
 The `theshow.py` script demonstrates the Ghost-DPC control algorithm performing a full homing mission (Takeoff -> Scan -> Homing -> Land). It supports multiple operating modes to facilitate testing, benchmarking, and real-world deployment.
 
+### Running the Demo (Web Server)
+
+To start the web-based simulation server (fixing potential startup errors):
+
+```bash
+./run_server.sh
+```
+
+This script will set up the environment, compile the required physics extensions, and launch the server at `http://localhost:8080`.
+
 ### Modes
 
 1.  **Real Mode (Default)**: Connects to a PX4/MAVSDK drone (real or SITL Gazebo).
