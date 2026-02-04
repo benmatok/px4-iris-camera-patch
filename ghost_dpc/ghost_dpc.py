@@ -516,7 +516,7 @@ class PyGhostEstimator:
 class PyDPCSolver:
     def __init__(self, horizon=20):
         self.horizon = horizon
-        self.iterations = 10
+        self.iterations = 30
         self.learning_rate = 0.05
 
     def solve(self, state_dict, target_pos, initial_action_dict, models_list, weights_list, dt):
@@ -583,6 +583,12 @@ class PyDPCSolver:
                     dL_dS[0] += dL_dP[0]
                     dL_dS[1] += dL_dP[1]
                     dL_dS[2] += dL_dP[2] + dL_dPz_alt
+
+                    # Velocity Damping (dL/dV = 0.1 * V)
+                    # Helps prevent overshoot in long dives
+                    dL_dS[3] += 0.1 * next_state['vx']
+                    dL_dS[4] += 0.1 * next_state['vy']
+                    dL_dS[5] += 0.1 * next_state['vz']
 
                     # Rate Penalty
                     dL_dU_rate = np.zeros(4, dtype=np.float32)

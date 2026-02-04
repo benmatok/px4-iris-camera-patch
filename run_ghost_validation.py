@@ -57,13 +57,13 @@ class GhostController:
 
         # Hypothesis 2: Headwind/Crosswind A
         m2 = base.copy()
-        m2['wind_x'] = 5.0 # Unmodeled wind
+        m2['wind_x'] = 10.0 # Unmodeled wind (Widened to +/- 10)
         solver_models.append(m2)
         solver_weights.append(0.2)
 
         # Hypothesis 3: Headwind/Crosswind B
         m3 = base.copy()
-        m3['wind_x'] = -5.0
+        m3['wind_x'] = -10.0
         solver_models.append(m3)
         solver_weights.append(0.1)
 
@@ -317,8 +317,19 @@ def main():
     plot_dying_battery(hist_b)
 
     # Test C: Blind Dive
-    hist_c = run_scenario("Blind Dive", duration_sec=5.0)
+    hist_c = run_scenario("Blind Dive", duration_sec=10.0)
     plot_blind_dive(hist_c)
+
+    # Analysis Blind Dive
+    final_px = hist_c['pos_x'][-1]
+    final_py = hist_c['pos_y'][-1]
+    final_pz = hist_c['alt'][-1]
+    tx = hist_c['target_x'][-1]
+    ty = hist_c['target_y'][-1]
+    tz = 0.0 # Target Z is 0.0 in Blind Dive
+    dist = np.sqrt((final_px-tx)**2 + (final_py-ty)**2 + (final_pz-tz)**2)
+    print(f"Blind Dive Final Pos: ({final_px:.2f}, {final_py:.2f}, {final_pz:.2f})")
+    print(f"Blind Dive Final Distance: {dist:.2f}m")
 
     # Test D: Wind Gusts
     hist_d = run_scenario("Wind Gusts", duration_sec=6.0)
