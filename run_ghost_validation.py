@@ -139,17 +139,17 @@ def run_scenario(name, duration_sec=5.0):
             target_pos = [0.0, 0.0, 10.0]
 
         elif name == "Blind Dive":
-            # Target 45 deg down.
-            # Start High (50m). Target at (50, 0, 10). Safety First.
-            # User request: "For this test reduce wind to 0"
+            # High Altitude Dive (Height 100m, Dist 50m).
+            # Start High (100m). Target at (50, 0, 0).
+            # User request: "assume height 40-150, distance 20-150"
             real_model = PyGhostModel(mass=1.0, drag=0.1, thrust_coeff=1.0, wind_y=0.0)
-            target_pos = [50.0, 0.0, 10.0]
-            # Override Initial State in run_scenario?
-            # run_scenario inits at (0,0,10). We need to change that.
-            # We'll handle it by teleporting if t==0.
+            target_pos = [50.0, 0.0, 0.0]
+            # Override Initial State in run_scenario
             if t == 0:
-                state['pz'] = 50.0
-                state['px'] = 50.0 # Align X to drop vertically
+                state['pz'] = 100.0
+                state['px'] = 0.0
+                # At (0,0,100) looking at (50,0,0). Angle ~26 deg from down.
+                # Standard FOV covers this.
 
         elif name == "Wind Gusts":
             # 0-2s: 0 wind. 2-4s: 8.0 wind_x. 4-6s: 0 wind.
@@ -247,16 +247,40 @@ def plot_dying_battery(hist):
     print("Saved validation_dying_battery.png")
 
 def plot_blind_dive(hist):
-    plt.figure(figsize=(8, 8))
-    plt.plot(hist['pos_x'], hist['pos_y'], 'b-', label='Drone Path')
-    plt.plot(hist['target_x'][0], hist['target_y'][0], 'rx', label='Target') # Stationary target?
-    # In Blind Dive, target is fixed at (10, 0, 0).
-    plt.title("Scenario C: Blind Dive (Top View - Wind Compensation)")
-    plt.xlabel("X (m)")
-    plt.ylabel("Y (m)")
-    plt.legend()
-    plt.grid(True)
-    plt.axis('equal')
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+
+    # Subplot 1: Top Down View (X-Y)
+    ax1.plot(hist['pos_x'], hist['pos_y'], 'b-', label='Drone Path')
+    ax1.plot(hist['target_x'][0], hist['target_y'][0], 'rx', markersize=10, label='Target (XY)')
+    ax1.set_title("Top View (X-Y)")
+    ax1.set_xlabel("X (m)")
+    ax1.set_ylabel("Y (m)")
+    ax1.legend()
+    ax1.grid(True)
+    ax1.axis('equal')
+
+    # Subplot 2: Side View (Time vs Altitude Z, or X vs Z)
+    # Let's do Trajectory Side View (X vs Z) to see the dive profile
+    ax2.plot(hist['pos_x'], hist['alt'], 'b-', label='Drone Path')
+    ax2.plot(hist['target_x'][0], hist['target_y'][0], 'rx', markersize=10, label='Target Z=0')
+
+    # Mark start and end
+    ax2.plot(hist['pos_x'][0], hist['alt'][0], 'go', label='Start')
+    ax2.plot(hist['pos_x'][-1], hist['alt'][-1], 'ro', label='End')
+
+    ax2.set_title("Side View (X-Z Trajectory)")
+    ax2.set_xlabel("X (m)")
+    ax2.set_ylabel("Altitude Z (m)")
+    ax2.legend()
+    ax2.grid(True)
+    # Invert Y axis? Z is Up in ENU?
+    # run_scenario uses pz=10. G=-9.81.
+    # PyGhostModel: az = ... - G. If G=9.81, -9.81 is down.
+    # Usually Z is Up. So higher Z is higher altitude.
+    # We don't invert Y axis for Altitude.
+
+    plt.suptitle("Scenario C: Blind Dive (Top & Side Views)")
+    plt.tight_layout()
     plt.savefig("validation_blind_dive.png")
     print("Saved validation_blind_dive.png")
 
