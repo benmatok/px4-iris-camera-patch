@@ -28,6 +28,21 @@ except ImportError as e:
 # Constants
 DT = 0.05
 
+class ResidualLogger:
+    def __init__(self, filename="residuals.csv"):
+        self.f = open(filename, "w")
+        self.f.write("time,type,dx,dy,dz,dvx,dvy,dvz,pred_pz,act_pz\n")
+
+    def log(self, t, p_type, pred, act):
+        dx = pred['px'] - act['px']
+        dy = pred['py'] - act['py']
+        dz = pred['pz'] - act['pz']
+        dvx = pred['vx'] - act['vx']
+        dvy = pred['vy'] - act['vy']
+        dvz = pred['vz'] - act['vz']
+        self.f.write(f"{t:.3f},{p_type},{dx:.3f},{dy:.3f},{dz:.3f},{dvx:.3f},{dvy:.3f},{dvz:.3f},{pred['pz']:.3f},{act['pz']:.3f}\n")
+        self.f.flush()
+
 class TheShow:
     def __init__(self):
         try:
@@ -51,6 +66,7 @@ class TheShow:
 
             self.loops = 0
             self.prediction_history = []
+            self.logger = ResidualLogger()
             self.websockets = set()
             logger.info("TheShow initialized successfully.")
         except Exception as e:
@@ -134,24 +150,40 @@ class TheShow:
         # Prediction Logging
         current_time = self.loops * DT
         if ghost_paths and len(ghost_paths) > 0 and len(ghost_paths[0]) > 0:
-            pred_state = ghost_paths[0][-1]
-            horizon_steps = len(ghost_paths[0])
-            pred_time = current_time + horizon_steps * DT
+            # 1-Step Prediction
+            p1 = ghost_paths[0][0]
             self.prediction_history.append({
-                'time': pred_time,
-                'state': pred_state,
-                'target_used': dpc_target
+                'time': current_time + DT,
+                'state': p1,
+                'target_used': dpc_target,
+                'type': 'step1'
             })
 
-        # Error Calculation
+            # Horizon Prediction
+            ph = ghost_paths[0][-1]
+            horizon_steps = len(ghost_paths[0])
+            self.prediction_history.append({
+                'time': current_time + horizon_steps * DT,
+                'state': ph,
+                'target_used': dpc_target,
+                'type': 'horizon'
+            })
+
+        # Process Mature Predictions
         dpc_error = {}
         valid_preds = [p for p in self.prediction_history if p['time'] <= current_time]
-        if valid_preds:
-            # Use the latest valid prediction
-            p = valid_preds[-1]
 
-            # Remove processed/old predictions
-            self.prediction_history = [x for x in self.prediction_history if x['time'] > current_time]
+        # Log all valid predictions
+        for p in valid_preds:
+            self.logger.log(current_time, p['type'], p['state'], s)
+
+        # Remove processed predictions from history
+        self.prediction_history = [x for x in self.prediction_history if x['time'] > current_time]
+
+        # Calc Frontend Error (Horizon Only)
+        horizon_preds = [p for p in valid_preds if p['type'] == 'horizon']
+        if horizon_preds:
+            p = horizon_preds[-1]
 
             pred_s = p['state']
             act_s = dpc_state_ned
