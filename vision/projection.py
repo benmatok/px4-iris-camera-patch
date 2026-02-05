@@ -173,3 +173,69 @@ class Projector:
         v = (yc / zc) * self.fy + self.cy
 
         return (u, v)
+
+    def project_point_with_size(self, x, y, z, drone_state, object_radius=0.5):
+        """
+        Projects a world point to camera pixel coordinates and estimates projected radius.
+        Args:
+            x, y, z: World coordinates
+            drone_state: dict with keys 'px', 'py', 'pz', 'roll', 'pitch', 'yaw'
+            object_radius: Radius of the object in world units (meters)
+        Returns:
+            (u, v, projected_radius_pixels): Pixel coordinates and radius
+            Returns None if point is behind camera.
+        """
+        # 1. World to Body
+        # P_b = R_b2w.T @ (P_w - P_drone)
+
+        roll = drone_state['roll']
+        pitch = drone_state['pitch']
+        yaw = drone_state['yaw']
+
+        cphi, sphi = np.cos(roll), np.sin(roll)
+        ctheta, stheta = np.cos(pitch), np.sin(pitch)
+        cpsi, spsi = np.cos(yaw), np.sin(yaw)
+
+        # R_b2w construction
+        r11 = ctheta * cpsi
+        r12 = cpsi * sphi * stheta - cphi * spsi
+        r13 = sphi * spsi + cphi * cpsi * stheta
+
+        r21 = ctheta * spsi
+        r22 = cphi * cpsi + sphi * spsi * stheta
+        r23 = cphi * spsi * stheta - cpsi * sphi
+
+        r31 = -stheta
+        r32 = ctheta * sphi
+        r33 = cphi * ctheta
+
+        R_b2w = np.array([
+            [r11, r12, r13],
+            [r21, r22, r23],
+            [r31, r32, r33]
+        ])
+
+        p_w = np.array([x, y, z])
+        p_drone = np.array([drone_state['px'], drone_state['py'], drone_state['pz']])
+
+        vec_w = p_w - p_drone
+        vec_b = R_b2w.T @ vec_w
+
+        # 2. Body to Camera
+        # P_c = R_c2b.T @ P_b
+        # self.R_c2b is C to B. So we need transpose.
+        vec_c = self.R_c2b.T @ vec_b
+
+        # 3. Project to Pixel
+        xc, yc, zc = vec_c
+
+        if zc <= 0:
+            return None # Behind camera or on plane
+
+        u = (xc / zc) * self.fx + self.cx
+        v = (yc / zc) * self.fy + self.cy
+
+        # Projected Radius = (Real Radius / Depth) * fx
+        proj_radius = (object_radius / zc) * self.fx
+
+        return (u, v, proj_radius)
