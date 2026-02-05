@@ -32,10 +32,13 @@ class TheShow:
     def __init__(self):
         try:
             # 1. Initialize Components
-            self.projector = Projector(width=640, height=480, fov_deg=110.0, tilt_deg=30.0)
+            # Tilt -45.0 (Down) to see ground targets
+            self.projector = Projector(width=640, height=480, fov_deg=110.0, tilt_deg=-45.0)
 
             # Scenario / Sim
             self.sim = SimDroneInterface(self.projector)
+            self.sim.reset_to_scenario("Blind Dive") # Init Blind Dive
+            self.target_pos_sim_world = [50.0, 0.0, 0.0] # Blind Dive Target
 
             # Perception
             self.tracker = VisualTracker(self.projector)
@@ -47,6 +50,7 @@ class TheShow:
             self.controller = DPCFlightController(dt=DT)
 
             self.loops = 0
+            self.prediction_history = []
             self.websockets = set()
             logger.info("TheShow initialized successfully.")
         except Exception as e:
@@ -62,7 +66,18 @@ class TheShow:
 
     async def broadcast(self, data):
         if not self.websockets: return
-        msg = json.dumps(data)
+
+        class NumpyEncoder(json.JSONEncoder):
+            def default(self, obj):
+                if isinstance(obj, np.integer):
+                    return int(obj)
+                if isinstance(obj, np.floating):
+                    return float(obj)
+                if isinstance(obj, np.ndarray):
+                    return obj.tolist()
+                return super(NumpyEncoder, self).default(obj)
+
+        msg = json.dumps(data, cls=NumpyEncoder)
         for ws in list(self.websockets):
             try:
                 await ws.send_text(msg)
@@ -74,7 +89,7 @@ class TheShow:
         Runs one iteration of the control loop using the modular architecture.
         """
         # Define Ground Truth Target for Sim (Visualization Only)
-        target_pos_sim_world = [30.0, 30.0, 0.0]
+        target_pos_sim_world = self.target_pos_sim_world
 
         # 1. Get State (Sim Frame)
         s = self.sim.get_state()
@@ -91,23 +106,21 @@ class TheShow:
         }
 
         # Detect and Localize
-        detection_result = self.tracker.process(img, dpc_state_ned)
+        center, target_wp, radius = self.tracker.process(img, dpc_state_ned)
 
         # 3. Update Mission Logic
-        mission_state, dpc_target, extra_yaw = self.mission.update(s, detection_result)
+        mission_state, dpc_target, extra_yaw = self.mission.update(s, (center, target_wp))
 
-        # 4. Compute Control
-        action_out, ghost_paths = self.controller.compute_action(dpc_state_ned, dpc_target, extra_yaw)
+        # 4. Compute Control (Using Z-Up State "s")
+        action_out, ghost_paths = self.controller.compute_action(s, dpc_target, extra_yaw)
 
         # 5. Apply Control to Sim
-        # Convert Control Action (NED Yaw Rate) to Sim Frame (Z-Up Yaw Rate)
-        # NED Yaw = -Sim Yaw. d(NED Yaw)/dt = -d(Sim Yaw)/dt.
-        # So Sim Yaw Rate = -NED Yaw Rate.
+        # Controller (Z-Up) -> Sim (Z-Up)
         sim_action = np.array([
             action_out['thrust'],
             action_out['roll_rate'],
             action_out['pitch_rate'],
-            -action_out['yaw_rate']
+            action_out['yaw_rate']
         ])
 
         # Special Launch Kick (Legacy Logic preserved? Or allow controller to handle?)
@@ -118,11 +131,79 @@ class TheShow:
 
         self.sim.step(sim_action)
 
+        # Prediction Logging
+        current_time = self.loops * DT
+        if ghost_paths and len(ghost_paths) > 0 and len(ghost_paths[0]) > 0:
+            pred_state = ghost_paths[0][-1]
+            horizon_steps = len(ghost_paths[0])
+            pred_time = current_time + horizon_steps * DT
+            self.prediction_history.append({
+                'time': pred_time,
+                'state': pred_state,
+                'target_used': dpc_target
+            })
+
+        # Error Calculation
+        dpc_error = {}
+        valid_preds = [p for p in self.prediction_history if p['time'] <= current_time]
+        if valid_preds:
+            # Use the latest valid prediction
+            p = valid_preds[-1]
+
+            # Remove processed/old predictions
+            self.prediction_history = [x for x in self.prediction_history if x['time'] > current_time]
+
+            pred_s = p['state']
+            act_s = dpc_state_ned
+
+            # 1. Height Error (Altitude)
+            # pred_s is Z-Up. act_s is NED.
+            pred_alt = pred_s['pz']
+            act_alt = -act_s['pz']
+            height_err = pred_alt - act_alt
+
+            # 2. Projection Error
+            # Convert pred_s (Z-Up) to NED for Projector
+            pred_s_ned = {
+                'px': pred_s['px'], 'py': pred_s['py'], 'pz': -pred_s['pz'],
+                'vx': pred_s['vx'], 'vy': pred_s['vy'], 'vz': -pred_s['vz'],
+                'roll': pred_s['roll'], 'pitch': pred_s['pitch'], 'yaw': -pred_s['yaw']
+            }
+
+            tgt_used = p['target_used']
+            tx, ty, tz = tgt_used
+
+            pred_u, pred_v, pred_rad = 0, 0, 0
+            res = self.projector.project_point_with_size(tx, ty, tz, pred_s_ned, object_radius=0.5)
+            if res:
+                pred_u, pred_v, pred_rad = res
+
+            # Actual Measured
+            act_u, act_v, act_rad = 0, 0, 0
+            if center:
+                act_u, act_v = center
+                act_rad = radius
+
+            u_err = pred_u - act_u
+            v_err = pred_v - act_v
+            size_err = pred_rad - act_rad
+
+            dpc_error = {
+                'height_error': round(height_err, 2),
+                'u_error': round(u_err, 1),
+                'v_error': round(v_err, 1),
+                'size_error': round(size_err, 1),
+                'pred_time': round(p['time'], 2)
+            }
+
         # 6. Prepare Payload
         payload = {
             'state': mission_state,
             'drone': dpc_state_ned,
             'target': dpc_target,
+            'sim_target': target_pos_sim_world,
+            'tracker': {'u': center[0] if center else 0, 'v': center[1] if center else 0, 'size': radius},
+            'dpc_error': dpc_error,
             'ghosts': ghost_paths
         }
         return payload

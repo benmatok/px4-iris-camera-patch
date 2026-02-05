@@ -19,11 +19,16 @@ class VisualTracker:
         Returns:
             center_pixel: (u, v) or None
             target_world_pos: [x, y, z] or None
+            radius: float (pixels) or 0.0
         """
         if image is None:
-            return None, None
+            return None, None, 0.0
 
-        center, _, _ = self.detector.detect(image)
+        center, area, _ = self.detector.detect(image)
+        radius = 0.0
+        if area > 0:
+            import math
+            radius = math.sqrt(area / math.pi)
 
         target_world_pos = None
         if center:
@@ -31,4 +36,4 @@ class VisualTracker:
             # The original logic used projector.pixel_to_world
             target_world_pos = self.projector.pixel_to_world(center[0], center[1], drone_state_ned)
 
-        return center, target_world_pos
+        return center, target_world_pos, radius

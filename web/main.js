@@ -54,6 +54,11 @@ const targetMat = new THREE.MeshPhongMaterial({ color: 0xff0000 });
 const target = new THREE.Mesh(targetGeo, targetMat);
 scene.add(target);
 
+// Actual Target Mesh (Green)
+const simTargetMat = new THREE.MeshPhongMaterial({ color: 0x00ff00, transparent: true, opacity: 0.5 });
+const simTarget = new THREE.Mesh(targetGeo, simTargetMat);
+scene.add(simTarget);
+
 // Ghosts
 const ghostGroup = new THREE.Group();
 scene.add(ghostGroup);
@@ -61,6 +66,8 @@ scene.add(ghostGroup);
 // Telemetry UI
 const statusEl = document.getElementById('status');
 const telemEl = document.getElementById('telemetry');
+const hudCanvas = document.getElementById('hud-canvas');
+const ctx = hudCanvas.getContext('2d');
 
 // WebSocket
 const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -122,6 +129,12 @@ function updateState(data) {
         target.position.copy(tPos);
     }
 
+    // Sim Target
+    if (data.sim_target) {
+        const stPos = toThree(data.sim_target);
+        simTarget.position.copy(stPos);
+    }
+
     // Ghosts
     ghostGroup.clear();
     if (data.ghosts) {
@@ -140,11 +153,51 @@ function updateState(data) {
     }
 
     // Telemetry
-    telemEl.innerText = `
-        Alt: ${(-d.pz).toFixed(2)} m
-        State: ${data.state || "N/A"}
+    let errStr = "";
+    if (data.dpc_error && data.dpc_error.height_error !== undefined) {
+         const e = data.dpc_error;
+         errStr = `<br>
+         <span style="color:#faa">Pred Error (T=${e.pred_time}s):</span><br>
+         H: ${e.height_error} m<br>
+         Size: ${e.size_error} px<br>
+         UV: (${e.u_error}, ${e.v_error}) px`;
+    }
+
+    telemEl.innerHTML = `
+        Alt: ${(-d.pz).toFixed(2)} m<br>
+        State: ${data.state || "N/A"}<br>
         Vel: ${d.vx?.toFixed(1) || 0}
+        ${errStr}
     `;
+
+    // HUD
+    // Clear
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, 240, 180);
+
+    // Draw Center Cross
+    ctx.strokeStyle = '#333';
+    ctx.beginPath();
+    ctx.moveTo(120, 0); ctx.lineTo(120, 180);
+    ctx.moveTo(0, 90); ctx.lineTo(240, 90);
+    ctx.stroke();
+
+    // Draw Actual Tracker Blob (Red)
+    if (data.tracker && data.tracker.size > 0) {
+        const u = data.tracker.u;
+        const v = data.tracker.v;
+        const r = data.tracker.size;
+
+        // Scale 640x480 to 240x180 (Scale 0.375)
+        const scale = 240 / 640;
+
+        ctx.beginPath();
+        ctx.arc(u * scale, v * scale, r * scale, 0, 2 * Math.PI);
+        ctx.fillStyle = 'red';
+        ctx.fill();
+        ctx.strokeStyle = 'white';
+        ctx.stroke();
+    }
 }
 
 function animate() {
