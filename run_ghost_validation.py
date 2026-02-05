@@ -149,6 +149,7 @@ def run_scenario(name, duration_sec=5.0):
             # We'll handle it by teleporting if t==0.
             if t == 0:
                 state['pz'] = 50.0
+                state['px'] = 50.0 # Align X to drop vertically
 
         elif name == "Wind Gusts":
             # 0-2s: 0 wind. 2-4s: 8.0 wind_x. 4-6s: 0 wind.
@@ -338,6 +339,7 @@ def main():
     dist = np.sqrt((final_px-tx)**2 + (final_py-ty)**2 + (final_pz-tz)**2)
     min_z = np.min(hist_c['alt'])
     max_z = np.max(hist_c['alt'])
+    avg_thrust = np.mean(hist_c['thrust_cmd'])
     print(f"Blind Dive Final Pos: ({final_px:.2f}, {final_py:.2f}, {final_pz:.2f})")
     print(f"Blind Dive Alt Range: [{min_z:.2f}, {max_z:.2f}]")
     print(f"Blind Dive Final Distance: {dist:.2f}m")

@@ -577,8 +577,10 @@ class PyDPCSolver:
                     target_safe_z = target_pos[2] + 2.0
                     dz_safe = next_state['pz'] - target_safe_z
 
-                    # Linear Cost
-                    dL_dPz_alt = 20.0 * dz_safe
+                    # Linear Cost (Clipped to prevent overriding safety)
+                    # Clip dz_safe effect to +/- 10m equivalent (200.0)
+                    clipped_dz = max(-10.0, min(10.0, dz_safe))
+                    dL_dPz_alt = 20.0 * clipped_dz
 
                     # TTC Barrier (Scale Less)
                     # tau = dz / -vz. Cost = 1/tau.
@@ -615,6 +617,18 @@ class PyDPCSolver:
                     dL_dS[4] += 2.0 * next_state['vy']
                     dL_dS[5] += 2.0 * next_state['vz'] + dL_dVz_ttc
 
+                    # --- Descent Velocity Constraint ---
+                    # Penalize if vz < -safe_descent_rate (ENU: Up is +Z, Falling is -Vz)
+                    # Cost = w * ReLU(-vz - limit)^2
+                    # dCost/dVz = 2 * w * ReLU(-vz - limit) * (-1)
+                    safe_limit = 8.0 # m/s
+                    w_vel_limit = 5000.0 # Dominant penalty
+
+                    violation = (-next_state['vz']) - safe_limit
+                    if violation > 0:
+                         # dL/dVz = -2 * w * violation
+                         dL_dS[5] += -2.0 * w_vel_limit * violation
+
                     # Rate Penalty
                     dL_dU_rate = np.zeros(4, dtype=np.float32)
                     dL_dU_rate[1] = 0.2 * current_action['roll_rate']
@@ -631,13 +645,16 @@ class PyDPCSolver:
                     state = next_state
                     G_mat = G_next
 
+            # Gradient Clipping to prevent oscillation
+            total_grad = np.clip(total_grad, -10.0, 10.0)
+
             # Update Action
             current_action['thrust'] -= self.learning_rate * total_grad[0]
             current_action['roll_rate'] -= self.learning_rate * total_grad[1]
             current_action['pitch_rate'] -= self.learning_rate * total_grad[2]
             current_action['yaw_rate'] -= self.learning_rate * total_grad[3]
 
-        # Final Clamp
-        current_action['thrust'] = max(0.0, min(1.0, current_action['thrust']))
+            # Clamp Inside Loop to prevent explosion
+            current_action['thrust'] = max(0.0, min(1.0, current_action['thrust']))
 
         return current_action
