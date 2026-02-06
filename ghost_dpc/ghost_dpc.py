@@ -497,6 +497,83 @@ class PyGhostEstimator:
             # Gated Update: new = old + score * (raw - old)
             self.stable_params[k] += score * (raw_est[k] - self.stable_params[k])
 
+        # 4. Adaptive Gradient Step (Direct Error Minimization)
+        # Re-compute predicted acceleration with current stable_params
+        s_m = self.stable_params['mass']
+        s_d = self.stable_params['drag_coeff']
+        s_t = self.stable_params['thrust_coeff']
+        s_wx = self.stable_params['wind_x']
+        s_wy = self.stable_params['wind_y']
+
+        # Forces
+        thrust = action_dict['thrust']
+        max_thrust = 20.0 * s_t # MAX_THRUST_BASE hardcoded
+        thrust_force = max(0.0, thrust * max_thrust)
+
+        # Attitude
+        roll, pitch, yaw = state_dict['roll'], state_dict['pitch'], state_dict['yaw']
+        cr = math.cos(roll); sr = math.sin(roll)
+        cp = math.cos(pitch); sp = math.sin(pitch)
+        cy = math.cos(yaw); sy = math.sin(yaw)
+
+        # Directions
+        ax_dir = cy * sp * cr + sy * sr
+        ay_dir = sy * sp * cr - cy * sr
+        az_dir = cp * cr
+
+        # Thrust Accel
+        ax_th = thrust_force * ax_dir / s_m
+        ay_th = thrust_force * ay_dir / s_m
+        az_th = thrust_force * az_dir / s_m
+
+        # Drag Accel
+        vx_rel = state_dict['vx'] - s_wx
+        vy_rel = state_dict['vy'] - s_wy
+        vz = state_dict['vz']
+
+        ax_drag = -s_d * vx_rel
+        ay_drag = -s_d * vy_rel
+        az_drag = -s_d * vz
+
+        # Total Pred
+        pred_ax = ax_th + ax_drag
+        pred_ay = ay_th + ay_drag
+        pred_az = az_th + az_drag - 9.81
+
+        # Error
+        ex = meas_ax - pred_ax
+        ey = meas_ay - pred_ay
+        ez = meas_az - pred_az
+
+        # Gradients & Updates
+        # Cost J = e^2. dJ/dParam = -2 * e * da/dParam
+
+        # 1. Wind (da/dw = Cd)
+        # da_x/dw_x = Cd. da_y/dw_y = Cd.
+        grad_wx = -2.0 * ex * s_d
+        grad_wy = -2.0 * ey * s_d
+
+        lr_wind = 0.1
+        self.stable_params['wind_x'] -= lr_wind * grad_wx
+        self.stable_params['wind_y'] -= lr_wind * grad_wy
+        self.stable_params['wind_x'] = max(-20.0, min(20.0, self.stable_params['wind_x']))
+        self.stable_params['wind_y'] = max(-20.0, min(20.0, self.stable_params['wind_y']))
+
+        # 2. Drag Coeff (da/dCd = -(v-w))
+        grad_drag = -2.0 * (ex * (-vx_rel) + ey * (-vy_rel) + ez * (-vz))
+
+        lr_drag = 0.0001 # Sensitive
+        self.stable_params['drag_coeff'] -= lr_drag * grad_drag
+        self.stable_params['drag_coeff'] = max(0.01, min(2.0, self.stable_params['drag_coeff']))
+
+        # 3. Mass (da/dm = -a_thrust / m)
+        # da/dm = - (F/m) / m = -a_th / m
+        grad_mass = -2.0 * (ex * (-ax_th/s_m) + ey * (-ay_th/s_m) + ez * (-az_th/s_m))
+
+        lr_mass = 0.001
+        self.stable_params['mass'] -= lr_mass * grad_mass
+        self.stable_params['mass'] = max(0.1, min(5.0, self.stable_params['mass']))
+
         # 4. History
         self.history['raw_estimates'].append(raw_est)
         self.history['observability_scores'].append(self.observability_scores.copy())
