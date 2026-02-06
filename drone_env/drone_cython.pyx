@@ -56,6 +56,7 @@ cdef void _step_agent_scalar(
     float[:] pos_x, float[:] pos_y, float[:] pos_z,
     float[:] vel_x, float[:] vel_y, float[:] vel_z,
     float[:] roll, float[:] pitch, float[:] yaw,
+    float[:] ang_vel_x, float[:] ang_vel_y, float[:] ang_vel_z,
     float[:] masses, float[:] drag_coeffs, float[:] thrust_coeffs,
     float[:] target_vx, float[:] target_vy, float[:] target_vz, float[:] target_yaw_rate,
     float[:] vt_x, float[:] vt_y, float[:] vt_z,
@@ -77,6 +78,7 @@ cdef void _step_agent_scalar(
     cdef float g = 9.81
 
     cdef float px, py, pz, vx, vy, vz, r, p, y_ang
+    cdef float wx, wy, wz
     cdef float thrust_cmd, roll_rate_cmd, pitch_rate_cmd, yaw_rate_cmd
     cdef float mass, drag, thrust_coeff
     cdef float tvx, tvy, tvz, tyr
@@ -107,6 +109,9 @@ cdef void _step_agent_scalar(
     r = roll[i]
     p = pitch[i]
     y_ang = yaw[i]
+    wx = ang_vel_x[i]
+    wy = ang_vel_y[i]
+    wz = ang_vel_z[i]
 
     mass = masses[i]
     drag = drag_coeffs[i]
@@ -153,6 +158,7 @@ cdef void _step_agent_scalar(
             pos_x, pos_y, pos_z,
             vel_x, vel_y, vel_z,
             roll, pitch, yaw,
+            ang_vel_x, ang_vel_y, ang_vel_z,
             masses, drag_coeffs, thrust_coeffs,
             target_vx, target_vy, target_vz, target_yaw_rate,
             vt_x, vt_y, vt_z,
@@ -173,17 +179,47 @@ cdef void _step_agent_scalar(
         r = roll[i]
         p = pitch[i]
         y_ang = yaw[i]
+        wx = ang_vel_x[i]
+        wy = ang_vel_y[i]
+        wz = ang_vel_z[i]
 
         mass = masses[i]
         drag = drag_coeffs[i]
         thrust_coeff = thrust_coeffs[i]
 
     # Substeps (Physics Update)
+    cdef float tau = 0.1
+    cdef float sp_k, cp_k, tt_k, st_k
+    cdef float r_dot, p_dot, y_dot
+
     for s in range(substeps):
-        # 1. Dynamics
-        r += roll_rate_cmd * dt
-        p += pitch_rate_cmd * dt
-        y_ang += yaw_rate_cmd * dt
+        # 1. Dynamics (Lag)
+        wx += (roll_rate_cmd - wx) * (dt / tau)
+        wy += (pitch_rate_cmd - wy) * (dt / tau)
+        wz += (yaw_rate_cmd - wz) * (dt / tau)
+
+        # Kinematics
+        sincosf(r, &sp_k, &cp_k) # Wait, sp_k is sin(r) here? name confusion.
+        # Let's use clean names
+        # sp, cp used for pitch. sr, cr used for roll.
+        # Redo sincos for kinematics
+        sincosf(r, &sr, &cr) # roll
+        sincosf(p, &sp, &cp) # pitch
+
+        # Avoid singularity
+        if cp < 1e-6 and cp > -1e-6:
+             cp = 1e-6
+
+        tt_k = sp / cp # tan(theta)
+        st_k = 1.0 / cp # sec(theta)
+
+        r_dot = wx + wy * sr * tt_k + wz * cr * tt_k
+        p_dot = wy * cr - wz * sr
+        y_dot = (wy * sr + wz * cr) * st_k
+
+        r += r_dot * dt
+        p += p_dot * dt
+        y_ang += y_dot * dt
 
         max_thrust = 20.0 * thrust_coeff
         # Thrust Clipping
@@ -245,6 +281,9 @@ cdef void _step_agent_scalar(
     roll[i] = r
     pitch[i] = p
     yaw[i] = y_ang
+    ang_vel_x[i] = wx
+    ang_vel_y[i] = wy
+    ang_vel_z[i] = wz
 
     # Pos History: (episode_length, num_agents, 3)
     if t <= episode_length:
@@ -453,6 +492,7 @@ def step_cython(
     float[:] pos_x, float[:] pos_y, float[:] pos_z,
     float[:] vel_x, float[:] vel_y, float[:] vel_z,
     float[:] roll, float[:] pitch, float[:] yaw,
+    float[:] ang_vel_x, float[:] ang_vel_y, float[:] ang_vel_z,
     float[:] masses, float[:] drag_coeffs, float[:] thrust_coeffs,
     float[:] target_vx, float[:] target_vy, float[:] target_vz, float[:] target_yaw_rate,
     float[:] vt_x, float[:] vt_y, float[:] vt_z,
@@ -489,6 +529,7 @@ def step_cython(
                 pos_x, pos_y, pos_z,
                 vel_x, vel_y, vel_z,
                 roll, pitch, yaw,
+                ang_vel_x, ang_vel_y, ang_vel_z,
                 masses, drag_coeffs, thrust_coeffs,
                 target_vx, target_vy, target_vz, target_yaw_rate,
                 vt_x, vt_y, vt_z,
@@ -502,35 +543,14 @@ def step_cython(
              step_counts[i] = 0
 
     with nogil:
-        # AVX Loop (stride 8)
-        for i in prange(0, limit_avx, 8):
-            step_agents_avx2(
-                i,
-                &pos_x[0], &pos_y[0], &pos_z[0],
-                &vel_x[0], &vel_y[0], &vel_z[0],
-                &roll[0], &pitch[0], &yaw[0],
-                &masses[0], &drag_coeffs[0], &thrust_coeffs[0],
-                &target_vx[0], &target_vy[0], &target_vz[0], &target_yaw_rate[0],
-                &vt_x[0], &vt_y[0], &vt_z[0],
-                &target_trajectory[0,0,0], # Precomputed Trajectory Ptr
-                &pos_history[0,0,0],
-                &observations[0,0],
-                &rewards[0],
-                &reward_components[0,0],
-                &done_flags[0],
-                &actions[0],
-                episode_length,
-                t,
-                num_agents
-            )
-
-        # Scalar Loop for remainder
-        for i in range(limit_avx, num_agents):
+        # Scalar Loop (AVX disabled for new physics)
+        for i in range(num_agents):
             _step_agent_scalar(
                 i,
                 pos_x, pos_y, pos_z,
                 vel_x, vel_y, vel_z,
                 roll, pitch, yaw,
+                ang_vel_x, ang_vel_y, ang_vel_z,
                 masses, drag_coeffs, thrust_coeffs,
                 target_vx, target_vy, target_vz, target_yaw_rate,
                 vt_x, vt_y, vt_z,
@@ -553,6 +573,7 @@ cdef void _reset_agent_scalar_wrapper(
     float[:] pos_x, float[:] pos_y, float[:] pos_z,
     float[:] vel_x, float[:] vel_y, float[:] vel_z,
     float[:] roll, float[:] pitch, float[:] yaw,
+    float[:] ang_vel_x, float[:] ang_vel_y, float[:] ang_vel_z,
     float[:] masses, float[:] drag_coeffs, float[:] thrust_coeffs,
     float[:] target_vx, float[:] target_vy, float[:] target_vz, float[:] target_yaw_rate,
     float[:] vt_x, float[:] vt_y, float[:] vt_z,
@@ -663,6 +684,10 @@ cdef void _reset_agent_scalar_wrapper(
     vel_y[i] = dir_y * speed
     vel_z[i] = 0.0
 
+    ang_vel_x[i] = 0.0
+    ang_vel_y[i] = 0.0
+    ang_vel_z[i] = 0.0
+
     roll[i] = 0.0
 
     yaw[i] = atan2f(dy, dx)
@@ -735,6 +760,7 @@ def reset_cython(
     float[:] pos_x, float[:] pos_y, float[:] pos_z,
     float[:] vel_x, float[:] vel_y, float[:] vel_z,
     float[:] roll, float[:] pitch, float[:] yaw,
+    float[:] ang_vel_x, float[:] ang_vel_y, float[:] ang_vel_z,
     float[:] masses, float[:] drag_coeffs, float[:] thrust_coeffs,
     float[:] target_vx, float[:] target_vy, float[:] target_vz, float[:] target_yaw_rate,
     float[:] vt_x, float[:] vt_y, float[:] vt_z,
@@ -758,6 +784,7 @@ def reset_cython(
                 pos_x, pos_y, pos_z,
                 vel_x, vel_y, vel_z,
                 roll, pitch, yaw,
+                ang_vel_x, ang_vel_y, ang_vel_z,
                 masses, drag_coeffs, thrust_coeffs,
                 target_vx, target_vy, target_vz, target_yaw_rate,
                 vt_x, vt_y, vt_z,

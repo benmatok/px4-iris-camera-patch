@@ -2,12 +2,13 @@ import numpy as np
 import math
 
 class PyGhostModel:
-    def __init__(self, mass, drag, thrust_coeff, wind_x=0.0, wind_y=0.0):
+    def __init__(self, mass, drag, thrust_coeff, wind_x=0.0, wind_y=0.0, tau=0.1):
         self.mass = float(mass)
         self.drag_coeff = float(drag)
         self.thrust_coeff = float(thrust_coeff)
         self.wind_x = float(wind_x)
         self.wind_y = float(wind_y)
+        self.tau = float(tau)
         self.G = 9.81
         self.MAX_THRUST_BASE = 20.0
 
@@ -16,19 +17,43 @@ class PyGhostModel:
         px, py, pz = state_dict['px'], state_dict['py'], state_dict['pz']
         vx, vy, vz = state_dict['vx'], state_dict['vy'], state_dict['vz']
         roll, pitch, yaw = state_dict['roll'], state_dict['pitch'], state_dict['yaw']
+        # Default to 0.0 if not present (initial step)
+        wx = state_dict.get('wx', 0.0)
+        wy = state_dict.get('wy', 0.0)
+        wz = state_dict.get('wz', 0.0)
 
         # Unpack Action
         thrust = action_dict['thrust']
-        roll_rate = action_dict['roll_rate']
-        pitch_rate = action_dict['pitch_rate']
-        yaw_rate = action_dict['yaw_rate']
+        roll_rate_cmd = action_dict['roll_rate']
+        pitch_rate_cmd = action_dict['pitch_rate']
+        yaw_rate_cmd = action_dict['yaw_rate']
 
-        # 1. Update Attitude (Euler Integration)
-        next_roll = roll + roll_rate * dt
-        next_pitch = pitch + pitch_rate * dt
-        next_yaw = yaw + yaw_rate * dt
+        # 1. Update Angular Velocities (Lag Dynamics)
+        # next_w = w + (cmd - w) * (dt/tau)
+        next_wx = wx + (roll_rate_cmd - wx) * (dt / self.tau)
+        next_wy = wy + (pitch_rate_cmd - wy) * (dt / self.tau)
+        next_wz = wz + (yaw_rate_cmd - wz) * (dt / self.tau)
 
-        # 2. Compute Forces based on New Attitude
+        # 2. Update Attitude (Kinematics)
+        sp = math.sin(roll) # wait, roll is phi. Convention: r, p, y.
+        # r->phi, p->theta, y->psi
+        sr = math.sin(roll); cr = math.cos(roll)
+        sp = math.sin(pitch); cp = math.cos(pitch)
+
+        # Avoid singularity
+        if abs(cp) < 1e-6: cp = 1e-6
+        tt = sp / cp
+        st = 1.0 / cp
+
+        r_dot = next_wx + next_wy * sr * tt + next_wz * cr * tt
+        p_dot = next_wy * cr - next_wz * sr
+        y_dot = (next_wy * sr + next_wz * cr) * st
+
+        next_roll = roll + r_dot * dt
+        next_pitch = pitch + p_dot * dt
+        next_yaw = yaw + y_dot * dt
+
+        # 3. Compute Forces based on New Attitude
         max_thrust = self.MAX_THRUST_BASE * self.thrust_coeff
         thrust_force = thrust * max_thrust
         if thrust_force < 0:
@@ -75,25 +100,39 @@ class PyGhostModel:
         return {
             'px': next_px, 'py': next_py, 'pz': next_pz,
             'vx': next_vx, 'vy': next_vy, 'vz': next_vz,
-            'roll': next_roll, 'pitch': next_pitch, 'yaw': next_yaw
+            'roll': next_roll, 'pitch': next_pitch, 'yaw': next_yaw,
+            'wx': next_wx, 'wy': next_wy, 'wz': next_wz
         }
 
     def get_gradients(self, state_dict, action_dict, dt):
         """
-        Returns Jacobian (9x4) and grad_mass (9x1).
-        J rows: px, py, pz, vx, vy, vz, r, p, y
+        Returns Jacobian (12x4) and grad_mass (12x1).
+        J rows: px, py, pz, vx, vy, vz, r, p, y, wx, wy, wz
         J cols: thrust, roll_rate, pitch_rate, yaw_rate
         """
         # Intermediate values
         roll, pitch, yaw = state_dict['roll'], state_dict['pitch'], state_dict['yaw']
         thrust = action_dict['thrust']
-        roll_rate = action_dict['roll_rate']
-        pitch_rate = action_dict['pitch_rate']
-        yaw_rate = action_dict['yaw_rate']
+        # wx, wy, wz from state are not used for computing next attitude BASELINE in gradient
+        # but needed for linearization point.
+        # Actually, J is dState_next / dAction.
 
-        r = roll + roll_rate * dt
-        p = pitch + pitch_rate * dt
-        y = yaw + yaw_rate * dt
+        # Current State
+        r = roll
+        p = pitch
+        y = yaw
+
+        # Next Attitude is affected by Action through Next Angular Velocity
+        # next_w = w + (cmd - w)*dt/tau
+        # next_att = att + att_dot(next_w) * dt
+
+        # Force Direction depends on Next Attitude
+        # For simplification in gradient, we can assume linearization at r,p,y
+        # but technically we should use next_r, next_p
+
+        # Let's approximate Gradient at current attitude for force direction
+        # to avoid complex chain rule of att_next wrt cmd for force direction.
+        # The dominant term for force direction is Attitude.
 
         cr = math.cos(r); sr = math.sin(r)
         cp = math.cos(p); sp = math.sin(p)
@@ -107,10 +146,11 @@ class PyGhostModel:
         D_y = sy * sp * cr - cy * sr
         D_z = cp * cr
 
-        J = np.zeros((9, 4), dtype=np.float32)
+        J = np.zeros((12, 4), dtype=np.float32)
 
         # 1. Derivatives w.r.t THRUST (Column 0)
         # d(Att)/d(Thrust) = 0
+        # d(W)/d(Thrust) = 0
 
         # d(a)/d(Thrust) = (F_max/m) * Direction
         da_dT_x = (max_thrust / self.mass) * D_x
@@ -128,67 +168,50 @@ class PyGhostModel:
         J[2, 0] = J[5, 0] * dt
 
         # 2. Derivatives w.r.t RATES (Columns 1, 2, 3)
-        # d(Att_next)/d(Rate) = dt
-        J[6, 1] = dt
-        J[7, 2] = dt
-        J[8, 3] = dt
+        # d(W_next)/d(Rate_cmd) = dt / tau
+        factor_w = dt / self.tau
+        J[9, 1] = factor_w
+        J[10, 2] = factor_w
+        J[11, 3] = factor_w
 
-        F_m = F / self.mass
+        # d(Att_next)/d(Rate_cmd) = d(Att_next)/d(W_next) * d(W_next)/d(Rate_cmd)
+        # d(Att_next)/d(W_next) = Kinematic_Matrix * dt
+        # Kinematic Matrix K:
+        # [ 1, sr*tt, cr*tt ]
+        # [ 0, cr,    -sr   ]
+        # [ 0, sr*st, cr*st ]
 
-        # Partial derivatives of Directions D_x, D_y, D_z w.r.t r, p, y
-        dDx_dr = cy*sp*(-sr) + sy*cr
-        dDx_dp = cy*cp*cr
-        dDx_dy = -sy*sp*cr + cy*sr
+        # Avoid singularity
+        if abs(cp) < 1e-6: cp = 1e-6
+        tt = sp / cp
+        st = 1.0 / cp
 
-        dDy_dr = sy*sp*(-sr) - cy*cr
-        dDy_dp = sy*cp*cr
-        dDy_dy = cy*sp*cr + sy*sr
+        # d(Roll)/d(Wx)=dt, d(Roll)/d(Wy)=sr*tt*dt, d(Roll)/d(Wz)=cr*tt*dt
+        # Multiplied by factor_w (dt/tau)
 
-        dDz_dr = cp*(-sr)
-        dDz_dp = -sp*cr
-        dDz_dy = 0.0
+        # Col 1 (Roll Rate Cmd -> Wx)
+        J[6, 1] = 1.0 * dt * factor_w
+        J[7, 1] = 0.0
+        J[8, 1] = 0.0
 
-        # Column 1: Roll Rate
-        da_dRr_x = F_m * dDx_dr
-        da_dRr_y = F_m * dDy_dr
-        da_dRr_z = F_m * dDz_dr
+        # Col 2 (Pitch Rate Cmd -> Wy)
+        J[6, 2] = sr * tt * dt * factor_w
+        J[7, 2] = cr * dt * factor_w
+        J[8, 2] = sr * st * dt * factor_w
 
-        J[3, 1] = da_dRr_x * dt * dt
-        J[4, 1] = da_dRr_y * dt * dt
-        J[5, 1] = da_dRr_z * dt * dt
+        # Col 3 (Yaw Rate Cmd -> Wz)
+        J[6, 3] = cr * tt * dt * factor_w
+        J[7, 3] = -sr * dt * factor_w
+        J[8, 3] = cr * st * dt * factor_w
 
-        J[0, 1] = J[3, 1] * dt
-        J[1, 1] = J[4, 1] * dt
-        J[2, 1] = J[5, 1] * dt
-
-        # Column 2: Pitch Rate
-        da_dPr_x = F_m * dDx_dp
-        da_dPr_y = F_m * dDy_dp
-        da_dPr_z = F_m * dDz_dp
-
-        J[3, 2] = da_dPr_x * dt * dt
-        J[4, 2] = da_dPr_y * dt * dt
-        J[5, 2] = da_dPr_z * dt * dt
-
-        J[0, 2] = J[3, 2] * dt
-        J[1, 2] = J[4, 2] * dt
-        J[2, 2] = J[5, 2] * dt
-
-        # Column 3: Yaw Rate
-        da_dYr_x = F_m * dDx_dy
-        da_dYr_y = F_m * dDy_dy
-        da_dYr_z = F_m * dDz_dy
-
-        J[3, 3] = da_dYr_x * dt * dt
-        J[4, 3] = da_dYr_y * dt * dt
-        J[5, 3] = da_dYr_z * dt * dt
-
-        J[0, 3] = J[3, 3] * dt
-        J[1, 3] = J[4, 3] * dt
-        J[2, 3] = J[5, 3] * dt
+        # Effect of Rate Cmd on Position/Velocity via Attitude?
+        # d(Pos)/d(Rate) is roughly 0 for one step, or small (dAtt is small).
+        # Ignoring d(Force)/d(Att) * d(Att)/d(Rate) for single step gradient
+        # as it is higher order (dt^3 or dt^4 effects).
 
         # 3. Derivatives w.r.t MASS
-        grad_mass = np.zeros(9, dtype=np.float32)
+        grad_mass = np.zeros(12, dtype=np.float32)
+        F_m = F / self.mass
         ax_th = F_m * D_x
         ay_th = F_m * D_y
         az_th = F_m * D_z
@@ -259,46 +282,38 @@ class PyGhostModel:
 
     def get_state_jacobian(self, state_dict, action_dict, dt):
         """
-        Returns State Jacobian (9x9)
-        Rows: P(0-2), V(3-5), Att(6-8)
-        Cols: P(0-2), V(3-5), Att(6-8)
+        Returns State Jacobian (12x12)
+        Rows: P(0-2), V(3-5), Att(6-8), W(9-11)
+        Cols: P(0-2), V(3-5), Att(6-8), W(9-11)
         """
-        J_state = np.zeros((9, 9), dtype=np.float32)
+        J_state = np.zeros((12, 12), dtype=np.float32)
 
-        # dAtt'/dAtt = I
-        J_state[6, 6] = 1.0
-        J_state[7, 7] = 1.0
-        J_state[8, 8] = 1.0
+        # 1. dP'/dP = I
+        J_state[0, 0] = 1.0; J_state[1, 1] = 1.0; J_state[2, 2] = 1.0
 
-        # dV'/dV = I * (1 - Cd * dt)
+        # 2. dV'/dV = I * (1 - Cd * dt)
         dv_dv = 1.0 - self.drag_coeff * dt
-        J_state[3, 3] = dv_dv
-        J_state[4, 4] = dv_dv
-        J_state[5, 5] = dv_dv
+        J_state[3, 3] = dv_dv; J_state[4, 4] = dv_dv; J_state[5, 5] = dv_dv
 
-        # dP'/dP = I
-        J_state[0, 0] = 1.0
-        J_state[1, 1] = 1.0
-        J_state[2, 2] = 1.0
+        # 3. dAtt'/dAtt = I
+        J_state[6, 6] = 1.0; J_state[7, 7] = 1.0; J_state[8, 8] = 1.0
 
-        # dP'/dV = dV'/dV * dt
+        # 4. dW'/dW = I * (1 - dt/tau)
+        dw_dw = 1.0 - dt / self.tau
+        J_state[9, 9] = dw_dw; J_state[10, 10] = dw_dw; J_state[11, 11] = dw_dw
+
+        # 5. dP'/dV = dt
         J_state[0, 3] = dv_dv * dt
         J_state[1, 4] = dv_dv * dt
         J_state[2, 5] = dv_dv * dt
 
-        # dV'/dAtt
+        # 6. dV'/dAtt
         roll = state_dict['roll']
         pitch = state_dict['pitch']
         yaw = state_dict['yaw']
         thrust = action_dict['thrust']
-        roll_rate = action_dict['roll_rate']
-        pitch_rate = action_dict['pitch_rate']
-        yaw_rate = action_dict['yaw_rate']
 
-        r = roll + roll_rate * dt
-        p = pitch + pitch_rate * dt
-        y = yaw + yaw_rate * dt
-
+        r, p, y = roll, pitch, yaw
         cr = math.cos(r); sr = math.sin(r)
         cp = math.cos(p); sp = math.sin(p)
         cy = math.cos(y); sy = math.sin(y)
@@ -307,6 +322,7 @@ class PyGhostModel:
         F = thrust * max_thrust
         F_m = F / self.mass
 
+        # Derivatives of D_x, D_y, D_z w.r.t r, p, y
         dDx_dr = cy*sp*(-sr) + sy*cr
         dDx_dp = cy*cp*cr
         dDx_dy = -sy*sp*cr + cy*sr
@@ -343,7 +359,7 @@ class PyGhostModel:
         J_state[4, 8] = dv_dy_y
         J_state[5, 8] = dv_dy_z
 
-        # dP'/dAtt = dV'/dAtt * dt
+        # 7. dP'/dAtt = dV'/dAtt * dt
         J_state[0, 6] = dv_dr_x * dt
         J_state[1, 6] = dv_dr_y * dt
         J_state[2, 6] = dv_dr_z * dt
@@ -355,6 +371,23 @@ class PyGhostModel:
         J_state[0, 8] = dv_dy_x * dt
         J_state[1, 8] = dv_dy_y * dt
         J_state[2, 8] = dv_dy_z * dt
+
+        # 8. dAtt'/dW (Kinematic Matrix * dt)
+        if abs(cp) < 1e-6: cp = 1e-6
+        tt = sp / cp
+        st = 1.0 / cp
+
+        J_state[6, 9] = 1.0 * dt
+        J_state[6, 10] = sr * tt * dt
+        J_state[6, 11] = cr * tt * dt
+
+        J_state[7, 9] = 0.0
+        J_state[7, 10] = cr * dt
+        J_state[7, 11] = -sr * dt
+
+        J_state[8, 9] = 0.0
+        J_state[8, 10] = sr * st * dt
+        J_state[8, 11] = cr * st * dt
 
         return J_state
 
@@ -629,12 +662,11 @@ class PyDPCSolver:
 
                 state = state_dict.copy()
 
-                # G is sensitivity dS/dU. 9x4.
-                # In C++ it was flat 36 array. Here numpy 9x4.
-                G_mat = np.zeros((9, 4), dtype=np.float32)
+                # G is sensitivity dS/dU. 12x4.
+                G_mat = np.zeros((12, 4), dtype=np.float32)
 
                 for t in range(self.horizon):
-                    # 1. Get Gradients (J_act: 9x4)
+                    # 1. Get Gradients (J_act: 12x4)
                     J_act, _ = model.get_gradients(state, current_action, dt)
                     J_state = model.get_state_jacobian(state, current_action, dt)
 
@@ -670,11 +702,6 @@ class PyDPCSolver:
 
                     if dz_safe > 0 and vz < -0.1:
                         tau = dz_safe / -vz
-                        # Barrier: J = gain / (tau + 0.1)
-                        # Scale gain by dz to make it relevant at distance?
-                        # User wants "scale less". 1/tau is frequency.
-                        # J = 10.0 / (tau + 0.1)
-
                         gain = 2.0
                         denom = tau + 0.1
                         dL_dtau = -gain / (denom * denom)
@@ -685,8 +712,8 @@ class PyDPCSolver:
                         dL_dPz_ttc = dL_dtau * dtau_dz
                         dL_dVz_ttc = dL_dtau * dtau_dvz
 
-                    # Combined dL/dS (9,)
-                    dL_dS = np.zeros(9, dtype=np.float32)
+                    # Combined dL/dS (12,)
+                    dL_dS = np.zeros(12, dtype=np.float32)
                     dL_dS[0] += dL_dP[0]
                     dL_dS[1] += dL_dP[1]
                     dL_dS[2] += dL_dP[2] + dL_dPz_alt + dL_dPz_ttc
@@ -696,6 +723,13 @@ class PyDPCSolver:
                     dL_dS[3] += 2.0 * next_state['vx']
                     dL_dS[4] += 2.0 * next_state['vy']
                     dL_dS[5] += 2.0 * next_state['vz'] + dL_dVz_ttc
+
+                    # Angular Rate Damping (Optional but good for smoothing)
+                    # Penalize high angular rates in state
+                    # dL_dW = 0.1 * W
+                    dL_dS[9] += 0.1 * next_state.get('wx', 0.0)
+                    dL_dS[10] += 0.1 * next_state.get('wy', 0.0)
+                    dL_dS[11] += 0.1 * next_state.get('wz', 0.0)
 
                     # --- Descent Velocity Constraint ---
                     # Penalize if vz < -safe_descent_rate (ENU: Up is +Z, Falling is -Vz)

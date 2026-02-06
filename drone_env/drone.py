@@ -50,6 +50,7 @@ def step_cpu(
     pos_x, pos_y, pos_z,
     vel_x, vel_y, vel_z,
     roll, pitch, yaw,
+    ang_vel_x, ang_vel_y, ang_vel_z,
     masses, drag_coeffs, thrust_coeffs,
     target_vx, target_vy, target_vz, target_yaw_rate,
     vt_x, vt_y, vt_z,
@@ -84,6 +85,7 @@ def step_cpu(
     px, py, pz = pos_x, pos_y, pos_z
     vx, vy, vz = vel_x, vel_y, vel_z
     r, p, y_ang = roll, pitch, yaw
+    wx, wy, wz = ang_vel_x, ang_vel_y, ang_vel_z
 
     # Update Virtual Target using Trajectory Params
     # traj_params: (10, num_agents)
@@ -165,11 +167,27 @@ def step_cpu(
         observations[indices, :] = 0.0
         done_flags[indices] = 0.0 # Clear Done
 
+    # Lag Time Constant
+    tau = 0.1
+
     for s in range(substeps):
-        # 1. Dynamics Update
-        r += roll_rate * dt
-        p += pitch_rate * dt
-        y_ang += yaw_rate * dt
+        # 1. Dynamics Update (Lag)
+        wx += (roll_rate - wx) * (dt / tau)
+        wy += (pitch_rate - wy) * (dt / tau)
+        wz += (yaw_rate - wz) * (dt / tau)
+
+        # Kinematic Update (Euler Rates from Body Rates)
+        sp_k, cp_k = np.sin(r), np.cos(r)
+        tt_k = np.tan(p)
+        st_k = 1.0 / (np.cos(p) + 1e-6) # Avoid division by zero
+
+        r_dot = wx + wy * sp_k * tt_k + wz * cp_k * tt_k
+        p_dot = wy * cp_k - wz * sp_k
+        y_dot = (wy * sp_k + wz * cp_k) * st_k
+
+        r += r_dot * dt
+        p += p_dot * dt
+        y_ang += y_dot * dt
 
         max_thrust = 20.0 * thrust_coeffs
         # Thrust Clipping [0, 1]
@@ -228,6 +246,9 @@ def step_cpu(
     roll[:] = r
     pitch[:] = p
     yaw[:] = y_ang
+    ang_vel_x[:] = wx
+    ang_vel_y[:] = wy
+    ang_vel_z[:] = wz
 
     # Step Counts
     step_counts[0] += 1
@@ -415,6 +436,7 @@ def reset_cpu(
     pos_x, pos_y, pos_z,
     vel_x, vel_y, vel_z,
     roll, pitch, yaw,
+    ang_vel_x, ang_vel_y, ang_vel_z,
     masses, drag_coeffs, thrust_coeffs,
     target_vx, target_vy, target_vz, target_yaw_rate,
     vt_x, vt_y, vt_z,
@@ -519,6 +541,10 @@ def reset_cpu(
     vel_x[:] = dir_x * speed
     vel_y[:] = dir_y * speed
     vel_z[:] = 0.0
+
+    ang_vel_x[:] = 0.0
+    ang_vel_y[:] = 0.0
+    ang_vel_z[:] = 0.0
 
     roll[:] = 0.0
 
@@ -664,6 +690,7 @@ class DroneEnv(CUDAEnvironmentState):
                 "pos_x", "pos_y", "pos_z",
                 "vel_x", "vel_y", "vel_z",
                 "roll", "pitch", "yaw",
+                "ang_vel_x", "ang_vel_y", "ang_vel_z",
                 "masses", "drag_coeffs", "thrust_coeffs",
                 "target_vx", "target_vy", "target_vz", "target_yaw_rate",
                 "vt_x", "vt_y", "vt_z",
@@ -701,6 +728,9 @@ class DroneEnv(CUDAEnvironmentState):
              "roll": {"shape": (self.num_agents,), "dtype": np.float32},
              "pitch": {"shape": (self.num_agents,), "dtype": np.float32},
              "yaw": {"shape": (self.num_agents,), "dtype": np.float32},
+             "ang_vel_x": {"shape": (self.num_agents,), "dtype": np.float32},
+             "ang_vel_y": {"shape": (self.num_agents,), "dtype": np.float32},
+             "ang_vel_z": {"shape": (self.num_agents,), "dtype": np.float32},
              "step_counts": {"shape": (self.num_agents,), "dtype": np.int32},
              "done_flags": {"shape": (self.num_agents,), "dtype": np.float32},
              "rewards": {"shape": (self.num_agents,), "dtype": np.float32},
@@ -750,6 +780,7 @@ class DroneEnv(CUDAEnvironmentState):
             "pos_x": "pos_x", "pos_y": "pos_y", "pos_z": "pos_z",
             "vel_x": "vel_x", "vel_y": "vel_y", "vel_z": "vel_z",
             "roll": "roll", "pitch": "pitch", "yaw": "yaw",
+            "ang_vel_x": "ang_vel_x", "ang_vel_y": "ang_vel_y", "ang_vel_z": "ang_vel_z",
             "masses": "masses", "drag_coeffs": "drag_coeffs", "thrust_coeffs": "thrust_coeffs",
             "target_vx": "target_vx", "target_vy": "target_vy", "target_vz": "target_vz", "target_yaw_rate": "target_yaw_rate",
             "vt_x": "vt_x", "vt_y": "vt_y", "vt_z": "vt_z",
@@ -772,6 +803,7 @@ class DroneEnv(CUDAEnvironmentState):
             "pos_x": "pos_x", "pos_y": "pos_y", "pos_z": "pos_z",
             "vel_x": "vel_x", "vel_y": "vel_y", "vel_z": "vel_z",
             "roll": "roll", "pitch": "pitch", "yaw": "yaw",
+            "ang_vel_x": "ang_vel_x", "ang_vel_y": "ang_vel_y", "ang_vel_z": "ang_vel_z",
             "masses": "masses", "drag_coeffs": "drag_coeffs", "thrust_coeffs": "thrust_coeffs",
             "target_vx": "target_vx", "target_vy": "target_vy", "target_vz": "target_vz", "target_yaw_rate": "target_yaw_rate",
             "vt_x": "vt_x", "vt_y": "vt_y", "vt_z": "vt_z",

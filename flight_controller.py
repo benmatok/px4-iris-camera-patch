@@ -18,7 +18,7 @@ class DPCFlightController:
         Computes the optimal control action using DPC.
 
         Args:
-            state_ned: dict (px, py, pz, vx, vy, vz, roll, pitch, yaw)
+            state_ned: dict (px, py, pz, vx, vy, vz, roll, pitch, yaw, wx, wy, wz)
             target_ned: list [x, y, z]
             extra_yaw_rate: float (additional yaw rate for scanning)
 
