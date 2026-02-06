@@ -20,14 +20,15 @@ class GhostController:
             {'mass': 0.5, 'drag_coeff': 0.1, 'thrust_coeff': 1.0}, # Light
             {'mass': 1.0, 'drag_coeff': 0.1, 'thrust_coeff': 0.7}, # Weak Motors
             {'mass': 1.0, 'drag_coeff': 0.1, 'thrust_coeff': 1.3}, # Strong Motors
-            {'mass': 2.0, 'drag_coeff': 0.1, 'thrust_coeff': 1.0}, # 2kg
-            {'mass': 2.5, 'drag_coeff': 0.1, 'thrust_coeff': 1.0}, # 2.5kg
-            {'mass': 3.0, 'drag_coeff': 0.1, 'thrust_coeff': 1.0}, # 3kg
-            {'mass': 3.5, 'drag_coeff': 0.1, 'thrust_coeff': 1.0}, # 3.5kg
-            {'mass': 4.0, 'drag_coeff': 0.1, 'thrust_coeff': 1.0}, # 4kg
-            {'mass': 4.5, 'drag_coeff': 0.1, 'thrust_coeff': 1.0}, # 4.5kg
-            {'mass': 5.0, 'drag_coeff': 0.1, 'thrust_coeff': 1.0}, # 5kg
-            {'mass': 6.0, 'drag_coeff': 0.1, 'thrust_coeff': 1.0}, # 6kg
+            # Heavy ghosts with scaled thrust_coeff (Tc ~ Mass * 0.98 for 0.5 hover)
+            {'mass': 2.0, 'drag_coeff': 0.1, 'thrust_coeff': 2.0},
+            {'mass': 2.5, 'drag_coeff': 0.1, 'thrust_coeff': 2.5},
+            {'mass': 3.0, 'drag_coeff': 0.1, 'thrust_coeff': 3.0},
+            {'mass': 3.5, 'drag_coeff': 0.1, 'thrust_coeff': 3.5},
+            {'mass': 4.0, 'drag_coeff': 0.1, 'thrust_coeff': 4.0},
+            {'mass': 4.5, 'drag_coeff': 0.1, 'thrust_coeff': 4.5},
+            {'mass': 5.0, 'drag_coeff': 0.1, 'thrust_coeff': 5.0},
+            {'mass': 6.0, 'drag_coeff': 0.1, 'thrust_coeff': 6.0},
         ]
         self.estimator = PyGhostEstimator(self.models)
 
