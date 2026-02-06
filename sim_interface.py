@@ -44,6 +44,11 @@ class SimDroneInterface:
             self.dd['pitch'][0] = 0.0
             self.dd['yaw'][0] = 0.0
 
+            # Zero Angular Velocities
+            self.dd['ang_vel_x'][0] = 0.0
+            self.dd['ang_vel_y'][0] = 0.0
+            self.dd['ang_vel_z'][0] = 0.0
+
             logger.info(f"Reset to Scenario: {name}")
         else:
             logger.warning(f"Unknown Scenario: {name}")
@@ -78,7 +83,10 @@ class SimDroneInterface:
             'vz': float(self.dd['vel_z'][0]),
             'roll': float(self.dd['roll'][0]),
             'pitch': float(self.dd['pitch'][0]),
-            'yaw': float(self.dd['yaw'][0])
+            'yaw': float(self.dd['yaw'][0]),
+            'wx': float(self.dd['ang_vel_x'][0]),
+            'wy': float(self.dd['ang_vel_y'][0]),
+            'wz': float(self.dd['ang_vel_z'][0])
         }
 
     def get_image(self, target_pos_world):
