@@ -672,7 +672,7 @@ class PyDPCSolver:
                         # User wants "scale less". 1/tau is frequency.
                         # J = 10.0 / (tau + 0.1)
 
-                        gain = 10.0
+                        gain = 5.0
                         denom = tau + 0.1
                         dL_dtau = -gain / (denom * denom)
 
@@ -698,7 +698,7 @@ class PyDPCSolver:
                     # Penalize if vz < -safe_descent_rate (ENU: Up is +Z, Falling is -Vz)
                     # Cost = w * ReLU(-vz - limit)^2
                     # dCost/dVz = 2 * w * ReLU(-vz - limit) * (-1)
-                    safe_limit = 8.0 # m/s
+                    safe_limit = 12.0 # m/s
                     w_vel_limit = 5000.0 # Dominant penalty
 
                     violation = (-next_state['vz']) - safe_limit

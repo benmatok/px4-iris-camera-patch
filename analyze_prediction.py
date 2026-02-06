@@ -108,9 +108,9 @@ def run_analysis_scenario(name, duration_sec=5.0):
 
     history = {
         't': [],
-        'pos_x': [], 'pos_z': [],
+        'pos_x': [], 'pos_z': [], 'vel_z': [],
         'pred_traj_x': [], 'pred_traj_z': [], # List of lists
-        'prediction_error_1s': [] # Distance error after 1s prediction
+        'est_mass': [], 'est_drag': [], 'est_wind_x': []
     }
 
     # Prediction horizon for analysis (e.g., 1.0s = 20 steps)
@@ -138,19 +138,19 @@ def run_analysis_scenario(name, duration_sec=5.0):
         action, weighted_model = controller.control(state, [ax, ay, az], target_pos)
 
         # Generate Prediction (using the weighted model and the chosen action)
-        # We predict 'pred_steps' into the future
         pred_traj = simulate_prediction(state, action, weighted_model, pred_steps, dt)
 
         # Store
         history['t'].append(t)
         history['pos_x'].append(state['px'])
         history['pos_z'].append(state['pz'])
+        history['vel_z'].append(state['vz'])
         history['pred_traj_x'].append(pred_traj['px'])
         history['pred_traj_z'].append(pred_traj['pz'])
 
-        # Look ahead for error calculation?
-        # We can't calculate prediction error until we have the future ground truth.
-        # We will post-process.
+        history['est_mass'].append(weighted_model['mass'])
+        history['est_drag'].append(weighted_model['drag_coeff'])
+        history['est_wind_x'].append(weighted_model['wind_x'])
 
         state = next_s
 
@@ -158,9 +158,6 @@ def run_analysis_scenario(name, duration_sec=5.0):
 
 def analyze_and_plot(history, name):
     # Calculate N-step prediction error
-    # For each time step t, we have a prediction for t+1...t+N.
-    # We compare pred_traj[k] at index N-1 (which is time t+N) with actual pos at index i+N
-
     pred_steps = 20
     errors = []
     times = []
@@ -168,11 +165,9 @@ def analyze_and_plot(history, name):
     for i in range(len(history['t']) - pred_steps):
         t = history['t'][i]
 
-        # Predicted pos at t + 1s (last element of the prediction)
         pred_x = history['pred_traj_x'][i][-1]
         pred_z = history['pred_traj_z'][i][-1]
 
-        # Actual pos at t + 1s (index i + pred_steps)
         act_x = history['pos_x'][i + pred_steps]
         act_z = history['pos_z'][i + pred_steps]
 
@@ -183,34 +178,48 @@ def analyze_and_plot(history, name):
     avg_error = np.mean(errors) if errors else 0.0
     print(f"Scenario {name}: Avg 1.0s Prediction Error: {avg_error:.4f} m")
 
-    # Plotting
-    plt.figure(figsize=(12, 6))
+    # Plotting Trajectories
+    plt.figure(figsize=(18, 12))
 
-    # Trajectory Plot
-    plt.subplot(1, 2, 1)
+    # 1. Trajectory
+    plt.subplot(2, 2, 1)
     plt.plot(history['pos_x'], history['pos_z'], 'k-', label='Actual Path', linewidth=2)
-
-    # Plot a few predictions (every 10 steps = 0.5s)
     for i in range(0, len(history['t']), 10):
         traj_x = history['pred_traj_x'][i]
         traj_z = history['pred_traj_z'][i]
-        # Start from current pos
         curr_x = history['pos_x'][i]
         curr_z = history['pos_z'][i]
         plt.plot([curr_x] + traj_x, [curr_z] + traj_z, 'r-', alpha=0.3)
-
-    plt.title(f"{name}: Actual vs Predicted Trajectories")
-    plt.xlabel("X (m)")
-    plt.ylabel("Z (m)")
-    plt.legend(['Actual', 'Predicted (1s horizon)'])
+    plt.title(f"{name}: Actual vs Predicted")
+    plt.xlabel("X (m)"); plt.ylabel("Z (m)")
+    plt.legend(['Actual', 'Predicted'])
     plt.grid(True)
 
-    # Error Plot
-    plt.subplot(1, 2, 2)
+    # 2. Prediction Error
+    plt.subplot(2, 2, 2)
     plt.plot(times, errors, 'b-')
-    plt.title(f"{name}: 1.0s Prediction Error over Time")
+    plt.title(f"{name}: 1.0s Prediction Error")
+    plt.xlabel("Time (s)"); plt.ylabel("Error (m)")
+    plt.grid(True)
+
+    # 3. Vertical Velocity
+    plt.subplot(2, 2, 3)
+    plt.plot(history['t'], history['vel_z'], 'r-', label='Vertical Vel (vz)')
+    # Plot limit if applicable
+    plt.axhline(-12.0, color='k', linestyle='--', label='Limit (-12m/s)')
+    plt.title("Vertical Velocity Profile")
+    plt.xlabel("Time (s)"); plt.ylabel("Velocity Z (m/s)")
+    plt.legend()
+    plt.grid(True)
+
+    # 4. Parameter Evolution
+    plt.subplot(2, 2, 4)
+    plt.plot(history['t'], history['est_mass'], label='Mass')
+    plt.plot(history['t'], history['est_drag'], label='Drag')
+    plt.plot(history['t'], history['est_wind_x'], label='WindX')
+    plt.title("Parameter Estimates")
     plt.xlabel("Time (s)")
-    plt.ylabel("Error (m)")
+    plt.legend()
     plt.grid(True)
 
     plt.tight_layout()
