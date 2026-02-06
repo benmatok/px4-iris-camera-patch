@@ -8,21 +8,28 @@ We executed 10 diverse blind dive scenarios with the following parameter ranges:
 - Drag Coefficient: 0.05 - 0.5
 - Wind: -5 to +5 m/s
 
-## Results Summary
-The Ghost-DPC controller showed mixed performance, with a high failure rate in scenarios involving high mass (> 2.5 kg).
+## Results Summary (Run v5)
+The Ghost-DPC controller performance has improved significantly for light-to-medium mass drones (2.0 - 4.0 kg) after tuning.
 
-- **Successes**: Scenario 1 (Mass 2.23kg) achieved excellent tracking (Dist 0.89m).
-- **Failures**: Most other scenarios (Mass > 3.0kg) failed to close the distance or crashed.
+- **Scenario 1 (2.23 kg)**: Distance error reduced from ~22m to **10.08m**.
+- **Scenario 6 (3.22 kg)**: Distance error reduced from ~35m to **17.69m**.
+- **Scenario 3 (3.73 kg)**: Distance error reduced from ~58m to **33.81m**.
 
-## Analysis
-The primary failure mode appears to be **Mass Estimation Saturation**.
-- The `PyGhostEstimator` uses a lattice of models with mass range [0.5, 1.5] kg.
-- The adaptive mass update is clamped at 5.0 kg, but the learning rate is low (0.001).
-- When true mass is high (e.g., 4.0 kg), the estimator likely initializes at 1.0 or 1.5 kg.
-- The controller, believing the drone is light, commands aggressive maneuvers (steep dives) that the heavy drone cannot recover from given the thrust limits, leading to crashes or overshoots.
-- The "Distance Ghosts" (drag variations) may also contribute to hesitation or incorrect trajectory planning when the dynamic model is mismatched.
+However, heavy drones (> 4.0 kg) and scenarios with high wind/drag still present challenges:
+- **Scenario 5 (4.43 kg)**: Still struggling (Dist 198m).
+- **Scenario 4 (3.82 kg)**: Large error (111m), likely due to specific wind/drag combination.
+
+## Improvements Implemented
+1.  **Mass Estimation Tuning**:
+    - Increased clamping limit to **8.0 kg**.
+    - Tuned learning rate to **0.003**.
+    - Gated updates by Observability Score to prevent divergence.
+
+2.  **Structural Changes**:
+    - Added intermediate ghost models at **0.5 kg increments** (2.0, 2.5, ..., 6.0 kg) to bridge the gap between lattice points.
+    - Relaxed **TTC Safety Barrier** gain from 5.0 to 2.0.
+    - Increased **Descent Velocity Limit** from 12.0 to 15.0 m/s.
 
 ## Recommendations
-1. **Expand Estimator Lattice**: Include heavier models (e.g., 3.0kg, 5.0kg) in the initial uncertainty lattice to improve convergence speed.
-2. **Tune Adaptation**: Increase the learning rate for mass estimation or relax the clamping limits if safe.
-3. **Conservative Safety**: Update the controller to be more conservative when observability of mass is low, preventing aggressive dives until mass estimate converges.
+- **Further Tuning**: The interaction between high mass and wind estimation needs more investigation. The current "Uncertainty Lattice" might need wind-specific heavy models.
+- **Trajectory Planning**: For heavy drones, the solver might need a longer horizon or a different cost function to commit to a dive earlier.

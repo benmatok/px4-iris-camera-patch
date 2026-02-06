@@ -13,12 +13,21 @@ class GhostController:
         self.dt = dt
         # 1. Initialize Estimator with "Uncertainty Lattice"
         # 5 Models: Nominal, Heavy, Light, Strong, Weak
+        # Added extra ghosts at 1kg jumps (2.0 - 6.0) to handle heavier drones
         self.models = [
             {'mass': 1.0, 'drag_coeff': 0.1, 'thrust_coeff': 1.0}, # Nominal
             {'mass': 1.5, 'drag_coeff': 0.1, 'thrust_coeff': 1.0}, # Heavy
             {'mass': 0.5, 'drag_coeff': 0.1, 'thrust_coeff': 1.0}, # Light
             {'mass': 1.0, 'drag_coeff': 0.1, 'thrust_coeff': 0.7}, # Weak Motors
             {'mass': 1.0, 'drag_coeff': 0.1, 'thrust_coeff': 1.3}, # Strong Motors
+            {'mass': 2.0, 'drag_coeff': 0.1, 'thrust_coeff': 1.0}, # 2kg
+            {'mass': 2.5, 'drag_coeff': 0.1, 'thrust_coeff': 1.0}, # 2.5kg
+            {'mass': 3.0, 'drag_coeff': 0.1, 'thrust_coeff': 1.0}, # 3kg
+            {'mass': 3.5, 'drag_coeff': 0.1, 'thrust_coeff': 1.0}, # 3.5kg
+            {'mass': 4.0, 'drag_coeff': 0.1, 'thrust_coeff': 1.0}, # 4kg
+            {'mass': 4.5, 'drag_coeff': 0.1, 'thrust_coeff': 1.0}, # 4.5kg
+            {'mass': 5.0, 'drag_coeff': 0.1, 'thrust_coeff': 1.0}, # 5kg
+            {'mass': 6.0, 'drag_coeff': 0.1, 'thrust_coeff': 1.0}, # 6kg
         ]
         self.estimator = PyGhostEstimator(self.models)
 
