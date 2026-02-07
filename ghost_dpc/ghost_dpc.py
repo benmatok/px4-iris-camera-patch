@@ -233,7 +233,7 @@ class PyGhostModel:
     def get_param_sensitivities(self, state_dict, action_dict):
         """
         Returns scalar sensitivity of acceleration magnitude w.r.t parameters.
-        Returns: {'mass': val, 'drag': val, 'thrust_coeff': val, 'wind': val}
+        Returns: {'mass': val, 'drag': val, 'thrust_coeff': val, 'wind': val, 'tau': val}
         """
         # Unpack
         roll, pitch, yaw = state_dict['roll'], state_dict['pitch'], state_dict['yaw']
@@ -272,12 +272,29 @@ class PyGhostModel:
         # da/dW = Cd.
         sens_wind = self.drag_coeff
 
+        # 5. Tau Sensitivity: d(alpha)/d(tau) = -alpha / tau
+        # alpha_x = (cmd_x - wx)/tau. d(alpha)/d(tau) = -(cmd-wx)/tau^2 = -alpha/tau
+        # Magnitude: sqrt(sum(alpha^2)) / tau
+        # Or simply magnitude of alpha predicted.
+        # We need (cmd - w)
+        wx = state_dict.get('wx', 0.0)
+        wy = state_dict.get('wy', 0.0)
+        wz = state_dict.get('wz', 0.0)
+
+        err_wx = action_dict['roll_rate'] - wx
+        err_wy = action_dict['pitch_rate'] - wy
+        err_wz = action_dict['yaw_rate'] - wz
+
+        mag_err = math.sqrt(err_wx**2 + err_wy**2 + err_wz**2)
+        sens_tau = mag_err / (self.tau * self.tau)
+
         return {
             'mass': sens_mass,
             'drag_coeff': sens_drag,
             'thrust_coeff': sens_thrust_coeff,
             'wind_x': sens_wind,
-            'wind_y': sens_wind
+            'wind_y': sens_wind,
+            'tau': sens_tau
         }
 
     def get_state_jacobian(self, state_dict, action_dict, dt):
@@ -414,7 +431,7 @@ class PyGhostEstimator:
 
         # Current Observability Scores
         self.observability_scores = {
-            'mass': 0.0, 'drag_coeff': 0.0, 'thrust_coeff': 0.0, 'wind_x': 0.0, 'wind_y': 0.0
+            'mass': 0.0, 'drag_coeff': 0.0, 'thrust_coeff': 0.0, 'wind_x': 0.0, 'wind_y': 0.0, 'tau': 0.0
         }
 
     def _compute_weighted_params(self):
@@ -423,6 +440,7 @@ class PyGhostEstimator:
         avg_thrust = 0.0
         avg_wind_x = 0.0
         avg_wind_y = 0.0
+        avg_tau = 0.0
 
         for i, m in enumerate(self.models):
             p = self.probabilities[i]
@@ -431,16 +449,18 @@ class PyGhostEstimator:
             avg_thrust += m.thrust_coeff * p
             avg_wind_x += m.wind_x * p
             avg_wind_y += m.wind_y * p
+            avg_tau += m.tau * p
 
         return {
             'mass': avg_mass,
             'drag_coeff': avg_drag,
             'thrust_coeff': avg_thrust,
             'wind_x': avg_wind_x,
-            'wind_y': avg_wind_y
+            'wind_y': avg_wind_y,
+            'tau': avg_tau
         }
 
-    def update(self, state_dict, action_dict, measured_accel_list, dt):
+    def update(self, state_dict, action_dict, measured_accel_list, dt, measured_alpha_list=None):
         likelihoods = np.zeros(len(self.models), dtype=np.float32)
 
         # measured_accel_list is [ax, ay, az]
@@ -511,14 +531,20 @@ class PyGhostEstimator:
         # Gains need to be tuned.
         # Mass: accel ~ 5-20 m/s^2. Sens ~ F/m^2 ~ 20. Gain 0.05 -> score 1.0.
         # Drag: v ~ 0-10 m/s. Sens ~ v. Gain 0.1 -> score 1.0 at 10m/s.
+        # Tau: alpha ~ 10-50 rad/s^2. Sens ~ alpha/tau ~ 500. Gain small ~ 0.002.
 
         gains = {
             'mass': 0.05,
             'drag_coeff': 0.1,
             'thrust_coeff': 0.05,
-            'wind_x': 2.0, # wind sens is small (0.1), so high gain needed?
-            'wind_y': 2.0
+            'wind_x': 2.0,
+            'wind_y': 2.0,
+            'tau': 0.002
         }
+
+        # Ensure 'tau' is initialized in stable_params if missing (e.g. if loaded from old dict)
+        if 'tau' not in self.stable_params:
+             self.stable_params['tau'] = 0.1
 
         for k in self.stable_params.keys():
             s_val = sens.get(k, 0.0)
@@ -528,7 +554,7 @@ class PyGhostEstimator:
             self.observability_scores[k] = score
 
             # Gated Update: new = old + score * (raw - old)
-            self.stable_params[k] += score * (raw_est[k] - self.stable_params[k])
+            self.stable_params[k] += score * (raw_est.get(k, self.stable_params[k]) - self.stable_params[k])
 
         # 4. Adaptive Gradient Step (Direct Error Minimization)
         # Re-compute predicted acceleration with current stable_params
@@ -537,6 +563,7 @@ class PyGhostEstimator:
         s_t = self.stable_params['thrust_coeff']
         s_wx = self.stable_params['wind_x']
         s_wy = self.stable_params['wind_y']
+        s_tau = self.stable_params.get('tau', 0.1)
 
         # Forces
         thrust = action_dict['thrust']
@@ -610,7 +637,52 @@ class PyGhostEstimator:
         self.stable_params['mass'] -= lr_mass * grad_mass * obs_mass
         self.stable_params['mass'] = max(0.1, min(8.0, self.stable_params['mass']))
 
-        # 4. History
+        # 4. Tau Update (Angular Velocity Error)
+        if measured_alpha_list is not None:
+             # Unpack Measured Angular Accel
+             meas_alphax, meas_alphay, meas_alphaz = measured_alpha_list
+
+             # Predicted Alpha: (cmd - w) / tau
+             # Using current w from state_dict (assuming it's W_t, we predict Alpha_t)
+             # Wait, alpha is change rate. Alpha = (W_{t+1} - W_t)/dt.
+             # Model: W_dot = (Cmd - W)/tau.
+
+             # Get current W
+             wx = state_dict.get('wx', 0.0)
+             wy = state_dict.get('wy', 0.0)
+             wz = state_dict.get('wz', 0.0)
+
+             # Cmd
+             cmd_r = action_dict['roll_rate']
+             cmd_p = action_dict['pitch_rate']
+             cmd_y = action_dict['yaw_rate']
+
+             pred_alphax = (cmd_r - wx) / s_tau
+             pred_alphay = (cmd_p - wy) / s_tau
+             pred_alphaz = (cmd_y - wz) / s_tau
+
+             # Error
+             e_alphax = meas_alphax - pred_alphax
+             e_alphay = meas_alphay - pred_alphay
+             e_alphaz = meas_alphaz - pred_alphaz
+
+             # Gradient dJ/dTau = -2 * e * dAlpha/dTau
+             # dAlpha/dTau = -(Cmd-W)/Tau^2 = -Alpha/Tau
+
+             grad_tau = -2.0 * (
+                 e_alphax * (-pred_alphax / s_tau) +
+                 e_alphay * (-pred_alphay / s_tau) +
+                 e_alphaz * (-pred_alphaz / s_tau)
+             )
+
+             # Update
+             lr_tau = 0.0001
+             obs_tau = self.observability_scores.get('tau', 0.0)
+
+             self.stable_params['tau'] -= lr_tau * grad_tau * obs_tau
+             self.stable_params['tau'] = max(0.01, min(1.0, self.stable_params['tau']))
+
+        # 5. History
         self.history['raw_estimates'].append(raw_est)
         self.history['observability_scores'].append(self.observability_scores.copy())
 
@@ -683,7 +755,9 @@ class PyDPCSolver:
                     dz = next_state['pz'] - target_pos[2]
                     dist = math.sqrt(dx*dx + dy*dy + dz*dz + 1e-6)
 
-                    dL_dP = np.array([dx/dist, dy/dist, dz/dist], dtype=np.float32)
+                    # Scale Position Cost by 10.0 to overcome damping
+                    k_pos = 10.0
+                    dL_dP = np.array([k_pos*dx/dist, k_pos*dy/dist, k_pos*dz/dist], dtype=np.float32)
 
                     # B. Altitude & TTC Barrier
                     target_safe_z = target_pos[2] + 2.0
@@ -718,11 +792,12 @@ class PyDPCSolver:
                     dL_dS[1] += dL_dP[1]
                     dL_dS[2] += dL_dP[2] + dL_dPz_alt + dL_dPz_ttc
 
-                    # Velocity Damping (dL/dV = 2.0 * V)
-                    # Helps prevent overshoot in long dives
-                    dL_dS[3] += 2.0 * next_state['vx']
-                    dL_dS[4] += 2.0 * next_state['vy']
-                    dL_dS[5] += 2.0 * next_state['vz'] + dL_dVz_ttc
+                    # Velocity Damping (dL/dV = 0.1 * V)
+                    # Reduced from 2.0 to allow high-speed dive
+                    k_damp = 0.1
+                    dL_dS[3] += k_damp * next_state['vx']
+                    dL_dS[4] += k_damp * next_state['vy']
+                    dL_dS[5] += k_damp * next_state['vz'] + dL_dVz_ttc
 
                     # Angular Rate Damping (Optional but good for smoothing)
                     # Penalize high angular rates in state
