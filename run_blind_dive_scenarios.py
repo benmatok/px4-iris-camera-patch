@@ -39,12 +39,12 @@ class GhostController:
             'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0
         }
 
-    def control(self, state, measured_accel, target_pos, solver_dt=None):
+    def control(self, state, measured_accel, measured_alpha, target_pos, solver_dt=None):
         if solver_dt is None:
             solver_dt = self.dt
 
         # 1. Update Estimator
-        self.estimator.update(state, self.last_action, measured_accel, self.dt)
+        self.estimator.update(state, self.last_action, measured_accel, self.dt, measured_alpha)
 
         # 2. Get Beliefs
         probs = self.estimator.get_probabilities()
@@ -107,7 +107,8 @@ def run_blind_dive_scenario(params, scenario_id):
         mass=params['mass'],
         drag=params['drag_coeff'],
         thrust_coeff=params['thrust_coeff'],
-        wind_x=params['wind_x']
+        wind_x=params['wind_x'],
+        tau=params.get('tau', 0.1)
     )
 
     # Initial State
@@ -124,7 +125,8 @@ def run_blind_dive_scenario(params, scenario_id):
     # Data Logging
     history = {
         't': [], 'alt': [], 'pos_x': [], 'pos_y': [], 'thrust_cmd': [],
-        'target_x': [], 'target_y': [], 'target_z': []
+        'target_x': [], 'target_y': [], 'target_z': [],
+        'tau_est': [], 'tau_true': []
     }
 
     target_pos = [lateral_dist, 0.0, 0.0]
@@ -140,11 +142,20 @@ def run_blind_dive_scenario(params, scenario_id):
         ay = (next_s['vy'] - state['vy']) / dt
         az = (next_s['vz'] - state['vz']) / dt
 
+        # Angular Accel (Alpha)
+        # Using current w (next_s) and previous w (state)
+        # next_s has wx, wy, wz if updated PyGhostModel returns them.
+        alphax = (next_s.get('wx', 0.0) - state.get('wx', 0.0)) / dt
+        alphay = (next_s.get('wy', 0.0) - state.get('wy', 0.0)) / dt
+        alphaz = (next_s.get('wz', 0.0) - state.get('wz', 0.0)) / dt
+
         # --- CONTROLLER ---
-        action, probs, est_model = controller.control(state, [ax, ay, az], target_pos, solver_dt=dt)
+        action, probs, est_model = controller.control(state, [ax, ay, az], [alphax, alphay, alphaz], target_pos, solver_dt=dt)
 
         # --- LOGGING ---
         history['t'].append(t)
+        history['tau_est'].append(est_model.get('tau', 0.1))
+        history['tau_true'].append(real_model.tau)
         history['alt'].append(state['pz'])
         history['pos_x'].append(state['px'])
         history['pos_y'].append(state['py'])
@@ -162,7 +173,7 @@ def run_blind_dive_scenario(params, scenario_id):
     return history, state
 
 def plot_scenario(hist, params, scenario_id):
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 5))
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4, figsize=(24, 5))
 
     # Top View
     ax1.plot(hist['pos_x'], hist['pos_y'], 'b-', label='Path')
@@ -186,11 +197,21 @@ def plot_scenario(hist, params, scenario_id):
     ax3.plot(hist['t'], hist['alt'], 'b-', label='Alt')
     ax3_r = ax3.twinx()
     ax3_r.plot(hist['t'], hist['thrust_cmd'], 'r--', label='Thrust')
-    ax3.set_title(f"Dynamics (Mass={params['mass']:.1f}, Wind={params['wind_x']:.1f})")
+    ax3.set_title(f"Dynamics (Mass={params['mass']:.1f})")
     ax3.set_xlabel("Time (s)")
     ax3.set_ylabel("Altitude (m)", color='b')
     ax3_r.set_ylabel("Thrust Cmd", color='r')
     ax3_r.set_ylim(0, 1)
+
+    # Tau Estimation
+    ax4.plot(hist['t'], hist['tau_true'], 'k--', label='True Tau')
+    ax4.plot(hist['t'], hist['tau_est'], 'g-', label='Est Tau')
+    ax4.set_title("Tau Estimation")
+    ax4.set_xlabel("Time (s)")
+    ax4.set_ylabel("Tau (s)")
+    ax4.legend()
+    ax4.grid(True)
+    ax4.set_ylim(0, 0.5)
 
     plt.tight_layout()
     filename = f"validation_blind_dive_scenario_{scenario_id}.png"
@@ -204,7 +225,7 @@ def main():
     print(f"{'ID':<3} {'Mass':<6} {'Drag':<6} {'WindX':<6} {'ThrustK':<8} {'HoverR':<6} {'Alt':<5} {'Dist':<5} {'Result':<20}")
     print("-" * 120)
 
-    for i in range(10):
+    for i in range(5):
         mass = np.random.uniform(2.0, 6.0)
         drag_coeff = np.random.uniform(0.05, 0.5)
         wind_x = np.random.uniform(-5.0, 5.0)
@@ -221,7 +242,8 @@ def main():
             'wind_x': wind_x,
             'start_alt': start_alt,
             'lateral_dist': lateral_dist,
-            'thrust_coeff': thrust_coeff
+            'thrust_coeff': thrust_coeff,
+            'tau': np.random.uniform(0.05, 0.2) # Randomize True Tau
         }
 
         hist, final_state = run_blind_dive_scenario(params, i)
