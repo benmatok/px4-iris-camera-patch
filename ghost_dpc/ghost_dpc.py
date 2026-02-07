@@ -460,7 +460,7 @@ class PyGhostEstimator:
             'tau': avg_tau
         }
 
-    def update(self, state_dict, action_dict, measured_accel_list, dt, measured_alpha_list=None):
+    def update(self, state_dict, action_dict, measured_accel_list, dt, measured_alpha_list=None, measured_screen_pos_list=None):
         likelihoods = np.zeros(len(self.models), dtype=np.float32)
 
         # measured_accel_list is [ax, ay, az]
@@ -682,7 +682,17 @@ class PyGhostEstimator:
              self.stable_params['tau'] -= lr_tau * grad_tau * obs_tau
              self.stable_params['tau'] = max(0.01, min(1.0, self.stable_params['tau']))
 
-        # 5. History
+        # 5. Screen Position Tracking (for validation/debugging)
+        # Store predicted screen pos error if measurement provided
+        if measured_screen_pos_list is not None:
+             # Just store simple error of weighted model for now
+             # This requires re-predicting state with updated stable_params?
+             # Or just storing what we have.
+             # Ideally we want to track: u_meas, v_meas, u_pred, v_pred
+             # We can store this in a separate history key
+             pass
+
+        # 6. History
         self.history['raw_estimates'].append(raw_est)
         self.history['observability_scores'].append(self.observability_scores.copy())
 
@@ -785,6 +795,32 @@ class PyDPCSolver:
 
                         dL_dPz_ttc = dL_dtau * dtau_dz
                         dL_dVz_ttc = dL_dtau * dtau_dvz
+
+                    # New Term: Regulate Height Proportional to TTC
+                    # Target: dz_safe = k_vel * tau
+                    # Cost J = w * (dz_safe - k_vel * tau)^2
+                    # Use k_vel = 2.0 (Target Approach Speed)
+                    # Use w = 1.0
+                    k_vel = 2.0
+                    w_tau_track = 1.0
+
+                    # Ensure vz is negative (closing) for tau to be valid
+                    # If moving up or stationary, tau is undefined or negative (collision behind).
+                    # We only apply this if closing.
+                    if dz_safe > 0 and vz < -0.1:
+                        tau_val = dz_safe / -vz
+                        err = dz_safe - k_vel * tau_val
+
+                        # dJ/dZ = 2 * w * err * (1 - k_vel/(-v))
+                        # dJ/dV = 2 * w * err * (-k_vel * (z/v^2))
+
+                        dJ_dZ = 2.0 * w_tau_track * err * (1.0 - k_vel / -vz)
+
+                        # dTau/dV = z / v^2.  -k * dTau/dV = -k * z / v^2
+                        dJ_dV = 2.0 * w_tau_track * err * (-k_vel * (dz_safe / (vz*vz)))
+
+                        dL_dPz_ttc += dJ_dZ
+                        dL_dVz_ttc += dJ_dV
 
                     # Combined dL/dS (12,)
                     dL_dS = np.zeros(12, dtype=np.float32)

@@ -39,12 +39,12 @@ class GhostController:
             'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0
         }
 
-    def control(self, state, measured_accel, measured_alpha, target_pos, solver_dt=None):
+    def control(self, state, measured_accel, measured_alpha, target_pos, solver_dt=None, measured_uv=None):
         if solver_dt is None:
             solver_dt = self.dt
 
         # 1. Update Estimator
-        self.estimator.update(state, self.last_action, measured_accel, self.dt, measured_alpha)
+        self.estimator.update(state, self.last_action, measured_accel, self.dt, measured_alpha, measured_uv)
 
         # 2. Get Beliefs
         probs = self.estimator.get_probabilities()
@@ -120,13 +120,60 @@ def run_blind_dive_scenario(params, scenario_id):
         'vx': 0.0, 'vy': 0.0, 'vz': 0.0,
         'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0
     }
+
+    # Calculate initial screen position u,v
+    # Assume camera up 30 deg.
+    # From Physics:
+    # dx_w = target - px. dy_w = ...
+    # R33 = cp*cr...
+    # ...
+    # Instead of re-implementing, let's use PyGhostModel step to get a dummy state or just implement the math here.
+    # It's simple enough.
+
+    def get_uv(s, t_pos):
+        dx_w = t_pos[0] - s['px']
+        dy_w = t_pos[1] - s['py']
+        dz_w = t_pos[2] - s['pz']
+
+        r, p, y = s['roll'], s['pitch'], s['yaw']
+        cr=np.cos(r); sr=np.sin(r)
+        cp=np.cos(p); sp=np.sin(p)
+        cy=np.cos(y); sy=np.sin(y)
+
+        r11 = cy*cp
+        r12 = sy*cp
+        r13 = -sp
+        r21 = cy*sp*sr - sy*cr
+        r22 = sy*sp*sr + cy*cr
+        r23 = cp*sr
+        r31 = cy*sp*cr + sy*sr
+        r32 = sy*sp*cr - cy*sr
+        r33 = cp*cr
+
+        xb = r11*dx_w + r12*dy_w + r13*dz_w
+        yb = r21*dx_w + r22*dy_w + r23*dz_w
+        zb = r31*dx_w + r32*dy_w + r33*dz_w
+
+        s30 = 0.5
+        c30 = 0.866025
+
+        xc = yb
+        yc = -s30*xb + c30*zb
+        zc = c30*xb + s30*zb
+
+        if zc < 0.1: zc = 0.1
+        u = xc / zc
+        v = yc / zc
+        return u, v
     action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
 
     # Data Logging
     history = {
         't': [], 'alt': [], 'pos_x': [], 'pos_y': [], 'thrust_cmd': [],
         'target_x': [], 'target_y': [], 'target_z': [],
-        'tau_est': [], 'tau_true': []
+        'tau_est': [], 'tau_true': [],
+        'u_meas': [], 'v_meas': [],
+        'u_pred': [], 'v_pred': [] # Not filling pred from estimator yet, maybe just log measured for tracking
     }
 
     target_pos = [lateral_dist, 0.0, 0.0]
@@ -149,14 +196,20 @@ def run_blind_dive_scenario(params, scenario_id):
         alphay = (next_s.get('wy', 0.0) - state.get('wy', 0.0)) / dt
         alphaz = (next_s.get('wz', 0.0) - state.get('wz', 0.0)) / dt
 
+        # Measure Screen Pos
+        u, v = get_uv(state, target_pos)
+
         # --- CONTROLLER ---
-        action, probs, est_model = controller.control(state, [ax, ay, az], [alphax, alphay, alphaz], target_pos, solver_dt=dt)
+        # Pass u,v to controller (Estimator)
+        action, probs, est_model = controller.control(state, [ax, ay, az], [alphax, alphay, alphaz], target_pos, solver_dt=dt, measured_uv=[u, v])
 
         # --- LOGGING ---
         history['t'].append(t)
         history['tau_est'].append(est_model.get('tau', 0.1))
         history['tau_true'].append(real_model.tau)
         history['alt'].append(state['pz'])
+        history['u_meas'].append(u)
+        history['v_meas'].append(v)
         history['pos_x'].append(state['px'])
         history['pos_y'].append(state['py'])
         history['thrust_cmd'].append(action['thrust'])
@@ -173,7 +226,7 @@ def run_blind_dive_scenario(params, scenario_id):
     return history, state
 
 def plot_scenario(hist, params, scenario_id):
-    fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4, figsize=(24, 5))
+    fig, (ax1, ax2, ax3, ax4, ax5) = plt.subplots(1, 5, figsize=(30, 5))
 
     # Top View
     ax1.plot(hist['pos_x'], hist['pos_y'], 'b-', label='Path')
@@ -213,6 +266,16 @@ def plot_scenario(hist, params, scenario_id):
     ax4.grid(True)
     ax4.set_ylim(0, 0.5)
 
+    # Screen Pos Tracking
+    ax5.plot(hist['t'], hist['u_meas'], 'b-', label='U Meas')
+    ax5.plot(hist['t'], hist['v_meas'], 'r-', label='V Meas')
+    ax5.set_title("Screen Position (U, V)")
+    ax5.set_xlabel("Time (s)")
+    ax5.set_ylabel("Screen Pos")
+    ax5.legend()
+    ax5.grid(True)
+    ax5.set_ylim(-2, 2)
+
     plt.tight_layout()
     filename = f"validation_blind_dive_scenario_{scenario_id}.png"
     plt.savefig(filename)
@@ -225,7 +288,7 @@ def main():
     print(f"{'ID':<3} {'Mass':<6} {'Drag':<6} {'WindX':<6} {'ThrustK':<8} {'HoverR':<6} {'Alt':<5} {'Dist':<5} {'Result':<20}")
     print("-" * 120)
 
-    for i in range(5):
+    for i in range(2):
         mass = np.random.uniform(2.0, 6.0)
         drag_coeff = np.random.uniform(0.05, 0.5)
         wind_x = np.random.uniform(-5.0, 5.0)
