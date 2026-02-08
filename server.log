@@ -4,9 +4,10 @@ INFO:sim_interface:Reset to Scenario: Blind Dive
 INFO:mission_manager:MissionManager reset to TAKEOFF
 INFO:__main__:TheShow initialized successfully.
 INFO:__main__:Mounting /app/web to /
-INFO:     Started server process [5958]
+INFO:     Started server process [5155]
 INFO:     Waiting for application startup.
 INFO:__main__:Lifespan Startup...
 INFO:__main__:Starting Control Loop...
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     127.0.0.1:39216 - "GET / HTTP/1.1" 200 OK
