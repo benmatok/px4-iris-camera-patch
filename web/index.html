@@ -8,6 +8,14 @@
         #info { position: absolute; top: 10px; left: 10px; pointer-events: none; }
         #status { font-weight: bold; }
         #hud { position: absolute; bottom: 10px; right: 10px; width: 240px; height: 180px; background-color: black; border: 2px solid #555; }
+        #controls {
+            position: absolute; top: 10px; right: 10px;
+            background-color: rgba(0,0,0,0.7); border: 1px solid #555; padding: 10px;
+            display: flex; flex-direction: column; gap: 5px;
+        }
+        #controls input { background: #333; color: white; border: 1px solid #555; width: 60px; }
+        #controls button { background: #00aaff; color: white; border: none; padding: 5px; cursor: pointer; }
+        #controls button:hover { background: #0088cc; }
     </style>
     <script type="importmap">
         {
@@ -27,6 +35,18 @@
     <div id="hud">
         <div style="position: absolute; top:0; left:0; color: #0f0; font-size: 10px; padding: 2px;">Drone View</div>
         <canvas id="hud-canvas" width="240" height="180"></canvas>
+    </div>
+    <div id="controls">
+        <h3>Simulation Control</h3>
+        <div>
+            <label>Init Alt (m): </label>
+            <input type="number" id="init-alt" value="100">
+        </div>
+        <div>
+            <label>Init Dist (m): </label>
+            <input type="number" id="init-dist" value="50">
+        </div>
+        <button id="reset-btn">Reset / Restart</button>
     </div>
     <script type="module" src="./main.js"></script>
 </body>

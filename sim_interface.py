@@ -27,12 +27,12 @@ class SimDroneInterface:
             logger.error(f"Failed to initialize DroneEnv: {e}")
             raise
 
-    def reset_to_scenario(self, name):
+    def reset_to_scenario(self, name, **kwargs):
         if name == "Blind Dive":
             # High Altitude Dive
-            self.dd['pos_x'][0] = 0.0
-            self.dd['pos_y'][0] = 0.0
-            self.dd['pos_z'][0] = 100.0
+            self.dd['pos_x'][0] = kwargs.get('pos_x', 0.0)
+            self.dd['pos_y'][0] = kwargs.get('pos_y', 0.0)
+            self.dd['pos_z'][0] = kwargs.get('pos_z', 100.0)
 
             # Zero Velocities
             self.dd['vel_x'][0] = 0.0
