@@ -822,11 +822,110 @@ class PyDPCSolver:
                         dL_dPz_ttc += dJ_dZ
                         dL_dVz_ttc += dJ_dV
 
+                    # --- Gaze Cost ---
+                    # Compute u,v for current prediction step
+                    # To minimize u,v error (centering target)
+                    # u = yb / zc_safe
+                    # v = (-0.5*xb + 0.866*zb) / zc_safe (if cam up)
+                    # We need u,v calculation here.
+
+                    dx_w = next_state['px'] - target_pos[0]
+                    dy_w = next_state['py'] - target_pos[1]
+                    dz_w = next_state['pz'] - target_pos[2]
+
+                    r, p, y = next_state['roll'], next_state['pitch'], next_state['yaw']
+                    cr=math.cos(r); sr=math.sin(r)
+                    cp=math.cos(p); sp=math.sin(p)
+                    cy=math.cos(y); sy=math.sin(y)
+
+                    r11 = cy*cp; r12 = sy*cp; r13 = -sp
+                    r21 = cy*sp*sr - sy*cr; r22 = sy*sp*sr + cy*cr; r23 = cp*sr
+                    r31 = cy*sp*cr + sy*sr; r32 = sy*sp*cr - cy*sr; r33 = cp*cr
+
+                    xb = r11*dx_w + r12*dy_w + r13*dz_w
+                    yb = r21*dx_w + r22*dy_w + r23*dz_w
+                    zb = r31*dx_w + r32*dy_w + r33*dz_w
+
+                    s30 = 0.5; c30 = 0.866025
+                    xc = yb
+                    yc = -s30*xb + c30*zb
+                    zc = c30*xb + s30*zb
+
+                    if zc < 0.1: zc = 0.1
+                    u_pred = xc / zc
+                    v_pred = yc / zc
+
+                    # Cost = w_g * (u^2 + v^2)
+                    # Disabled (0.0) as it destabilizes Blind Dive position tracking
+                    w_g = 0.0
+                    dL_du = 2.0 * w_g * u_pred
+                    dL_dv = 2.0 * w_g * v_pred
+
+                    # Gradients du/dS, dv/dS
+                    # u = xc/zc => du = (dxc*zc - xc*dzc)/zc^2
+                    # v = yc/zc => dv = (dyc*zc - yc*dzc)/zc^2
+                    inv_zc = 1.0 / zc
+                    inv_zc2 = inv_zc * inv_zc
+
+                    du_dxc = inv_zc
+                    du_dzc = -xc * inv_zc2
+                    dv_dyc = inv_zc
+                    dv_dzc = -yc * inv_zc2
+
+                    # Transform back to xb, yb, zb
+                    # xc = yb
+                    # yc = -s30*xb + c30*zb
+                    # zc = c30*xb + s30*zb
+
+                    dxc_dyb = 1.0
+
+                    dyc_dxb = -s30; dyc_dzb = c30
+                    dzc_dxb = c30; dzc_dzb = s30
+
+                    du_dxb = du_dzc * dzc_dxb # (term from zc)
+                    du_dyb = du_dxc * dxc_dyb # (term from xc)
+                    du_dzb = du_dzc * dzc_dzb # (term from zc)
+
+                    dv_dxb = dv_dyc * dyc_dxb + dv_dzc * dzc_dxb
+                    dv_dyb = 0.0
+                    dv_dzb = dv_dyc * dyc_dzb + dv_dzc * dzc_dzb
+
+                    dL_dxb = dL_du * du_dxb + dL_dv * dv_dxb
+                    dL_dyb = dL_du * du_dyb + dL_dv * dv_dyb
+                    dL_dzb = dL_du * du_dzb + dL_dv * dv_dzb
+
+                    # Now dL/dP and dL/dAtt
+                    # xb = R * dP_w
+                    # dxb/dP = -R (since dP_w = T - P, dP_w/dP = -1)
+                    # dL/dP = -R.T * dL/db
+
+                    dL_dP_g = np.zeros(3, dtype=np.float32)
+                    dL_dP_g[0] = -(r11*dL_dxb + r21*dL_dyb + r31*dL_dzb)
+                    dL_dP_g[1] = -(r12*dL_dxb + r22*dL_dyb + r32*dL_dzb)
+                    dL_dP_g[2] = -(r13*dL_dxb + r23*dL_dyb + r33*dL_dzb)
+
+                    # dL/dAtt
+                    # Simplified: Assume Gaze cost mainly affects Yaw (for x) and Pitch (for y)
+                    # Implementing full dR/dAtt logic is verbose here but we can approximate or use existing
+                    # J_state handles dP/dAtt propagation but dL_direct/dAtt is also needed
+                    # Let's add direct terms for Yaw and Pitch to align
+                    # Yaw affects xb (approx). Pitch affects zb/yb.
+
+                    # dL/dYaw: Rotates (xb, yb)
+                    # dxb/dy = yb, dyb/dy = -xb (roughly)
+                    dL_dYaw_g = dL_dxb * yb + dL_dyb * (-xb)
+
+                    # dL/dPitch: Rotates (xb, zb)
+                    dL_dPitch_g = dL_dxb * (-zb) + dL_dzb * xb # Approx
+
                     # Combined dL/dS (12,)
                     dL_dS = np.zeros(12, dtype=np.float32)
-                    dL_dS[0] += dL_dP[0]
-                    dL_dS[1] += dL_dP[1]
-                    dL_dS[2] += dL_dP[2] + dL_dPz_alt + dL_dPz_ttc
+                    dL_dS[0] += dL_dP[0] + dL_dP_g[0]
+                    dL_dS[1] += dL_dP[1] + dL_dP_g[1]
+                    dL_dS[2] += dL_dP[2] + dL_dPz_alt + dL_dPz_ttc + dL_dP_g[2]
+
+                    dL_dS[7] += dL_dPitch_g
+                    dL_dS[8] += dL_dYaw_g
 
                     # Velocity Damping (dL/dV = 0.1 * V)
                     # Reduced from 2.0 to allow high-speed dive
