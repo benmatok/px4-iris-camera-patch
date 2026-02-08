@@ -97,24 +97,59 @@ const resetBtn = document.getElementById('reset-btn');
 const initAltInput = document.getElementById('init-alt');
 const initDistInput = document.getElementById('init-dist');
 
-resetBtn.addEventListener('click', () => {
-    const alt = parseFloat(initAltInput.value);
-    const dist = parseFloat(initDistInput.value);
+const pauseBtn = document.getElementById('pause-btn');
+const resumeBtn = document.getElementById('resume-btn');
+const stepBtn = document.getElementById('step-btn');
 
+const tgtXInput = document.getElementById('tgt-x');
+const tgtYInput = document.getElementById('tgt-y');
+const tgtZInput = document.getElementById('tgt-z');
+const updateTgtBtn = document.getElementById('update-tgt-btn');
+
+function sendMsg(type, payload = {}) {
     if (ws.readyState === WebSocket.OPEN) {
-        const payload = JSON.stringify({
-            type: 'reset',
-            altitude: alt,
-            distance: dist
-        });
-        ws.send(payload);
-        console.log("Sent Reset Command:", payload);
+        const msg = JSON.stringify({ type, ...payload });
+        ws.send(msg);
+        console.log("Sent:", msg);
     } else {
         console.error("WebSocket not connected");
     }
+}
+
+resetBtn.addEventListener('click', () => {
+    const alt = parseFloat(initAltInput.value);
+    const dist = parseFloat(initDistInput.value);
+    sendMsg('reset', { altitude: alt, distance: dist });
+});
+
+pauseBtn.addEventListener('click', () => sendMsg('pause'));
+resumeBtn.addEventListener('click', () => sendMsg('resume'));
+stepBtn.addEventListener('click', () => sendMsg('step'));
+
+updateTgtBtn.addEventListener('click', () => {
+    const x = parseFloat(tgtXInput.value);
+    const y = parseFloat(tgtYInput.value);
+    const z = parseFloat(tgtZInput.value);
+    sendMsg('update_target', { x, y, z });
 });
 
 function updateState(data) {
+    // Check Paused State
+    if (data.paused !== undefined) {
+        if (data.paused) {
+            statusEl.innerText = "Connected (PAUSED)";
+            statusEl.style.color = "yellow";
+            pauseBtn.disabled = true;
+            resumeBtn.disabled = false;
+            stepBtn.disabled = false;
+        } else {
+            statusEl.innerText = "Connected (RUNNING)";
+            statusEl.style.color = "#0f0";
+            pauseBtn.disabled = false;
+            resumeBtn.disabled = true;
+            stepBtn.disabled = true;
+        }
+    }
     // Data: { drone: {px, py, pz, roll, pitch, yaw}, target: [x,y,z], ghosts: [...] }
 
     // Coordinate Conversion: NED (Sim) to Y-Up (ThreeJS)
@@ -155,6 +190,14 @@ function updateState(data) {
     if (data.sim_target) {
         const stPos = toThree(data.sim_target);
         simTarget.position.copy(stPos);
+
+        // Update Inputs if not focused? Or just leave them?
+        // Let's not overwrite user input while typing.
+        if (document.activeElement !== tgtXInput && document.activeElement !== tgtYInput && document.activeElement !== tgtZInput) {
+            tgtXInput.value = data.sim_target[0];
+            tgtYInput.value = data.sim_target[1];
+            tgtZInput.value = data.sim_target[2];
+        }
     }
 
     // Ghosts

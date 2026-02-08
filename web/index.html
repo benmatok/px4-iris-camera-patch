@@ -47,6 +47,27 @@
             <input type="number" id="init-dist" value="50">
         </div>
         <button id="reset-btn">Reset / Restart</button>
+
+        <h3>Play Control</h3>
+        <div style="display: flex; gap: 5px;">
+            <button id="pause-btn">Pause</button>
+            <button id="resume-btn" disabled>Resume</button>
+            <button id="step-btn" disabled>Step</button>
+        </div>
+
+        <h3>Target Pos (m)</h3>
+        <div style="display: flex; gap: 5px; flex-direction: column;">
+            <div>
+                <label>X:</label> <input type="number" id="tgt-x" step="1.0" value="50.0">
+            </div>
+            <div>
+                <label>Y:</label> <input type="number" id="tgt-y" step="1.0" value="0.0">
+            </div>
+            <div>
+                <label>Z:</label> <input type="number" id="tgt-z" step="1.0" value="0.0">
+            </div>
+            <button id="update-tgt-btn">Update Target</button>
+        </div>
     </div>
     <script type="module" src="./main.js"></script>
 </body>
