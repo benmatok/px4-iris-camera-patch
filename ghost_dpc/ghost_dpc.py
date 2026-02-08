@@ -613,7 +613,7 @@ class PyGhostEstimator:
         grad_wx = -2.0 * ex * s_d
         grad_wy = -2.0 * ey * s_d
 
-        lr_wind = 0.1
+        lr_wind = 0.5
         self.stable_params['wind_x'] -= lr_wind * grad_wx
         self.stable_params['wind_y'] -= lr_wind * grad_wy
         self.stable_params['wind_x'] = max(-20.0, min(20.0, self.stable_params['wind_x']))
@@ -622,7 +622,7 @@ class PyGhostEstimator:
         # 2. Drag Coeff (da/dCd = -(v-w))
         grad_drag = -2.0 * (ex * (-vx_rel) + ey * (-vy_rel) + ez * (-vz))
 
-        lr_drag = 0.0001 # Sensitive
+        lr_drag = 0.001 # Sensitive
         self.stable_params['drag_coeff'] -= lr_drag * grad_drag
         self.stable_params['drag_coeff'] = max(0.01, min(2.0, self.stable_params['drag_coeff']))
 
@@ -631,7 +631,7 @@ class PyGhostEstimator:
         grad_mass = -2.0 * (ex * (-ax_th/s_m) + ey * (-ay_th/s_m) + ez * (-az_th/s_m))
 
         # Tune learning rate and gate by observability
-        lr_mass = 0.003
+        lr_mass = 0.01
         obs_mass = self.observability_scores.get('mass', 0.0)
 
         self.stable_params['mass'] -= lr_mass * grad_mass * obs_mass
@@ -676,7 +676,7 @@ class PyGhostEstimator:
              )
 
              # Update
-             lr_tau = 0.0001
+             lr_tau = 0.001
              obs_tau = self.observability_scores.get('tau', 0.0)
 
              self.stable_params['tau'] -= lr_tau * grad_tau * obs_tau
@@ -731,6 +731,34 @@ class PyDPCSolver:
             'yaw_rate': initial_action_dict['yaw_rate']
         }
 
+        # Compute Initial Screen Pos (u_prev, v_prev)
+        # Assuming we start from state_dict
+        def compute_uv(s, t_pos):
+             dx_w = s['px'] - t_pos[0]
+             dy_w = s['py'] - t_pos[1]
+             dz_w = s['pz'] - t_pos[2]
+
+             r, p, y = s['roll'], s['pitch'], s['yaw']
+             cr=math.cos(r); sr=math.sin(r)
+             cp=math.cos(p); sp=math.sin(p)
+             cy=math.cos(y); sy=math.sin(y)
+
+             r11 = cy*cp; r12 = sy*cp; r13 = -sp
+             r21 = cy*sp*sr - sy*cr; r22 = sy*sp*sr + cy*cr; r23 = cp*sr
+             r31 = cy*sp*cr + sy*sr; r32 = sy*sp*cr - cy*sr; r33 = cp*cr
+
+             xb = r11*dx_w + r12*dy_w + r13*dz_w
+             yb = r21*dx_w + r22*dy_w + r23*dz_w
+             zb = r31*dx_w + r32*dy_w + r33*dz_w
+
+             s30 = 0.5; c30 = 0.866025
+             xc = yb
+             yc = -s30*xb + c30*zb
+             zc = c30*xb + s30*zb
+
+             if zc < 0.1: zc = 0.1
+             return xc/zc, yc/zc, zc
+
         # Gradient Descent
         for _ in range(self.iterations):
             # Clamp Thrust
@@ -743,6 +771,7 @@ class PyDPCSolver:
                 if weight < 1e-5: continue
 
                 state = state_dict.copy()
+                u_prev, v_prev, zc_prev = compute_uv(state, target_pos)
 
                 # G is sensitivity dS/dU. 12x4.
                 G_mat = np.zeros((12, 4), dtype=np.float32)
@@ -766,7 +795,7 @@ class PyDPCSolver:
                     dist = math.sqrt(dx*dx + dy*dy + dz*dz + 1e-6)
 
                     # Scale Position Cost by 10.0 to overcome damping
-                    k_pos = 10.0
+                    k_pos = 100.0
                     dL_dP = np.array([k_pos*dx/dist, k_pos*dy/dist, k_pos*dz/dist], dtype=np.float32)
 
                     # B. Altitude & TTC Barrier
@@ -774,9 +803,10 @@ class PyDPCSolver:
                     dz_safe = next_state['pz'] - target_safe_z
 
                     # Linear Cost (Clipped to prevent overriding safety)
-                    # Clip dz_safe effect to +/- 10m equivalent (200.0)
-                    clipped_dz = max(-10.0, min(10.0, dz_safe))
-                    dL_dPz_alt = 20.0 * clipped_dz
+                    # Clip dz_safe effect to +/- 50m equivalent (2500.0)
+                    clipped_dz = max(-50.0, min(50.0, dz_safe))
+                    # dL_dPz_alt = 50.0 * clipped_dz
+                    dL_dPz_alt = 0.0
 
                     # TTC Barrier (Scale Less)
                     # tau = dz / -vz. Cost = 1/tau.
@@ -786,7 +816,7 @@ class PyDPCSolver:
 
                     if dz_safe > 0 and vz < -0.1:
                         tau = dz_safe / -vz
-                        gain = 2.0
+                        gain = 1000.0
                         denom = tau + 0.1
                         dL_dtau = -gain / (denom * denom)
 
@@ -801,26 +831,26 @@ class PyDPCSolver:
                     # Cost J = w * (dz_safe - k_vel * tau)^2
                     # Use k_vel = 2.0 (Target Approach Speed)
                     # Use w = 1.0
-                    k_vel = 2.0
-                    w_tau_track = 1.0
+                    # k_vel = 2.0
+                    # w_tau_track = 1.0
 
                     # Ensure vz is negative (closing) for tau to be valid
                     # If moving up or stationary, tau is undefined or negative (collision behind).
                     # We only apply this if closing.
-                    if dz_safe > 0 and vz < -0.1:
-                        tau_val = dz_safe / -vz
-                        err = dz_safe - k_vel * tau_val
+                    # if dz_safe > 0 and vz < -0.1:
+                    #     tau_val = dz_safe / -vz
+                    #     err = dz_safe - k_vel * tau_val
 
-                        # dJ/dZ = 2 * w * err * (1 - k_vel/(-v))
-                        # dJ/dV = 2 * w * err * (-k_vel * (z/v^2))
+                    #     # dJ/dZ = 2 * w * err * (1 - k_vel/(-v))
+                    #     # dJ/dV = 2 * w * err * (-k_vel * (z/v^2))
 
-                        dJ_dZ = 2.0 * w_tau_track * err * (1.0 - k_vel / -vz)
+                    #     dJ_dZ = 2.0 * w_tau_track * err * (1.0 - k_vel / -vz)
 
-                        # dTau/dV = z / v^2.  -k * dTau/dV = -k * z / v^2
-                        dJ_dV = 2.0 * w_tau_track * err * (-k_vel * (dz_safe / (vz*vz)))
+                    #     # dTau/dV = z / v^2.  -k * dTau/dV = -k * z / v^2
+                    #     dJ_dV = 2.0 * w_tau_track * err * (-k_vel * (dz_safe / (vz*vz)))
 
-                        dL_dPz_ttc += dJ_dZ
-                        dL_dVz_ttc += dJ_dV
+                    #     dL_dPz_ttc += dJ_dZ
+                    #     dL_dVz_ttc += dJ_dV
 
                     # --- Gaze Cost ---
                     # Compute u,v for current prediction step
@@ -855,11 +885,38 @@ class PyDPCSolver:
                     u_pred = xc / zc
                     v_pred = yc / zc
 
-                    # Cost = w_g * (u^2 + v^2)
-                    # Disabled (0.0) as it destabilizes Blind Dive position tracking
-                    w_g = 0.0
-                    dL_du = 2.0 * w_g * u_pred
-                    dL_dv = 2.0 * w_g * v_pred
+                    # Cost = w_g * (u^2 + v^2) + w_flow * ((u - u_prev)^2 + (v - v_prev)^2)
+                    w_g = 1.0
+                    w_flow = 0.5
+
+                    diff_u = u_pred - u_prev
+                    diff_v = v_pred - v_prev
+
+                    # Gate Visual Costs if target is behind camera plane
+                    # We only add Flow Cost if we were visible AND are now visible
+                    # Added tighter bounds to ignore "edge of FOV" singularities
+                    valid_curr = (zc > 1.0) and (abs(u_pred) < 3.0) and (abs(v_pred) < 3.0)
+                    valid_prev = (zc_prev > 1.0) and (abs(u_prev) < 3.0) and (abs(v_prev) < 3.0)
+
+                    dL_du = 0.0
+                    dL_dv = 0.0
+
+                    if valid_curr:
+                        dL_du += 2.0 * w_g * u_pred
+                        dL_dv += 2.0 * w_g * v_pred
+
+                    if valid_curr and valid_prev:
+                        # Gated Flow Cost (only damp when tracking, not when acquiring)
+                        error_sq = u_pred*u_pred + v_pred*v_pred
+                        flow_gate = math.exp(-error_sq / 10.0)
+
+                        dL_du += 2.0 * w_flow * flow_gate * diff_u
+                        dL_dv += 2.0 * w_flow * flow_gate * diff_v
+
+                    # Update Prev for next step
+                    u_prev = u_pred
+                    v_prev = v_pred
+                    zc_prev = zc
 
                     # Gradients du/dS, dv/dS
                     # u = xc/zc => du = (dxc*zc - xc*dzc)/zc^2
@@ -929,7 +986,7 @@ class PyDPCSolver:
 
                     # Velocity Damping (dL/dV = 0.1 * V)
                     # Reduced from 2.0 to allow high-speed dive
-                    k_damp = 0.1
+                    k_damp = 0.2
                     dL_dS[3] += k_damp * next_state['vx']
                     dL_dS[4] += k_damp * next_state['vy']
                     dL_dS[5] += k_damp * next_state['vz'] + dL_dVz_ttc
