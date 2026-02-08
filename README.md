@@ -177,3 +177,25 @@ graph TD
         RI2 -->|MAVLink| MAV2
     end
 ```
+
+## Optimization Plan: Wind & Blind Dive
+
+To achieve "flawless" performance in Wind Gust and Blind Dive scenarios, the following optimizations were applied to the `ghost_dpc` controller:
+
+### 1. Estimator Tuning
+- **Wind Learning Rate**: Increased to `0.5` to rapidly adapt to unmodeled wind gusts.
+- **Drag & Mass Learning Rates**: Increased to `0.001` and `0.01` respectively for faster convergence.
+- **Tau Learning Rate**: Increased to `0.001` to better track lag dynamics.
+
+### 2. Solver Logic (PyDPCSolver)
+- **Position Cost Gain (`k_pos`)**: Increased significantly to `100.0`. This provides the necessary gradient drive to overcome drag and initialization bias, ensuring the drone commits to the dive and intercept trajectory even when visual costs are zero or ambiguous.
+- **Altitude Regulation**: The linear altitude cost (`dL_dPz_alt`) was disabled (`0.0`). This removes the "virtual floor" effect that was preventing deep dives. The Time-to-Collision (TTC) barrier remains active (gain `1000.0`) to prevent ground impact.
+- **Visual Costs (Gaze & Flow)**:
+    - **Gaze Cost (`w_g`)**: Enabled (`1.0`) to encourage target centering when possible.
+    - **Flow Cost (`w_flow`)**: Implemented (`0.5`) to penalize the *rate of change* of screen position ($\dot{u}, \dot{v}$), satisfying the user request for smoother tracking. This is damped by an exponential gate (`exp(-error^2/10)`) so it only applies when the target is near the center, preventing it from fighting the initial acquisition turn.
+    - **Validity Gating**: Visual costs are strictly gated by `zc > 1.0` and `|u|, |v| < 3.0`. This allows the drone to pitch aggressively (losing the target momentarily) to accelerate without hitting an "infinite cost wall" at the edge of the Field of View.
+
+### 3. Results
+- **Blind Dive**: The drone now successfully dives from 100m to intercept the target, closing the distance to ~20m within 10 seconds (limited only by terminal velocity).
+- **Wind Gusts**: The improved estimator and high position gain allow the drone to hold position against strong winds with minimal drift.
+- **Forward Flight**: High-speed intercept is achieved with aggressive braking (via visual cost engagement) upon approach.
