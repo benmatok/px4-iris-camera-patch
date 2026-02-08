@@ -68,6 +68,8 @@ class TheShow:
             self.prediction_history = []
             self.logger = ResidualLogger()
             self.websockets = set()
+            self.paused = False
+            self.step_once = False
             logger.info("TheShow initialized successfully.")
         except Exception as e:
             logger.error(f"Failed to initialize TheShow: {e}")
@@ -83,7 +85,9 @@ class TheShow:
     async def handle_message(self, message: str):
         try:
             data = json.loads(message)
-            if data.get('type') == 'reset':
+            msg_type = data.get('type')
+
+            if msg_type == 'reset':
                 logger.info(f"Received reset command: {data}")
 
                 # Default Blind Dive parameters
@@ -110,6 +114,27 @@ class TheShow:
 
                 self.prediction_history = []
                 self.loops = 0
+                self.paused = False
+
+            elif msg_type == 'pause':
+                self.paused = True
+                logger.info("Simulation Paused")
+
+            elif msg_type == 'resume':
+                self.paused = False
+                logger.info("Simulation Resumed")
+
+            elif msg_type == 'step':
+                self.paused = True
+                self.step_once = True
+                logger.info("Simulation Step")
+
+            elif msg_type == 'update_target':
+                tx = float(data.get('x', self.target_pos_sim_world[0]))
+                ty = float(data.get('y', self.target_pos_sim_world[1]))
+                tz = float(data.get('z', self.target_pos_sim_world[2]))
+                self.target_pos_sim_world = [tx, ty, tz]
+                logger.info(f"Target Updated: {self.target_pos_sim_world}")
 
         except Exception as e:
             logger.error(f"Error handling message: {e}")
@@ -295,23 +320,39 @@ class TheShow:
             'sim_target': target_pos_sim_world,
             'tracker': {'u': center[0] if center else 0, 'v': center[1] if center else 0, 'size': radius},
             'dpc_error': dpc_error,
-            'ghosts': ghost_paths
+            'ghosts': ghost_paths,
+            'paused': self.paused
         }
         return payload
 
     async def control_loop(self):
         logger.info("Starting Control Loop...")
+        last_payload = None
         try:
             while True:
                 start_time = asyncio.get_running_loop().time()
 
-                # Offload heavy computation to a thread
-                payload = await asyncio.to_thread(self.compute_step)
+                if not self.paused or self.step_once:
+                    # Offload heavy computation to a thread
+                    payload = await asyncio.to_thread(self.compute_step)
+                    last_payload = payload
+                    self.loops += 1
+                    self.step_once = False
+                else:
+                    # If paused, we might still want to broadcast the last state
+                    # but maybe update the 'paused' status if it changed?
+                    # For now, just reuse last payload if available, ensuring 'paused' is correct.
+                    if last_payload:
+                        payload = last_payload.copy()
+                        payload['paused'] = True
+                        # Also update target position in payload if it changed while paused
+                        payload['sim_target'] = self.target_pos_sim_world
+                    else:
+                        payload = {'paused': True, 'state': 'WAITING'}
 
                 # Broadcast result
                 await self.broadcast(payload)
 
-                self.loops += 1
                 elapsed = asyncio.get_running_loop().time() - start_time
                 delay = max(0, DT - elapsed)
                 await asyncio.sleep(delay)
