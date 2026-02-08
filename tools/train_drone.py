@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from drone_env.drone import DroneEnv
 from models.ae_policy import DronePolicy
-from visualization import Visualizer
+import sys; import os; sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))); from tools.visualization import Visualizer
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

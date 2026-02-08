@@ -5,7 +5,7 @@ import os
 import numpy as np
 from unittest.mock import MagicMock, AsyncMock, patch
 
-sys.path.append(os.getcwd())
+import sys; import os; sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Mock modules
 sys.modules['mavsdk'] = MagicMock()

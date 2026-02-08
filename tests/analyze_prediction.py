@@ -4,7 +4,7 @@ import sys
 import os
 import math
 
-sys.path.append(os.getcwd())
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from ghost_dpc.ghost_dpc import PyGhostModel, PyGhostEstimator, PyDPCSolver
 
 class AnalysisController:
