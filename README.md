@@ -115,7 +115,18 @@ The `theshow.py` script runs a real-time simulation of the Ghost-DPC control alg
 
 ### Running the Server
 
-To start the simulation server:
+To start the simulation server, first ensure your environment is set up and dependencies are installed:
+
+```bash
+# 1. Create and activate venv
+python3 -m venv venv
+source venv/bin/activate
+
+# 2. Install dependencies
+pip install -r requirements.txt
+```
+
+Then, run the server:
 
 ```bash
 uvicorn theshow:app --host 0.0.0.0 --port 8080
@@ -127,7 +138,7 @@ Or simply:
 python3 theshow.py
 ```
 
-Then open your browser to `http://localhost:8080` (or the appropriate IP address).
+Finally, open your browser to `http://localhost:8080` (or the appropriate IP address).
 
 ### Architecture
 
