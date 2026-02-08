@@ -21,6 +21,61 @@ A differentiable solver optimizes a single control sequence that minimizes the *
 *   **Math:** Backpropagates gradients through the physics engine to minimize:
     $$ J = \sum_{t=0}^H \sum_{i=1}^N w_i \cdot \text{Cost}(\text{GhostState}_i(t), \text{Target}) $$
 
+## PyDPCSolver Implementation Details
+
+The `PyDPCSolver` implements a **Gradient-Based Model Predictive Control (MPC)** algorithm tailored for drones with uncertain physical parameters.
+
+### 1. State Vector (12 Dimensions)
+The solver operates on an expanded 12-dimensional state vector to model full rotational dynamics:
+*   **Position:** `px, py, pz` (World Frame, ENU)
+*   **Velocity:** `vx, vy, vz` (World Frame)
+*   **Attitude:** `roll, pitch, yaw` (Euler Angles)
+*   **Angular Velocity:** `wx, wy, wz` (Body Frame)
+
+### 2. Cost Function
+The cost function $J$ is designed to balance tracking performance, safety, and stability. It is a weighted sum of several terms:
+
+*   **Distance Cost:** Penalizes Euclidean distance to the target $(x_{tgt}, y_{tgt}, z_{tgt})$.
+    *   $\frac{dL}{dP} = k_{pos} \cdot \frac{P - P_{tgt}}{|P - P_{tgt}|}$
+    *   Gain $k_{pos} = 10.0$ (Boosted for aggressive tracking).
+
+*   **Altitude & TTC Barrier (Scale-Less Safety):**
+    *   **Linear Altitude:** Keeps drone near `target_z + 2.0m`.
+    *   **Time-to-Collision (TTC):** If closing speed $v_z < -0.1$, calculates $\tau = dz_{safe} / -v_z$.
+    *   **Height Regulation via TTC:** New term to regulate approach speed.
+        *   $J_{tau} = w \cdot (dz_{safe} - k_{ref} \cdot \tau)^2$
+        *   $k_{ref} = 2.0$ m/s (Target approach velocity proxy).
+        *   Creates a natural braking curve.
+
+*   **Velocity Damping:**
+    *   $J_{vel} = k_{damp} \cdot |V|^2$
+    *   $k_{damp} = 0.1$ (Reduced to allow high-speed dives).
+
+*   **Angular Rate Damping:**
+    *   $J_{rate} = 0.1 \cdot |\omega|^2$. Prevents oscillation.
+
+*   **Descent Velocity Constraint:**
+    *   Soft constraint penalizing $v_z < -15.0$ m/s.
+    *   $J_{lim} = 5000 \cdot \text{ReLU}(-v_z - 15.0)$.
+
+### 3. Optimization Loop (Gradient Descent)
+The solver performs **30 iterations** of gradient descent per control cycle.
+
+1.  **Rollout:** Simulates trajectory for `H=40` steps using multiple "Ghost" models (weighted by Estimator).
+2.  **Gradient Propagation:**
+    *   Computes analytic gradients of the cost w.r.t state ($\frac{dL}{dS}$).
+    *   Backpropagates through the physics model using the Chain Rule:
+        $$ \frac{dL}{dU} = \frac{dL}{dS} \cdot \frac{dS_{next}}{dU} + \frac{dL}{dS_{next}} \cdot \frac{dS_{next}}{dS} $$
+    *   Uses 12x12 State Jacobian (`get_state_jacobian`) and 12x4 Action Jacobian (`get_gradients`).
+3.  **Update:**
+    *   Updates control sequence $U$ using computed gradients.
+    *   Applies **Gradient Clipping** ($\pm 10.0$) to prevent exploding gradients.
+    *   Applies **Input Clamping** (Thrust $\in [0, 1]$).
+
+### 4. Physics Integration
+*   **Lag Dynamics:** Angular rates follow a first-order lag model $\dot{\omega} = (\omega_{cmd} - \omega)/\tau$ to simulate inertia.
+*   **Sensitivity:** The solver accounts for the sensitivity of the trajectory to mass, drag, and time constant ($\tau$), allowing it to optimize for the weighted average "belief" of the drone's dynamics.
+
 ### 3. The Differentiable Physics Engine
 *   **Role:** The "Imagination".
 *   **Logic:** A lightweight, analytical derivatives-enabled simulator (written in C++/Cython) that predicts the next state given a state and action.
