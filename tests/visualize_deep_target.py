@@ -7,8 +7,8 @@ import torch.nn as nn
 import logging
 import time
 from drone_env.drone import DroneEnv
-from visualization import Visualizer
-from train_drone import LinearPlanner
+import sys; import os; sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))); from tools.visualization import Visualizer
+from tools.train_drone import LinearPlanner
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 

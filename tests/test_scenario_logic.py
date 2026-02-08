@@ -5,7 +5,7 @@ import os
 from unittest.mock import MagicMock, patch
 
 # Add root to path
-sys.path.append(os.getcwd())
+import sys; import os; sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Mock DroneEnv modules to avoid import errors
 sys.modules['drone_env'] = MagicMock()
