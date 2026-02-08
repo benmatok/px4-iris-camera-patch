@@ -80,6 +80,40 @@ class TheShow:
     def disconnect(self, websocket: WebSocket):
         self.websockets.remove(websocket)
 
+    async def handle_message(self, message: str):
+        try:
+            data = json.loads(message)
+            if data.get('type') == 'reset':
+                logger.info(f"Received reset command: {data}")
+
+                # Default Blind Dive parameters
+                # Target is at [50.0, 0.0, 0.0]
+
+                alt = float(data.get('altitude', 100.0))
+                dist = float(data.get('distance', 50.0))
+
+                # Calculate Drone Pos
+                # Drone X = Target X - Distance
+                # Drone Y = Target Y
+                # Drone Z = Altitude
+
+                drone_x = self.target_pos_sim_world[0] - dist
+                drone_y = self.target_pos_sim_world[1]
+                drone_z = alt
+
+                # Reset Sim
+                self.sim.reset_to_scenario("Blind Dive", pos_x=drone_x, pos_y=drone_y, pos_z=drone_z)
+
+                # Reset Logic
+                self.mission.reset()
+                self.controller.reset()
+
+                self.prediction_history = []
+                self.loops = 0
+
+        except Exception as e:
+            logger.error(f"Error handling message: {e}")
+
     async def broadcast(self, data):
         if not self.websockets: return
 
@@ -317,7 +351,8 @@ async def websocket_endpoint(websocket: WebSocket):
     await the_show.connect(websocket)
     try:
         while True:
-            await websocket.receive_text()
+            data = await websocket.receive_text()
+            await the_show.handle_message(data)
     except WebSocketDisconnect:
         the_show.disconnect(websocket)
 

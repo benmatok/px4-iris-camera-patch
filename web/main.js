@@ -92,6 +92,28 @@ ws.onmessage = (event) => {
     }
 };
 
+// UI Controls
+const resetBtn = document.getElementById('reset-btn');
+const initAltInput = document.getElementById('init-alt');
+const initDistInput = document.getElementById('init-dist');
+
+resetBtn.addEventListener('click', () => {
+    const alt = parseFloat(initAltInput.value);
+    const dist = parseFloat(initDistInput.value);
+
+    if (ws.readyState === WebSocket.OPEN) {
+        const payload = JSON.stringify({
+            type: 'reset',
+            altitude: alt,
+            distance: dist
+        });
+        ws.send(payload);
+        console.log("Sent Reset Command:", payload);
+    } else {
+        console.error("WebSocket not connected");
+    }
+});
+
 function updateState(data) {
     // Data: { drone: {px, py, pz, roll, pitch, yaw}, target: [x,y,z], ghosts: [...] }
 

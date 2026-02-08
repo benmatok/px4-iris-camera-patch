@@ -20,6 +20,12 @@ class DPCFlightController:
         self.predictor = PyGhostModel(cfg['mass'], cfg['drag_coeff'], cfg['thrust_coeff'])
         self.last_target_rel_pos = None
 
+    def reset(self):
+        self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
+        self.estimated_velocity = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        self.last_target_rel_pos = None
+        logger.info("DPCFlightController reset")
+
     def compute_action(self, state_obs, target_cmd, raw_target_rel_ned=None, extra_yaw_rate=0.0):
         """
         Computes the optimal control action using DPC with Relative State Estimation.

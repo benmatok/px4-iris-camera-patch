@@ -5,9 +5,13 @@ logger = logging.getLogger(__name__)
 
 class MissionManager:
     def __init__(self, target_alt=50.0):
-        self.state = "TAKEOFF"
         self.target_alt = target_alt
-        self.dpc_target = [0.0, 0.0, target_alt] # Z-Up Target
+        self.reset()
+
+    def reset(self):
+        self.state = "TAKEOFF"
+        self.dpc_target = [0.0, 0.0, self.target_alt] # Z-Up Target
+        logger.info("MissionManager reset to TAKEOFF")
 
     def update(self, drone_state_sim, detection_result):
         """
