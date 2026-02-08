@@ -114,21 +114,46 @@ class TheShow:
         # Get synthetic image
         img = self.sim.get_image(target_pos_sim_world)
 
-        # Convert Sim State to NED for Tracking/Control
-        dpc_state_ned = {
-            'px': s['px'], 'py': s['py'], 'pz': -s['pz'],
-            'vx': s['vx'], 'vy': s['vy'], 'vz': -s['vz'],
+        # Convert Sim State to NED for Tracking/Control (but with ZERO POSITION)
+        # We perform relative tracking, so we zero out absolute position/velocity for the tracker
+        dpc_state_ned_rel = {
+            'px': 0.0, 'py': 0.0, 'pz': -s['pz'],
+            'vx': 0.0, 'vy': 0.0, 'vz': -s['vz'],
             'roll': s['roll'], 'pitch': s['pitch'], 'yaw': -s['yaw']
         }
 
-        # Detect and Localize
-        center, target_wp, radius = self.tracker.process(img, dpc_state_ned)
+        # Detect and Localize (Returns Relative Target Position in NED)
+        center, target_wp, radius = self.tracker.process(img, dpc_state_ned_rel)
 
         # 3. Update Mission Logic
-        mission_state, dpc_target, extra_yaw = self.mission.update(s, (center, target_wp))
+        # Pass sanitized relative state to mission (px=0, py=0)
+        sim_state_rel = s.copy()
+        sim_state_rel['px'] = 0.0
+        sim_state_rel['py'] = 0.0
 
-        # 4. Compute Control (Using Z-Up State "s")
-        action_out, ghost_paths = self.controller.compute_action(s, dpc_target, extra_yaw)
+        mission_state, dpc_target, extra_yaw = self.mission.update(sim_state_rel, (center, target_wp))
+
+        # 4. Compute Control
+        # Construct observed state for controller (No absolute position/velocity)
+        state_obs = {
+            'pz': s['pz'],
+            'vz': s['vz'],
+            'roll': s['roll'],
+            'pitch': s['pitch'],
+            'yaw': s['yaw'],
+            'wx': s['wx'],
+            'wy': s['wy'],
+            'wz': s['wz']
+        }
+
+        # dpc_target is [RelX, RelY, AbsZ]
+        # target_wp is [RelX, RelY, RelZ] (NED)
+        action_out, ghost_paths = self.controller.compute_action(
+            state_obs,
+            dpc_target,
+            raw_target_rel_ned=target_wp,
+            extra_yaw_rate=extra_yaw
+        )
 
         # 5. Apply Control to Sim
         # Controller (Z-Up) -> Sim (Z-Up)
@@ -186,7 +211,7 @@ class TheShow:
             p = horizon_preds[-1]
 
             pred_s = p['state']
-            act_s = dpc_state_ned
+            act_s = dpc_state_ned_rel
 
             # 1. Height Error (Altitude)
             # pred_s is Z-Up. act_s is NED.
@@ -231,7 +256,7 @@ class TheShow:
         # 6. Prepare Payload
         payload = {
             'state': mission_state,
-            'drone': dpc_state_ned,
+            'drone': dpc_state_ned_rel,
             'target': dpc_target,
             'sim_target': target_pos_sim_world,
             'tracker': {'u': center[0] if center else 0, 'v': center[1] if center else 0, 'size': radius},
