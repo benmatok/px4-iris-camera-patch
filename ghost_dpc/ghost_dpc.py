@@ -814,9 +814,10 @@ class PyDPCSolver:
                     dL_dPz_ttc = 0.0
                     dL_dVz_ttc = 0.0
 
+                    # Tuned Barrier: Reduce gain to allow closer approach
                     if dz_safe > 0 and vz < -0.1:
                         tau = dz_safe / -vz
-                        gain = 1000.0
+                        gain = 200.0 # Reduced from 1000.0
                         denom = tau + 0.1
                         dL_dtau = -gain / (denom * denom)
 
@@ -985,8 +986,8 @@ class PyDPCSolver:
                     dL_dS[8] += dL_dYaw_g
 
                     # Velocity Damping (dL/dV = 0.1 * V)
-                    # Reduced from 2.0 to allow high-speed dive
-                    k_damp = 0.2
+                    # Increased to reduce overshoot
+                    k_damp = 0.5 # Increased from 0.2
                     dL_dS[3] += k_damp * next_state['vx']
                     dL_dS[4] += k_damp * next_state['vy']
                     dL_dS[5] += k_damp * next_state['vz'] + dL_dVz_ttc

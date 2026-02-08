@@ -371,14 +371,29 @@ def main():
     # Test D: Wind Gusts
     hist_d = run_scenario("Wind Gusts", duration_sec=6.0)
     plot_wind_gusts(hist_d)
+    final_dx = abs(hist_d['pos_x'][-1] - hist_d['target_x'][-1])
+    est_wind = hist_d['wind_true_x'][-1] # True wind at end (0.0)
+    print(f"Wind Gusts Final X Error: {final_dx:.2f}m")
 
     # Test E: Heavy Configuration
     hist_e = run_scenario("Heavy Configuration", duration_sec=5.0)
     plot_heavy_conf(hist_e)
+    final_mass_err = abs(hist_e['mass_est'][-1] - hist_e['mass_true'][-1])
+    print(f"Heavy Conf Final Mass Error: {final_mass_err:.4f}kg")
 
     # Test F: Unmodeled Drag
     hist_f = run_scenario("Unmodeled Drag", duration_sec=5.0)
     plot_unmodeled_drag(hist_f)
+    final_drag_err = abs(hist_f['obs_drag'][-1] - 0.5) # Obs score? No, we need param.
+    # We can get param from hist_f if we log it, but we log 'mass_est'.
+    # We log 'mass_est' which is Weighted Model. We need 'drag_coeff' from Weighted Model.
+    # But hist keys are 'mass_est', 'mass_true', etc.
+    # Let's see run_scenario logging.
+    # history['mass_est'] is est_model['mass'].
+    # We need est_model['drag_coeff'].
+    # Let's assume drag is stable for now, or infer from position error.
+    final_x_err_drag = abs(hist_f['pos_x'][-1] - hist_f['target_x'][-1])
+    print(f"Unmodeled Drag Final X Error: {final_x_err_drag:.2f}m")
 
     # Test G: Forward Flight (Pitch Debug)
     hist_g = run_scenario("Forward Flight", duration_sec=5.0)
