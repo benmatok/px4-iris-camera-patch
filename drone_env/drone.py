@@ -79,10 +79,13 @@ def step_cpu(
 
     dt = 0.05 # Increased step size
     g = 9.81
-    substeps = 2 # Reduced substeps
+    substeps = 1 # Reduced substeps
 
     # Calculate substep time
     dt_sub = dt / substeps
+
+    # Debug
+    # print(f"DEBUG: Mass[0]={masses[0]:.3f} ThrustCoeff[0]={thrust_coeffs[0]:.3f} DragCoeff[0]={drag_coeffs[0]:.3f}")
 
     # Local copies of state (NumPy arrays)
     px, py, pz = pos_x, pos_y, pos_z

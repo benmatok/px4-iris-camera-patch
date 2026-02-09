@@ -415,7 +415,8 @@ class PyGhostEstimator:
         for md in models_list:
              self.models.append(PyGhostModel(
                  md['mass'], md['drag_coeff'], md['thrust_coeff'],
-                 md.get('wind_x', 0.0), md.get('wind_y', 0.0)
+                 md.get('wind_x', 0.0), md.get('wind_y', 0.0),
+                 md.get('tau', 0.1)
              ))
         self.probabilities = np.ones(len(self.models), dtype=np.float32) / len(self.models)
         self.lambda_param = 5.0
@@ -720,7 +721,8 @@ class PyDPCSolver:
         for md in models_list:
              models.append(PyGhostModel(
                  md['mass'], md['drag_coeff'], md['thrust_coeff'],
-                 md.get('wind_x', 0.0), md.get('wind_y', 0.0)
+                 md.get('wind_x', 0.0), md.get('wind_y', 0.0),
+                 md.get('tau', 0.1)
              ))
 
         # Initial Action
