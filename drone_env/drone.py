@@ -81,6 +81,9 @@ def step_cpu(
     g = 9.81
     substeps = 2 # Reduced substeps
 
+    # Calculate substep time
+    dt_sub = dt / substeps
+
     # Local copies of state (NumPy arrays)
     px, py, pz = pos_x, pos_y, pos_z
     vx, vy, vz = vel_x, vel_y, vel_z
@@ -172,9 +175,9 @@ def step_cpu(
 
     for s in range(substeps):
         # 1. Dynamics Update (Lag)
-        wx += (roll_rate - wx) * (dt / tau)
-        wy += (pitch_rate - wy) * (dt / tau)
-        wz += (yaw_rate - wz) * (dt / tau)
+        wx += (roll_rate - wx) * (dt_sub / tau)
+        wy += (pitch_rate - wy) * (dt_sub / tau)
+        wz += (yaw_rate - wz) * (dt_sub / tau)
 
         # Kinematic Update (Euler Rates from Body Rates)
         sp_k, cp_k = np.sin(r), np.cos(r)
@@ -185,9 +188,9 @@ def step_cpu(
         p_dot = wy * cp_k - wz * sp_k
         y_dot = (wy * sp_k + wz * cp_k) * st_k
 
-        r += r_dot * dt
-        p += p_dot * dt
-        y_ang += y_dot * dt
+        r += r_dot * dt_sub
+        p += p_dot * dt_sub
+        y_ang += y_dot * dt_sub
 
         # Normalize angles to [-pi, pi]
         r = (r + np.pi) % (2 * np.pi) - np.pi
@@ -217,13 +220,13 @@ def step_cpu(
         ay = ay_thrust + ay_drag
         az = az_thrust + az_gravity + az_drag
 
-        vx += ax * dt
-        vy += ay * dt
-        vz += az * dt
+        vx += ax * dt_sub
+        vy += ay * dt_sub
+        vz += az * dt_sub
 
-        px += vx * dt
-        py += vy * dt
-        pz += vz * dt
+        px += vx * dt_sub
+        py += vy * dt_sub
+        pz += vz * dt_sub
 
         # Terrain Collision
         terr_z = 0.0
