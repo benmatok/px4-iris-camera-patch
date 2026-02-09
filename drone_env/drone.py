@@ -189,6 +189,11 @@ def step_cpu(
         p += p_dot * dt
         y_ang += y_dot * dt
 
+        # Normalize angles to [-pi, pi]
+        r = (r + np.pi) % (2 * np.pi) - np.pi
+        p = (p + np.pi) % (2 * np.pi) - np.pi
+        y_ang = (y_ang + np.pi) % (2 * np.pi) - np.pi
+
         max_thrust = 20.0 * thrust_coeffs
         # Thrust Clipping [0, 1]
         thrust_cmd = np.clip(thrust_cmd, 0.0, 1.0)
