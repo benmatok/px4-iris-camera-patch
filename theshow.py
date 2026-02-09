@@ -52,8 +52,13 @@ class TheShow:
 
             # Scenario / Sim
             self.sim = SimDroneInterface(self.projector)
-            self.sim.reset_to_scenario("Blind Dive") # Init Blind Dive
             self.target_pos_sim_world = [50.0, 0.0, 0.0] # Blind Dive Target
+
+            # Initial Pos for Blind Dive (Hardcoded Default)
+            drone_pos = [0.0, 0.0, 100.0]
+            pitch, yaw = self.calculate_initial_orientation(drone_pos, self.target_pos_sim_world)
+
+            self.sim.reset_to_scenario("Blind Dive", pos_x=drone_pos[0], pos_y=drone_pos[1], pos_z=drone_pos[2], pitch=pitch, yaw=yaw)
 
             # Perception
             self.tracker = VisualTracker(self.projector)
@@ -70,10 +75,28 @@ class TheShow:
             self.websockets = set()
             self.paused = False
             self.step_once = False
+            self.time_scale = 1.0
             logger.info("TheShow initialized successfully.")
         except Exception as e:
             logger.error(f"Failed to initialize TheShow: {e}")
             raise
+
+    def calculate_initial_orientation(self, drone_pos, target_pos):
+        dx = target_pos[0] - drone_pos[0]
+        dy = target_pos[1] - drone_pos[1]
+        dz = target_pos[2] - drone_pos[2]
+
+        yaw = np.arctan2(dy, dx)
+        dist_xy = np.sqrt(dx*dx + dy*dy)
+        pitch_vec = np.arctan2(dz, dist_xy)
+
+        # Camera Tilt is -45.0 (Down)
+        camera_tilt = np.deg2rad(-45.0)
+
+        # Body Pitch = Vec Pitch - Camera Tilt
+        pitch = pitch_vec - camera_tilt
+
+        return pitch, yaw
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
@@ -105,8 +128,10 @@ class TheShow:
                 drone_y = self.target_pos_sim_world[1]
                 drone_z = alt
 
+                pitch, yaw = self.calculate_initial_orientation([drone_x, drone_y, drone_z], self.target_pos_sim_world)
+
                 # Reset Sim
-                self.sim.reset_to_scenario("Blind Dive", pos_x=drone_x, pos_y=drone_y, pos_z=drone_z)
+                self.sim.reset_to_scenario("Blind Dive", pos_x=drone_x, pos_y=drone_y, pos_z=drone_z, pitch=pitch, yaw=yaw)
 
                 # Reset Logic
                 self.mission.reset()
@@ -135,6 +160,14 @@ class TheShow:
                 tz = float(data.get('z', self.target_pos_sim_world[2]))
                 self.target_pos_sim_world = [tx, ty, tz]
                 logger.info(f"Target Updated: {self.target_pos_sim_world}")
+
+            elif msg_type == 'set_speed':
+                try:
+                    speed = float(data.get('speed', 1.0))
+                    self.time_scale = max(0.1, min(2.0, speed))
+                    logger.info(f"Speed set to: {self.time_scale}")
+                except ValueError:
+                    logger.error("Invalid speed value")
 
         except Exception as e:
             logger.error(f"Error handling message: {e}")
@@ -316,6 +349,7 @@ class TheShow:
         payload = {
             'state': mission_state,
             'drone': dpc_state_ned_rel,
+            'control': action_out,
             'target': dpc_target,
             'sim_target': target_pos_sim_world,
             'tracker': {'u': center[0] if center else 0, 'v': center[1] if center else 0, 'size': radius},
@@ -354,7 +388,7 @@ class TheShow:
                 await self.broadcast(payload)
 
                 elapsed = asyncio.get_running_loop().time() - start_time
-                delay = max(0, DT - elapsed)
+                delay = max(0, (DT / self.time_scale) - elapsed)
                 await asyncio.sleep(delay)
 
         except asyncio.CancelledError:

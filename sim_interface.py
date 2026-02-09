@@ -41,8 +41,8 @@ class SimDroneInterface:
 
             # Zero Attitude
             self.dd['roll'][0] = 0.0
-            self.dd['pitch'][0] = 0.0
-            self.dd['yaw'][0] = 0.0
+            self.dd['pitch'][0] = kwargs.get('pitch', 0.0)
+            self.dd['yaw'][0] = kwargs.get('yaw', 0.0)
 
             # Zero Angular Velocities
             self.dd['ang_vel_x'][0] = 0.0

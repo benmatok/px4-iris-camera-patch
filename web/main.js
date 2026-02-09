@@ -65,7 +65,9 @@ scene.add(ghostGroup);
 
 // Telemetry UI
 const statusEl = document.getElementById('status');
-const telemEl = document.getElementById('telemetry');
+const debugTelemEl = document.getElementById('debug-telem');
+const debugControlEl = document.getElementById('debug-control');
+const debugMissionEl = document.getElementById('debug-mission');
 const hudCanvas = document.getElementById('hud-canvas');
 const ctx = hudCanvas.getContext('2d');
 
@@ -101,6 +103,9 @@ const pauseBtn = document.getElementById('pause-btn');
 const resumeBtn = document.getElementById('resume-btn');
 const stepBtn = document.getElementById('step-btn');
 
+const speedSlider = document.getElementById('speed-slider');
+const speedVal = document.getElementById('speed-val');
+
 const tgtXInput = document.getElementById('tgt-x');
 const tgtYInput = document.getElementById('tgt-y');
 const tgtZInput = document.getElementById('tgt-z');
@@ -125,6 +130,12 @@ resetBtn.addEventListener('click', () => {
 pauseBtn.addEventListener('click', () => sendMsg('pause'));
 resumeBtn.addEventListener('click', () => sendMsg('resume'));
 stepBtn.addEventListener('click', () => sendMsg('step'));
+
+speedSlider.addEventListener('input', () => {
+    const val = parseFloat(speedSlider.value);
+    speedVal.innerText = val.toFixed(1);
+    sendMsg('set_speed', { speed: val });
+});
 
 updateTgtBtn.addEventListener('click', () => {
     const x = parseFloat(tgtXInput.value);
@@ -217,23 +228,52 @@ function updateState(data) {
         });
     }
 
-    // Telemetry
+    // Telemetry & Debug
+    function row(label, val) {
+        return `<div class="debug-row"><span>${label}:</span> <span class="debug-val">${val}</span></div>`;
+    }
+
+    // Flight Data
+    const alt = -d.pz;
+    const vel = Math.sqrt((d.vx||0)**2 + (d.vy||0)**2 + (d.vz||0)**2);
+
+    debugTelemEl.innerHTML =
+        row('Alt', alt.toFixed(2) + ' m') +
+        row('Speed', vel.toFixed(2) + ' m/s') +
+        row('Vx', (d.vx||0).toFixed(2)) +
+        row('Vy', (d.vy||0).toFixed(2)) +
+        row('Vz', (d.vz||0).toFixed(2)) +
+        row('Roll', (d.roll * 180/Math.PI).toFixed(1) + ' deg') +
+        row('Pitch', (d.pitch * 180/Math.PI).toFixed(1) + ' deg') +
+        row('Yaw', (d.yaw * 180/Math.PI).toFixed(1) + ' deg');
+
+    // Control
+    if (data.control) {
+        const c = data.control;
+        debugControlEl.innerHTML =
+            row('Thrust', c.thrust?.toFixed(3)) +
+            row('Roll R', c.roll_rate?.toFixed(3)) +
+            row('Pitch R', c.pitch_rate?.toFixed(3)) +
+            row('Yaw R', c.yaw_rate?.toFixed(3));
+    }
+
+    // Mission / Error
     let errStr = "";
     if (data.dpc_error && data.dpc_error.height_error !== undefined) {
          const e = data.dpc_error;
-         errStr = `<br>
-         <span style="color:#faa">Pred Error (T=${e.pred_time}s):</span><br>
-         H: ${e.height_error} m<br>
-         Size: ${e.size_error} px<br>
-         UV: (${e.u_error}, ${e.v_error}) px`;
+         errStr = `<div style="margin-top:5px; border-top:1px dashed #555;">
+         <div style="color:#faa">Pred Error (T=${e.pred_time}s)</div>
+         ${row('H Err', e.height_error)}
+         ${row('Size Err', e.size_error)}
+         ${row('U Err', e.u_error)}
+         ${row('V Err', e.v_error)}
+         </div>`;
     }
 
-    telemEl.innerHTML = `
-        Alt: ${(-d.pz).toFixed(2)} m<br>
-        State: ${data.state || "N/A"}<br>
-        Vel: ${d.vx?.toFixed(1) || 0}
-        ${errStr}
-    `;
+    debugMissionEl.innerHTML =
+        row('State', data.state || "N/A") +
+        (data.paused ? row('Status', 'PAUSED') : "") +
+        errStr;
 
     // HUD
     // Clear
