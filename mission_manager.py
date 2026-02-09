@@ -41,7 +41,12 @@ class MissionManager:
                 self.state = "SCAN"
 
         elif self.state == "SCAN":
+            # Spin to find target
             extra_yaw = math.radians(15.0)
+
+            # Maintain hover at current position but adjust to target altitude
+            # This prevents the stale target issue causing dives
+            self.dpc_target = [drone_state_sim['px'], drone_state_sim['py'], self.target_alt]
 
             if center is not None:
                 self.state = "HOMING"
