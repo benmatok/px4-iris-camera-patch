@@ -186,6 +186,7 @@ class TheShow:
                 return super(NumpyEncoder, self).default(obj)
 
         msg = json.dumps(data, cls=NumpyEncoder)
+        logger.info(f"Broadcasting State: Drone={data.get('drone', {})}, Target={data.get('target', [])}")
         for ws in list(self.websockets):
             try:
                 await ws.send_text(msg)
