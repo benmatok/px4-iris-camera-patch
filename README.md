@@ -124,6 +124,8 @@ source venv/bin/activate
 
 # 2. Install dependencies
 pip install -r requirements.txt
+python3 setup.py build_ext --inplace
+
 ```
 
 Then, run the server:
