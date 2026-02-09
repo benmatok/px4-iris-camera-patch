@@ -113,19 +113,19 @@ class DPCFlightController:
         ]
 
         # Solve
+        # Pass extra_yaw_rate as forced_yaw_rate if it's non-zero
+        forced_yaw = extra_yaw_rate if extra_yaw_rate != 0.0 else None
+
         action_out = self.solver.solve(
             solver_state,
             solver_target,
             self.last_action,
             self.models_config,
             self.weights,
-            self.dt
+            self.dt,
+            forced_yaw_rate=forced_yaw
         )
         self.last_action = action_out
-
-        # Apply extra yaw rate (e.g. for scanning)
-        if extra_yaw_rate != 0.0:
-            action_out['yaw_rate'] = extra_yaw_rate
 
         # Rollout Ghosts for Visualization
         ghost_paths = self.rollout_ghosts(solver_state, action_out)
