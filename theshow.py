@@ -347,11 +347,30 @@ class TheShow:
             }
 
         # 6. Prepare Payload
+        # Construct Absolute NED State for Visualization
+        dpc_state_ned_abs = {
+            'px': s['px'], 'py': s['py'], 'pz': -s['pz'],
+            'vx': s['vx'], 'vy': s['vy'], 'vz': -s['vz'],
+            'roll': s['roll'], 'pitch': s['pitch'], 'yaw': s['yaw']
+        }
+
+        # Construct Absolute Target Viz (NED)
+        # dpc_target is [RelX, RelY, AbsZ_Up]
+        # TargetViz_NED = [AbsX, AbsY, AbsZ_Down]
+        # AbsX = DroneX + RelX
+        # AbsY = DroneY + RelY
+        # AbsZ_Down = -AbsZ_Up
+        target_viz_ned = [
+            dpc_state_ned_abs['px'] + dpc_target[0],
+            dpc_state_ned_abs['py'] + dpc_target[1],
+            -dpc_target[2]
+        ]
+
         payload = {
             'state': mission_state,
-            'drone': dpc_state_ned_rel,
+            'drone': dpc_state_ned_abs, # Absolute for Viz
             'control': action_out,
-            'target': dpc_target,
+            'target': target_viz_ned, # Absolute for Viz
             'sim_target': target_pos_sim_world,
             'tracker': {'u': center[0] if center else 0, 'v': center[1] if center else 0, 'size': radius},
             'dpc_error': dpc_error,
