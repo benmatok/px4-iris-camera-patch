@@ -714,7 +714,7 @@ class PyDPCSolver:
         self.iterations = 30
         self.learning_rate = 0.01
 
-    def solve(self, state_dict, target_pos, initial_action_dict, models_list, weights_list, dt):
+    def solve(self, state_dict, target_pos, initial_action_dict, models_list, weights_list, dt, forced_yaw_rate=None):
         # Convert models to PyGhostModel objects
         models = []
         for md in models_list:
@@ -730,6 +730,10 @@ class PyDPCSolver:
             'pitch_rate': initial_action_dict['pitch_rate'],
             'yaw_rate': initial_action_dict['yaw_rate']
         }
+
+        # Force Yaw Rate if provided (Coupled Planning)
+        if forced_yaw_rate is not None:
+             current_action['yaw_rate'] = forced_yaw_rate
 
         # Compute Initial Screen Pos (u_prev, v_prev)
         # Assuming we start from state_dict
@@ -763,6 +767,10 @@ class PyDPCSolver:
         for _ in range(self.iterations):
             # Clamp Thrust
             current_action['thrust'] = max(0.0, min(1.0, current_action['thrust']))
+
+            # Force Yaw Rate in Loop
+            if forced_yaw_rate is not None:
+                 current_action['yaw_rate'] = forced_yaw_rate
 
             total_grad = np.zeros(4, dtype=np.float32) # thrust, roll_rate, pitch_rate, yaw_rate
 
@@ -1034,7 +1042,11 @@ class PyDPCSolver:
             current_action['thrust'] -= self.learning_rate * total_grad[0]
             current_action['roll_rate'] -= self.learning_rate * total_grad[1]
             current_action['pitch_rate'] -= self.learning_rate * total_grad[2]
-            current_action['yaw_rate'] -= self.learning_rate * total_grad[3]
+
+            if forced_yaw_rate is None:
+                current_action['yaw_rate'] -= self.learning_rate * total_grad[3]
+            else:
+                current_action['yaw_rate'] = forced_yaw_rate
 
             # Clamp Inside Loop to prevent explosion
             current_action['thrust'] = max(0.0, min(1.0, current_action['thrust']))
