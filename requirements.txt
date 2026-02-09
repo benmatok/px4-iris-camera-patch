@@ -1,14 +1,11 @@
 numpy>=1.26.4
 Cython
 setuptools
-torch
 pyyaml
 tqdm
-tensorboard
 matplotlib
 imageio
 pandas
-numba
 fastapi
 uvicorn
 websockets
