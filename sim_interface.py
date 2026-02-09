@@ -103,7 +103,7 @@ class SimDroneInterface:
             'pz': -s['pz'],
             'roll': s['roll'],
             'pitch': s['pitch'],
-            'yaw': -s['yaw']
+            'yaw': s['yaw']
         }
 
         tx, ty, tz = target_pos_world

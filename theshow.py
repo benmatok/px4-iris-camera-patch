@@ -211,7 +211,7 @@ class TheShow:
         dpc_state_ned_rel = {
             'px': 0.0, 'py': 0.0, 'pz': -s['pz'],
             'vx': 0.0, 'vy': 0.0, 'vz': -s['vz'],
-            'roll': s['roll'], 'pitch': s['pitch'], 'yaw': -s['yaw']
+            'roll': s['roll'], 'pitch': s['pitch'], 'yaw': s['yaw']
         }
 
         # Detect and Localize (Returns Relative Target Position in NED)
@@ -316,7 +316,7 @@ class TheShow:
             pred_s_ned = {
                 'px': pred_s['px'], 'py': pred_s['py'], 'pz': -pred_s['pz'],
                 'vx': pred_s['vx'], 'vy': pred_s['vy'], 'vz': -pred_s['vz'],
-                'roll': pred_s['roll'], 'pitch': pred_s['pitch'], 'yaw': -pred_s['yaw']
+                'roll': pred_s['roll'], 'pitch': pred_s['pitch'], 'yaw': pred_s['yaw']
             }
 
             tgt_used = p['target_used']
