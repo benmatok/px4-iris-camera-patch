@@ -1,5 +1,4 @@
 numpy>=1.26.4
-Cython
 setuptools
 pyyaml
 tqdm
@@ -10,3 +9,4 @@ fastapi
 uvicorn
 websockets
 opencv-python
+torch

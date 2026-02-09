@@ -92,6 +92,7 @@ def visualize_deep_target_scenario():
             d["pos_x"], d["pos_y"], d["pos_z"],
             d["vel_x"], d["vel_y"], d["vel_z"],
             d["roll"], d["pitch"], d["yaw"],
+            d["ang_vel_x"], d["ang_vel_y"], d["ang_vel_z"],
             d["masses"], d["drag_coeffs"], d["thrust_coeffs"],
             d["target_vx"], d["target_vy"], d["target_vz"], d["target_yaw_rate"],
             d["vt_x"], d["vt_y"], d["vt_z"],
