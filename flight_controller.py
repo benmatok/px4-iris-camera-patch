@@ -8,8 +8,8 @@ class DPCFlightController:
     def __init__(self, dt=0.05):
         self.dt = dt
         self.solver = PyDPCSolver()
-        # thrust_coeff=2.725 matches sim_interface.py (2.725 * 20.0 = 54.5N Total Thrust)
-        self.models_config = [{'mass': 3.33, 'drag_coeff': 0.3, 'thrust_coeff': 2.725}]
+        # Tuned for responsiveness: Mass=1.0, Thrust=1.0, Drag=0.1, Tau=0.2
+        self.models_config = [{'mass': 1.0, 'drag_coeff': 0.1, 'thrust_coeff': 1.0, 'tau': 0.2}]
         self.weights = [1.0]
         self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
 
@@ -17,7 +17,7 @@ class DPCFlightController:
         self.estimated_velocity = np.array([0.0, 0.0, 0.0], dtype=np.float32)
         # Predictor model (Nominal)
         cfg = self.models_config[0]
-        self.predictor = PyGhostModel(cfg['mass'], cfg['drag_coeff'], cfg['thrust_coeff'])
+        self.predictor = PyGhostModel(cfg['mass'], cfg['drag_coeff'], cfg['thrust_coeff'], tau=cfg['tau'])
         self.last_target_rel_pos = None
 
     def reset(self):
@@ -79,7 +79,7 @@ class DPCFlightController:
         self.last_target_rel_pos = raw_target_rel_ned
 
         # 3. Fuse Velocity
-        alpha = 0.1 # Measurement weight
+        alpha = 0.5 # Measurement weight (Increased from 0.1 to trust measurements more)
         if v_meas is not None:
             # Simple Complementary Filter
             v_est = (1.0 - alpha) * v_pred + alpha * v_meas
@@ -135,7 +135,7 @@ class DPCFlightController:
     def rollout_ghosts(self, start_state, action_dict, horizon=10):
         ghosts = []
         for cfg in self.models_config:
-            model = PyGhostModel(cfg['mass'], cfg['drag_coeff'], cfg['thrust_coeff'])
+            model = PyGhostModel(cfg['mass'], cfg['drag_coeff'], cfg['thrust_coeff'], tau=cfg.get('tau', 0.1))
             path = []
             curr = start_state.copy()
 

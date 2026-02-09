@@ -19,9 +19,9 @@ class SimDroneInterface:
             self.dd['pos_z'][0] = 1.0 # 1m Up (Sim Z is Up)
 
             self.masses = self.dd['masses']
-            self.masses[0] = 3.33
+            self.masses[0] = 1.0
             self.thrust_coeffs = self.dd['thrust_coeffs']
-            self.thrust_coeffs[0] = 2.725 # Matches 54.5 total
+            self.thrust_coeffs[0] = 1.0
             logger.info("DroneEnv initialized successfully.")
         except Exception as e:
             logger.error(f"Failed to initialize DroneEnv: {e}")
