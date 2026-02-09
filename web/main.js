@@ -88,6 +88,11 @@ ws.onclose = () => {
 ws.onmessage = (event) => {
     try {
         const data = JSON.parse(event.data);
+        console.log("WebSocket Received:", {
+            drone: data.drone,
+            target: data.target,
+            control: data.control
+        });
         updateState(data);
     } catch (e) {
         console.error("Parse Error", e);

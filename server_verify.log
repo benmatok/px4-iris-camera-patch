@@ -1,0 +1,78 @@
+INFO:root:DroneEnv: Using CPU/NumPy backend.
+INFO:sim_interface:DroneEnv initialized successfully.
+INFO:sim_interface:Reset to Scenario: Blind Dive
+INFO:mission_manager:MissionManager reset to TAKEOFF
+INFO:theshow:TheShow initialized successfully.
+INFO:theshow:Mounting /app/web to /
+INFO:     Started server process [4988]
+INFO:     Waiting for application startup.
+INFO:theshow:Lifespan Startup...
+INFO:theshow:Starting Control Loop...
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     127.0.0.1:36840 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36840 - "GET /main.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37128 - "WebSocket /ws" [accepted]
+INFO:     connection open
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 0.11180949211120605, 'pitch': -0.9849221706390381, 'yaw': -0.07477259635925293}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 1.3435652256011963, 'pitch': -1.624979853630066, 'yaw': 2.3294637203216553}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 0.21181011199951172, 'pitch': -1.6775386333465576, 'yaw': 0.7823882102966309}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -2.8593719005584717, 'pitch': -1.8741563558578491, 'yaw': 1.0955297946929932}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -3.093806505203247, 'pitch': -1.0763134956359863, 'yaw': -1.3644198179244995}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.00017747461970429868, 'vx': 0.0, 'vy': 0.0, 'vz': -0.007098984904587269, 'roll': 0.7783749103546143, 'pitch': -0.5233402252197266, 'yaw': -1.8159124851226807}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -1.8463882207870483, 'pitch': -1.2497477531433105, 'yaw': -1.9726166725158691}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 1.4245021343231201, 'pitch': -1.0217931270599365, 'yaw': -1.6343542337417603}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 0.11129355430603027, 'pitch': -1.3710898160934448, 'yaw': 3.1008145809173584}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -0.8360037803649902, 'pitch': -2.093308687210083, 'yaw': 1.3445746898651123}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -2.5210623741149902, 'pitch': -2.3951594829559326, 'yaw': 0.08645749092102051}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 0.951735258102417, 'pitch': -1.631759524345398, 'yaw': 0.16399288177490234}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -1.2904174327850342, 'pitch': -2.3328933715820312, 'yaw': -0.2604942321777344}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.00012698530917987227, 'vx': 0.0, 'vy': 0.0, 'vz': -0.005079412367194891, 'roll': 3.0850565433502197, 'pitch': -2.230386972427368, 'yaw': -1.3854644298553467}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -1.8421204090118408, 'pitch': -1.6731135845184326, 'yaw': 0.9160010814666748}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 0.10010695457458496, 'pitch': -1.7091556787490845, 'yaw': 2.7391440868377686}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -2.4131007194519043, 'pitch': -2.1110734939575195, 'yaw': 2.437177896499634}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 1.6923773288726807, 'pitch': -1.330509066581726, 'yaw': 1.8426434993743896}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 1.8663313388824463, 'pitch': -0.9696691036224365, 'yaw': -1.0995144844055176}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 0.2541844844818115, 'pitch': -0.9477899074554443, 'yaw': -2.4018020629882812}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 2.882830858230591, 'pitch': -1.6458851099014282, 'yaw': -1.369086742401123}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 0.1705770492553711, 'pitch': -1.5394089221954346, 'yaw': -1.2996275424957275}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 0.09786677360534668, 'pitch': -1.6651896238327026, 'yaw': 2.5191032886505127}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -2.5803256034851074, 'pitch': -1.9278314113616943, 'yaw': 2.521454095840454}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 1.8281104564666748, 'pitch': -1.208160638809204, 'yaw': 1.756563425064087}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 0.9457199573516846, 'pitch': -1.0599110126495361, 'yaw': -0.13260793685913086}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -0.6606554985046387, 'pitch': -1.6375279426574707, 'yaw': -1.2457767724990845}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -0.9664459228515625, 'pitch': -2.0577633380889893, 'yaw': 2.791821241378784}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -2.597391366958618, 'pitch': -2.2732205390930176, 'yaw': 1.5743391513824463}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 0.9205000400543213, 'pitch': -1.613184928894043, 'yaw': 1.6559855937957764}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -1.4778276681900024, 'pitch': -1.8218741416931152, 'yaw': 1.375490427017212}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -1.5640093088150024, 'pitch': -2.0049920082092285, 'yaw': -1.2747904062271118}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -2.701681613922119, 'pitch': -1.898453712463379, 'yaw': -2.923281669616699}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -1.7521402835845947, 'pitch': -1.2104443311691284, 'yaw': -0.23189902305603027}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 1.5861294269561768, 'pitch': -0.9211361408233643, 'yaw': 0.1223599910736084}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -0.18355488777160645, 'pitch': -1.1032264232635498, 'yaw': -0.9485089778900146}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -0.9410698413848877, 'pitch': -1.5442935228347778, 'yaw': -2.7779619693756104}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -0.9608578681945801, 'pitch': -2.0713391304016113, 'yaw': 0.8839199542999268}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -2.523728370666504, 'pitch': -2.315668821334839, 'yaw': -0.4121401309967041}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 1.0892722606658936, 'pitch': -1.5639629364013672, 'yaw': -0.42322444915771484}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -2.140239715576172, 'pitch': -1.7417726516723633, 'yaw': 0.24066805839538574}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 2.8484394550323486, 'pitch': -1.6701335906982422, 'yaw': -1.1031830310821533}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -0.46068310737609863, 'pitch': -1.6563076972961426, 'yaw': -0.4359738826751709}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -1.2396423816680908, 'pitch': -2.4815123081207275, 'yaw': -2.2228033542633057}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0012024081079289317, 'vx': 0.0, 'vy': 0.0, 'vz': -0.04809632524847984, 'roll': 2.9631550312042236, 'pitch': -2.3869500160217285, 'yaw': 3.0773584842681885}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -0.9769799709320068, 'pitch': -1.8897384405136108, 'yaw': -1.7893847227096558}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -1.8883285522460938, 'pitch': -2.378593683242798, 'yaw': 2.5765411853790283}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 2.4292070865631104, 'pitch': -1.840586543083191, 'yaw': 1.6414234638214111}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -0.4104738235473633, 'pitch': -1.9247596263885498, 'yaw': 1.8853962421417236}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -2.194493293762207, 'pitch': -2.51422381401062, 'yaw': 0.8323831558227539}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 1.7493164539337158, 'pitch': -1.814233422279358, 'yaw': 0.3367955684661865}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 1.0025227069854736, 'pitch': -1.8287744522094727, 'yaw': -1.522566318511963}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -2.301236152648926, 'pitch': -1.9422965049743652, 'yaw': -0.9091453552246094}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': -1.4787992238998413, 'pitch': -1.3008719682693481, 'yaw': 1.8301727771759033}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:theshow:Broadcasting State: Drone={'px': 0.0, 'py': 0.0, 'pz': -0.0, 'vx': 0.0, 'vy': 0.0, 'vz': -0.0, 'roll': 3.0109055042266846, 'pitch': -1.2079344987869263, 'yaw': 1.0156528949737549}, Target=[np.float64(0.0), np.float64(0.0), 2.0]
+INFO:     connection closed
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:theshow:Lifespan Shutdown...
+INFO:theshow:Loop Cancelled
+INFO:     Application shutdown complete.
+INFO:     Finished server process [4988]
