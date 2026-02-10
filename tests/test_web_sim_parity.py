@@ -73,9 +73,7 @@ class TestWebSimParity(unittest.TestCase):
             state_obs = {
                 'pz': s['pz'], 'vz': s['vz'],
                 'roll': s['roll'], 'pitch': s['pitch'], 'yaw': s['yaw'],
-                'wx': s['wx'], 'wy': s['wy'], 'wz': s['wz'],
-                # Pass perfect velocity to ensure binary exact parity with Pure Sim logic
-                'vx': s['vx'], 'vy': s['vy']
+                'wx': s['wx'], 'wy': s['wy'], 'wz': s['wz']
             }
 
             action_out, _ = controller.compute_action(
@@ -90,10 +88,10 @@ class TestWebSimParity(unittest.TestCase):
 
         path_web = np.array(path_web)
 
-        # 2. Run Pure Sim Logic
+        # 2. Run Pure Sim Logic (using DPCFlightController)
         # Matches Web Logic Params (1.0kg, 0.1 Drag, 1.0 Thrust, 0.1 Tau)
         model = PyGhostModel(mass=1.0, drag=0.1, thrust_coeff=1.0, tau=0.1)
-        solver = PyDPCSolver()
+        sim_controller = DPCFlightController(dt=0.05)
 
         state = {
             'px': drone_pos[0], 'py': drone_pos[1], 'pz': drone_pos[2],
@@ -101,18 +99,32 @@ class TestWebSimParity(unittest.TestCase):
             'roll': 0.0, 'pitch': pitch, 'yaw': yaw,
             'wx': 0.0, 'wy': 0.0, 'wz': 0.0
         }
-        action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
 
         dt = 0.05
         path_sim = []
 
-        models_config = [{'mass': 1.0, 'drag_coeff': 0.1, 'thrust_coeff': 1.0, 'tau': 0.1}]
-        weights = [1.0]
-
         for i in range(100):
             path_sim.append([state['px'], state['py'], state['pz']])
-            action = solver.solve(state, target_pos_sim_world, action, models_config, weights, dt)
-            state = model.step(state, action, dt)
+
+            # Replicate Inputs
+            rel_x = target_pos_sim_world[0] - state['px']
+            rel_y = target_pos_sim_world[1] - state['py']
+            rel_z_ned = -(target_pos_sim_world[2] - state['pz'])
+            target_wp = [rel_x, rel_y, rel_z_ned]
+
+            dpc_target = [rel_x, rel_y, target_pos_sim_world[2]]
+
+            state_obs = {
+                'pz': state['pz'], 'vz': state['vz'],
+                'roll': state['roll'], 'pitch': state['pitch'], 'yaw': state['yaw'],
+                'wx': state['wx'], 'wy': state['wy'], 'wz': state['wz']
+            }
+
+            action_out, _ = sim_controller.compute_action(
+                state_obs, dpc_target, raw_target_rel_ned=target_wp, extra_yaw_rate=0.0
+            )
+
+            state = model.step(state, action_out, dt)
 
         path_sim = np.array(path_sim)
 

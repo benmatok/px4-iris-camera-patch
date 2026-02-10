@@ -79,16 +79,12 @@ class DPCFlightController:
         self.last_target_rel_pos = raw_target_rel_ned
 
         # 3. Fuse Velocity
-        if 'vx' in state_obs and 'vy' in state_obs:
-             # Use perfect velocity if provided (Parity Mode)
-             v_est = np.array([state_obs['vx'], state_obs['vy'], state_obs.get('vz', 0.0)])
+        alpha = 0.1 # Standard Measurement weight (Sufficient for perfect Sim)
+        if v_meas is not None:
+            # Simple Complementary Filter
+            v_est = (1.0 - alpha) * v_pred + alpha * v_meas
         else:
-             alpha = 0.1 # Standard Measurement weight (Sufficient for perfect Sim)
-             if v_meas is not None:
-                 # Simple Complementary Filter
-                 v_est = (1.0 - alpha) * v_pred + alpha * v_meas
-             else:
-                 v_est = v_pred
+            v_est = v_pred
 
         self.estimated_velocity = v_est
 
