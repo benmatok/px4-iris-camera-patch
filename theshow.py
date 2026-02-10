@@ -49,7 +49,7 @@ class TheShow:
         try:
             # 1. Initialize Components
             # Tilt 30.0 (Up) as requested
-            self.projector = Projector(width=640, height=480, fov_deg=110.0, tilt_deg=30.0)
+            self.projector = Projector(width=640, height=480, fov_deg=120.0, tilt_deg=30.0)
 
             # Scenario / Sim
             self.sim = SimDroneInterface(self.projector)
