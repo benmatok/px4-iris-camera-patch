@@ -236,10 +236,7 @@ class TheShow:
             'yaw': s['yaw'],
             'wx': s['wx'],
             'wy': s['wy'],
-            'wz': s['wz'],
-            # Pass perfect velocity for Binary Exact Parity with Sim/Planner
-            'vx': s['vx'],
-            'vy': s['vy']
+            'wz': s['wz']
         }
 
         # dpc_target is [RelX, RelY, AbsZ]
