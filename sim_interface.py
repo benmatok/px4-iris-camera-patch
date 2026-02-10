@@ -1,6 +1,7 @@
 import numpy as np
 import logging
 import cv2
+import math
 from ghost_dpc.ghost_dpc import PyGhostModel
 
 logger = logging.getLogger(__name__)
@@ -89,19 +90,30 @@ class SimDroneInterface:
         height = 480
         img = np.zeros((height, width, 3), dtype=np.uint8)
 
-        # Sim State to NED for Projector
+        # Sim State to NED for Projector (Right Handed)
+        # See theshow.py for logic
         s = self.state
+
+        # Yaw Sim 0 (East) -> NED pi/2 (East)
+        yaw_ned = (math.pi / 2.0) - s['yaw']
+        yaw_ned = (yaw_ned + math.pi) % (2 * math.pi) - math.pi
+
         drone_state_ned = {
-            'px': s['px'],
-            'py': s['py'],
+            'px': s['py'], # NED X = Sim Y
+            'py': s['px'], # NED Y = Sim X
             'pz': -s['pz'],
             'roll': s['roll'],
             'pitch': s['pitch'],
-            'yaw': s['yaw']
+            'yaw': yaw_ned
         }
 
-        tx, ty, tz = target_pos_world
-        uv = self.projector.world_to_pixel(tx, ty, tz, drone_state_ned)
+        # Target Pos (Sim) -> NED
+        tx_sim, ty_sim, tz_sim = target_pos_world
+        tx_ned = ty_sim
+        ty_ned = tx_sim
+        tz_ned = -tz_sim
+
+        uv = self.projector.world_to_pixel(tx_ned, ty_ned, tz_ned, drone_state_ned)
 
         if uv:
             u, v = uv
