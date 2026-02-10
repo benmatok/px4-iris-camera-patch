@@ -4,7 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 // Scene Setup
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x222222);
-scene.fog = new THREE.Fog(0x222222, 20, 150);
+// Fog removed as requested
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 // Camera position: Behind and Up
@@ -31,18 +31,50 @@ scene.add(grid);
 
 // Drone Mesh
 const droneGroup = new THREE.Group();
-const bodyGeo = new THREE.BoxGeometry(0.5, 0.1, 0.5);
-const bodyMat = new THREE.MeshPhongMaterial({ color: 0x00aaff });
+const bodyGeo = new THREE.BoxGeometry(0.3, 0.05, 0.3);
+const bodyMat = new THREE.MeshPhongMaterial({ color: 0x444444 });
 const body = new THREE.Mesh(bodyGeo, bodyMat);
 droneGroup.add(body);
 
+// Arms
 const armGeo = new THREE.BoxGeometry(0.8, 0.05, 0.05);
-const arm1 = new THREE.Mesh(armGeo, bodyMat);
+const armMat = new THREE.MeshPhongMaterial({ color: 0x888888 });
+const arm1 = new THREE.Mesh(armGeo, armMat);
 arm1.rotation.y = Math.PI / 4;
 droneGroup.add(arm1);
-const arm2 = new THREE.Mesh(armGeo, bodyMat);
+const arm2 = new THREE.Mesh(armGeo, armMat);
 arm2.rotation.y = -Math.PI / 4;
 droneGroup.add(arm2);
+
+// Propellers and Mounts
+const props = [];
+const propGeo = new THREE.CylinderGeometry(0.15, 0.15, 0.01, 32);
+const propMat = new THREE.MeshPhongMaterial({ color: 0x00aaff, transparent: true, opacity: 0.8 });
+const mountGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.1, 16);
+const mountMat = new THREE.MeshPhongMaterial({ color: 0x222222 });
+
+// Positions for props: ends of arms.
+// Arm length 0.8. Ends at +/- 0.4.
+const d = 0.4;
+const positions = [
+    { x: d * Math.cos(Math.PI/4), z: d * Math.sin(Math.PI/4) },
+    { x: -d * Math.cos(Math.PI/4), z: -d * Math.sin(Math.PI/4) },
+    { x: d * Math.cos(-Math.PI/4), z: d * Math.sin(-Math.PI/4) },
+    { x: -d * Math.cos(-Math.PI/4), z: -d * Math.sin(-Math.PI/4) }
+];
+
+positions.forEach(pos => {
+    // Mount
+    const mount = new THREE.Mesh(mountGeo, mountMat);
+    mount.position.set(pos.x, 0.05, pos.z);
+    droneGroup.add(mount);
+
+    // Prop
+    const prop = new THREE.Mesh(propGeo, propMat);
+    prop.position.set(pos.x, 0.1, pos.z);
+    droneGroup.add(prop);
+    props.push(prop);
+});
 
 const axesHelper = new THREE.AxesHelper(1);
 droneGroup.add(axesHelper);
@@ -313,6 +345,14 @@ function updateState(data) {
 function animate() {
     requestAnimationFrame(animate);
     controls.update();
+
+    // Animate Props
+    if (props) {
+        props.forEach(p => {
+            p.rotation.y += 0.5;
+        });
+    }
+
     renderer.render(scene, camera);
 }
 animate();
