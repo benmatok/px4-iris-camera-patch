@@ -122,6 +122,29 @@ class Projector:
             (u, v): Pixel coordinates
             Returns None if point is behind camera.
         """
+        uv_norm = self.world_to_normalized(x, y, z, drone_state)
+
+        if uv_norm is None:
+            return None
+
+        u_norm, v_norm = uv_norm
+
+        # Project to Pixel
+        u = u_norm * self.fx + self.cx
+        v = v_norm * self.fy + self.cy
+
+        return (u, v)
+
+    def world_to_normalized(self, x, y, z, drone_state):
+        """
+        Projects a world point to normalized image plane coordinates (x/z, y/z).
+        Args:
+            x, y, z: World coordinates
+            drone_state: dict with keys 'px', 'py', 'pz', 'roll', 'pitch', 'yaw'
+        Returns:
+            (u_norm, v_norm): Normalized coordinates (xc/zc, yc/zc)
+            Returns None if point is behind camera (zc <= 0).
+        """
         # 1. World to Body
         # P_b = R_b2w.T @ (P_w - P_drone)
 
@@ -163,16 +186,13 @@ class Projector:
         # self.R_c2b is C to B. So we need transpose.
         vec_c = self.R_c2b.T @ vec_b
 
-        # 3. Project to Pixel
+        # 3. Project to Normalized Plane
         xc, yc, zc = vec_c
 
         if zc <= 0:
             return None # Behind camera or on plane
 
-        u = (xc / zc) * self.fx + self.cx
-        v = (yc / zc) * self.fy + self.cy
-
-        return (u, v)
+        return (xc / zc, yc / zc)
 
     def project_point_with_size(self, x, y, z, drone_state, object_radius=0.5):
         """
@@ -185,6 +205,9 @@ class Projector:
             (u, v, projected_radius_pixels): Pixel coordinates and radius
             Returns None if point is behind camera.
         """
+        # Re-using internal logic (could refactor, but kept separate for speed/clarity if needed,
+        # or just call world_to_pixel if we had zc)
+
         # 1. World to Body
         # P_b = R_b2w.T @ (P_w - P_drone)
 

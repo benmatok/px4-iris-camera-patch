@@ -7,6 +7,7 @@ import random
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from ghost_dpc.ghost_dpc import PyGhostModel, PyGhostEstimator, PyDPCSolver
+from vision.projection import Projector
 
 class GhostController:
     def __init__(self, dt=0.05):
@@ -102,6 +103,10 @@ def run_blind_dive_scenario(params, scenario_id):
     # Init Controller
     controller = GhostController(dt=dt)
 
+    # Init Projector for Ground Truth measurements
+    # Using 120.0 FOV as requested by user
+    projector = Projector(width=640, height=480, fov_deg=120.0, tilt_deg=30.0)
+
     # Init Simulation (Real World) with randomized parameters
     real_model = PyGhostModel(
         mass=params['mass'],
@@ -121,50 +126,6 @@ def run_blind_dive_scenario(params, scenario_id):
         'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0
     }
 
-    # Calculate initial screen position u,v
-    # Assume camera up 30 deg.
-    # From Physics:
-    # dx_w = target - px. dy_w = ...
-    # R33 = cp*cr...
-    # ...
-    # Instead of re-implementing, let's use PyGhostModel step to get a dummy state or just implement the math here.
-    # It's simple enough.
-
-    def get_uv(s, t_pos):
-        dx_w = t_pos[0] - s['px']
-        dy_w = t_pos[1] - s['py']
-        dz_w = t_pos[2] - s['pz']
-
-        r, p, y = s['roll'], s['pitch'], s['yaw']
-        cr=np.cos(r); sr=np.sin(r)
-        cp=np.cos(p); sp=np.sin(p)
-        cy=np.cos(y); sy=np.sin(y)
-
-        r11 = cy*cp
-        r12 = sy*cp
-        r13 = -sp
-        r21 = cy*sp*sr - sy*cr
-        r22 = sy*sp*sr + cy*cr
-        r23 = cp*sr
-        r31 = cy*sp*cr + sy*sr
-        r32 = sy*sp*cr - cy*sr
-        r33 = cp*cr
-
-        xb = r11*dx_w + r12*dy_w + r13*dz_w
-        yb = r21*dx_w + r22*dy_w + r23*dz_w
-        zb = r31*dx_w + r32*dy_w + r33*dz_w
-
-        s30 = 0.5
-        c30 = 0.866025
-
-        xc = yb
-        yc = s30*xb + c30*zb
-        zc = c30*xb - s30*zb
-
-        if zc < 0.1: zc = 0.1
-        u = xc / zc
-        v = yc / zc
-        return u, v
     action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
 
     # Data Logging
@@ -196,8 +157,13 @@ def run_blind_dive_scenario(params, scenario_id):
         alphay = (next_s.get('wy', 0.0) - state.get('wy', 0.0)) / dt
         alphaz = (next_s.get('wz', 0.0) - state.get('wz', 0.0)) / dt
 
-        # Measure Screen Pos
-        u, v = get_uv(state, target_pos)
+        # Measure Screen Pos using Projector
+        # world_to_normalized returns (u, v) normalized or None
+        uv = projector.world_to_normalized(target_pos[0], target_pos[1], target_pos[2], state)
+
+        u, v = 0.0, 0.0
+        if uv is not None:
+            u, v = uv
 
         # --- CONTROLLER ---
         # Pass u,v to controller (Estimator)
