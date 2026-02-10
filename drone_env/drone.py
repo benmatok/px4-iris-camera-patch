@@ -177,41 +177,126 @@ def step_cpu(
     tau = 0.1
 
     for s in range(substeps):
-        # 1. Dynamics Update (Lag)
-        wx += (roll_rate - wx) * (dt_sub / tau)
-        wy += (pitch_rate - wy) * (dt_sub / tau)
-        wz += (yaw_rate - wz) * (dt_sub / tau)
+        # 1. Dynamics Update (Implicit Lag Dynamics for Stability)
+        alpha = dt_sub / tau
+        denom = 1.0 + alpha
 
-        # Kinematic Update (Euler Rates from Body Rates)
-        sp_k, cp_k = np.sin(r), np.cos(r)
-        tt_k = np.tan(p)
-        st_k = 1.0 / (np.cos(p) + 1e-6) # Avoid division by zero
+        wx_prev = wx.copy()
+        wy_prev = wy.copy()
+        wz_prev = wz.copy()
 
-        r_dot = wx + wy * sp_k * tt_k + wz * cp_k * tt_k
-        p_dot = wy * cp_k - wz * sp_k
-        y_dot = (wy * sp_k + wz * cp_k) * st_k
+        # next_w = (w + cmd * alpha) / (1 + alpha)
+        wx[:] = (wx_prev + roll_rate * alpha) / denom
+        wy[:] = (wy_prev + pitch_rate * alpha) / denom
+        wz[:] = (wz_prev + yaw_rate * alpha) / denom
 
-        r += r_dot * dt_sub
-        p += p_dot * dt_sub
-        y_ang += y_dot * dt_sub
+        # 2. SE3 Manifold Integration
+        # Average Angular Velocity
+        avg_wx = 0.5 * (wx_prev + wx)
+        avg_wy = 0.5 * (wy_prev + wy)
+        avg_wz = 0.5 * (wz_prev + wz)
 
-        # Normalize angles to [-pi, pi]
-        r = (r + np.pi) % (2 * np.pi) - np.pi
-        p = (p + np.pi) % (2 * np.pi) - np.pi
-        y_ang = (y_ang + np.pi) % (2 * np.pi) - np.pi
+        # Current Rotation Matrix (Body -> World)
+        cr, sr = np.cos(r), np.sin(r)
+        cp, sp = np.cos(p), np.sin(p)
+        cy, sy = np.cos(y_ang), np.sin(y_ang)
+
+        # R = Rz * Ry * Rx
+        # R11=cy*cp, R12=cy*sp*sr-sy*cr, R13=cy*sp*cr+sy*sr
+        # R21=sy*cp, R22=sy*sp*sr+cy*cr, R23=sy*sp*cr-cy*sr
+        # R31=-sp,   R32=cp*sr,          R33=cp*cr
+
+        R_curr = np.zeros((num_agents, 3, 3), dtype=np.float32)
+        R_curr[:, 0, 0] = cy * cp
+        R_curr[:, 0, 1] = cy * sp * sr - sy * cr
+        R_curr[:, 0, 2] = cy * sp * cr + sy * sr
+        R_curr[:, 1, 0] = sy * cp
+        R_curr[:, 1, 1] = sy * sp * sr + cy * cr
+        R_curr[:, 1, 2] = sy * sp * cr - cy * sr
+        R_curr[:, 2, 0] = -sp
+        R_curr[:, 2, 1] = cp * sr
+        R_curr[:, 2, 2] = cp * cr
+
+        # Exponential Map for Rotation Update
+        theta_sq = avg_wx**2 + avg_wy**2 + avg_wz**2
+        theta = np.sqrt(theta_sq)
+
+        # Prepare K matrices (N, 3, 3)
+        K = np.zeros((num_agents, 3, 3), dtype=np.float32)
+        K[:, 0, 1] = -avg_wz * dt_sub
+        K[:, 0, 2] = avg_wy * dt_sub
+        K[:, 1, 0] = avg_wz * dt_sub
+        K[:, 1, 2] = -avg_wx * dt_sub
+        K[:, 2, 0] = -avg_wy * dt_sub
+        K[:, 2, 1] = avg_wx * dt_sub
+
+        theta_dt = theta * dt_sub
+
+        # Rodrigues Formula
+        # R_up = I + (sin(th)/th)*K + ((1-cos(th))/th^2)*K^2
+        # Use Taylor for small theta
+        mask_small = theta_dt < 1e-6
+
+        # Factor A: sin(theta)/theta * dt ?? No.
+        # omega_vec * dt is what we use. So K contains dt.
+        # K = [w*dt]x.
+        # R = I + (sin(t)/t) * K_unscaled * dt + ...
+        # Let's use K with dt already.
+        # Norm of K_scaled is theta_dt.
+        # R = I + (sin(theta_dt)/theta_dt) * K + ((1-cos)/theta_dt^2) * K^2
+
+        fact_a = np.ones(num_agents, dtype=np.float32)
+        fact_b = np.ones(num_agents, dtype=np.float32) * 0.5
+
+        # For non-small
+        idx_large = ~mask_small
+        t_l = theta_dt[idx_large]
+        fact_a[idx_large] = np.sin(t_l) / t_l
+        fact_b[idx_large] = (1.0 - np.cos(t_l)) / (t_l * t_l)
+
+        I = np.eye(3, dtype=np.float32).reshape(1, 3, 3)
+        K2 = np.matmul(K, K)
+
+        R_update = I + fact_a[:, None, None] * K + fact_b[:, None, None] * K2
+
+        # Update Rotation: R_next = R_curr @ R_update
+        R_next = np.matmul(R_curr, R_update)
+
+        # Extract Euler Angles
+        sy_n = np.sqrt(R_next[:, 0, 0]**2 + R_next[:, 1, 0]**2)
+        singular = sy_n < 1e-6
+
+        # Initialize
+        r = np.zeros(num_agents, dtype=np.float32)
+        p = np.zeros(num_agents, dtype=np.float32)
+        y_ang = np.zeros(num_agents, dtype=np.float32)
+
+        # Non-singular
+        idx_ns = ~singular
+        r[idx_ns] = np.arctan2(R_next[idx_ns, 2, 1], R_next[idx_ns, 2, 2])
+        p[idx_ns] = np.arctan2(-R_next[idx_ns, 2, 0], sy_n[idx_ns])
+        y_ang[idx_ns] = np.arctan2(R_next[idx_ns, 1, 0], R_next[idx_ns, 0, 0])
+
+        # Singular
+        idx_s = singular
+        if np.any(idx_s):
+            r[idx_s] = 0.0
+            p[idx_s] = np.arctan2(-R_next[idx_s, 2, 0], sy_n[idx_s])
+            y_ang[idx_s] = np.arctan2(-R_next[idx_s, 0, 1], R_next[idx_s, 1, 1])
 
         max_thrust = 20.0 * thrust_coeffs
         # Thrust Clipping [0, 1]
         thrust_cmd = np.clip(thrust_cmd, 0.0, 1.0)
         thrust_force = thrust_cmd * max_thrust
 
-        sr, cr = np.sin(r), np.cos(r)
-        sp, cp = np.sin(p), np.cos(p)
-        sy, cy = np.sin(y_ang), np.cos(y_ang)
+        # 3. Forces (Using R_next)
+        # R_next[:, 0, 2] is R13 (Ax_dir)
+        # R_next[:, 1, 2] is R23 (Ay_dir)
+        # R_next[:, 2, 2] is R33 (Az_dir)
 
-        ax_thrust = thrust_force * (cy * sp * cr + sy * sr) / masses
-        ay_thrust = thrust_force * (sy * sp * cr - cy * sr) / masses
-        az_thrust = thrust_force * (cp * cr) / masses
+        ax_thrust = thrust_force * R_next[:, 0, 2] / masses
+        ay_thrust = thrust_force * R_next[:, 1, 2] / masses
+        az_thrust = thrust_force * R_next[:, 2, 2] / masses
 
         az_gravity = -g
 
