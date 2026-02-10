@@ -227,7 +227,7 @@ class TheShow:
         mission_state, dpc_target, extra_yaw = self.mission.update(sim_state_rel, (center, target_wp))
 
         # 4. Compute Control
-        # Construct observed state for controller (No absolute position/velocity)
+        # Construct observed state for controller
         state_obs = {
             'pz': s['pz'],
             'vz': s['vz'],
@@ -236,7 +236,10 @@ class TheShow:
             'yaw': s['yaw'],
             'wx': s['wx'],
             'wy': s['wy'],
-            'wz': s['wz']
+            'wz': s['wz'],
+            # Pass perfect velocity for Binary Exact Parity with Sim/Planner
+            'vx': s['vx'],
+            'vy': s['vy']
         }
 
         # dpc_target is [RelX, RelY, AbsZ]
