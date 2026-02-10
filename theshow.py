@@ -215,11 +215,19 @@ class TheShow:
             'roll': s['roll'], 'pitch': s['pitch'], 'yaw': s['yaw']
         }
 
+        # Construct Absolute NED State for Visualization and Correct Tracking
+        dpc_state_ned_abs = {
+            'px': s['px'], 'py': s['py'], 'pz': -s['pz'],
+            'vx': s['vx'], 'vy': s['vy'], 'vz': -s['vz'],
+            'roll': s['roll'], 'pitch': s['pitch'], 'yaw': s['yaw']
+        }
+
         # Detect and Localize (Returns Relative Target Position in NED)
         # Using Ground Truth Target (Perfect Projection) per user request to bypass detection for now
+        # We pass Absolute Drone State because ground_truth_target_pos is Absolute.
         center, target_wp, radius = self.tracker.process(
             img,
-            dpc_state_ned_rel,
+            dpc_state_ned_abs,
             ground_truth_target_pos=target_pos_sim_world
         )
 

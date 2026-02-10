@@ -45,7 +45,7 @@ class RedObjectDetector:
         largest_contour = max(contours, key=cv2.contourArea)
         area = cv2.contourArea(largest_contour)
 
-        if area < 50: # Minimum area threshold
+        if area < 1: # Minimum area threshold
             return None, 0, None
 
         x, y, w, h = cv2.boundingRect(largest_contour)
