@@ -158,8 +158,8 @@ def run_blind_dive_scenario(params, scenario_id):
         c30 = 0.866025
 
         xc = yb
-        yc = -s30*xb + c30*zb
-        zc = c30*xb + s30*zb
+        yc = s30*xb + c30*zb
+        zc = c30*xb - s30*zb
 
         if zc < 0.1: zc = 0.1
         u = xc / zc
