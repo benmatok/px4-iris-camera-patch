@@ -62,13 +62,24 @@ class TestWebSimParity(unittest.TestCase):
             path_web.append([s['px'], s['py'], s['pz']])
 
             # Bypass Vision Logic (Perfect Relative Target)
-            rel_x = target_pos_sim_world[0] - s['px']
-            rel_y = target_pos_sim_world[1] - s['py']
-            # Target NED Z is Down. Target Z (Abs) - Drone Z (Abs) = dz_up. dz_ned = -dz_up.
-            rel_z_ned = -(target_pos_sim_world[2] - s['pz'])
-            target_wp = [rel_x, rel_y, rel_z_ned]
+            # NED: X-North, Y-East, Z-Down
+            # Sim: X-East, Y-North, Z-Up
 
-            dpc_target = [rel_x, rel_y, target_pos_sim_world[2]]
+            # Rel Sim X (East)
+            rel_sim_x = target_pos_sim_world[0] - s['px']
+            # Rel Sim Y (North)
+            rel_sim_y = target_pos_sim_world[1] - s['py']
+            # Rel Sim Z (Up)
+            rel_sim_z = target_pos_sim_world[2] - s['pz']
+
+            # Map to NED
+            rel_ned_x = rel_sim_y # North
+            rel_ned_y = rel_sim_x # East
+            rel_ned_z = -rel_sim_z # Down
+
+            target_wp = [rel_ned_x, rel_ned_y, rel_ned_z]
+
+            dpc_target = [rel_sim_x, rel_sim_y, target_pos_sim_world[2]]
 
             state_obs = {
                 'pz': s['pz'], 'vz': s['vz'],
@@ -107,12 +118,21 @@ class TestWebSimParity(unittest.TestCase):
             path_sim.append([state['px'], state['py'], state['pz']])
 
             # Replicate Inputs
-            rel_x = target_pos_sim_world[0] - state['px']
-            rel_y = target_pos_sim_world[1] - state['py']
-            rel_z_ned = -(target_pos_sim_world[2] - state['pz'])
-            target_wp = [rel_x, rel_y, rel_z_ned]
+            # Rel Sim X (East)
+            rel_sim_x = target_pos_sim_world[0] - state['px']
+            # Rel Sim Y (North)
+            rel_sim_y = target_pos_sim_world[1] - state['py']
+            # Rel Sim Z (Up)
+            rel_sim_z = target_pos_sim_world[2] - state['pz']
 
-            dpc_target = [rel_x, rel_y, target_pos_sim_world[2]]
+            # Map to NED
+            rel_ned_x = rel_sim_y # North
+            rel_ned_y = rel_sim_x # East
+            rel_ned_z = -rel_sim_z # Down
+
+            target_wp = [rel_ned_x, rel_ned_y, rel_ned_z]
+
+            dpc_target = [rel_sim_x, rel_sim_y, target_pos_sim_world[2]]
 
             state_obs = {
                 'pz': state['pz'], 'vz': state['vz'],
