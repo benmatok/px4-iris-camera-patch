@@ -35,8 +35,8 @@ class VisualTracker:
 
             if uv:
                 u, v = uv
-                # Check if inside image bounds (640x480 hardcoded in projector/sim)
-                if 0 <= u < 640 and 0 <= v < 480:
+                # Check if inside image bounds
+                if 0 <= u < self.projector.width and 0 <= v < self.projector.height:
                     center = (u, v)
 
                     # 2. Compute Relative Target Position (NED)
@@ -70,9 +70,7 @@ class VisualTracker:
                     dist = math.sqrt(dx*dx + dy*dy + dz*dz)
 
                     # Focal Length (Pixels)
-                    # FOV = 110 deg. Width = 640.
-                    # f = (W/2) / tan(FOV/2)
-                    f = (640.0 / 2.0) / math.tan(math.radians(110.0 / 2.0))
+                    f = self.projector.fx
 
                     r_obj = 0.5 # 0.5m radius
                     if dist > 0.1:
