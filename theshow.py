@@ -134,7 +134,7 @@ class TheShow:
                 self.sim.reset_to_scenario("Blind Dive", pos_x=drone_x, pos_y=drone_y, pos_z=drone_z, pitch=pitch, yaw=yaw)
 
                 # Reset Logic
-                self.mission.reset()
+                self.mission.reset(target_alt=alt)
                 self.controller.reset()
 
                 self.prediction_history = []
@@ -366,6 +366,25 @@ class TheShow:
             -dpc_target[2]
         ]
 
+        # Transform Ghosts to Absolute NED Frame for Frontend
+        # ghost_paths: [px, py, pz] (Z-Up, Relative to Solver Origin [px=0, py=0])
+        # Need: [px, py, pz] (NED, Absolute)
+        # 1. Shift px, py by s['px'], s['py']
+        # 2. Convert Z-Up to NED Z-Down (pz_ned = -pz_up)
+
+        ghosts_viz = []
+        if ghost_paths:
+            for path in ghost_paths:
+                new_path = []
+                for pt in path:
+                    new_pt = {
+                        'px': pt['px'] + s['px'],
+                        'py': pt['py'] + s['py'],
+                        'pz': -pt['pz']
+                    }
+                    new_path.append(new_pt)
+                ghosts_viz.append(new_path)
+
         payload = {
             'state': mission_state,
             'drone': dpc_state_ned_abs, # Absolute for Viz
@@ -374,7 +393,7 @@ class TheShow:
             'sim_target': target_pos_sim_world,
             'tracker': {'u': center[0] if center else 0, 'v': center[1] if center else 0, 'size': radius},
             'dpc_error': dpc_error,
-            'ghosts': ghost_paths,
+            'ghosts': ghosts_viz,
             'paused': self.paused
         }
         return payload

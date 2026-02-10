@@ -26,6 +26,9 @@
         .debug-section h4 { margin: 0 0 5px 0; color: #00aaff; }
         .debug-row { display: flex; justify-content: space-between; margin-bottom: 2px; }
         .debug-val { font-family: monospace; color: #0f0; }
+        #legend { position: absolute; bottom: 10px; left: 320px; padding: 10px; background: rgba(0,0,0,0.7); border: 1px solid #555; }
+        .legend-item { display: flex; align-items: center; gap: 5px; margin-bottom: 5px; font-size: 12px; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; }
     </style>
     <script type="importmap">
         {
@@ -40,6 +43,11 @@
     <div id="info">
         <h1>Jules Sim</h1>
         <div id="status">Connecting...</div>
+    </div>
+    <div id="legend">
+        <div class="legend-item"><div class="dot" style="background: #0f0; opacity: 0.5;"></div> Sim Target (Truth)</div>
+        <div class="legend-item"><div class="dot" style="background: #f00;"></div> Est. Target (Model)</div>
+        <div class="legend-item"><div class="dot" style="background: #0f0; border-radius: 0; width: 10px; height: 2px;"></div> Trajectory</div>
     </div>
     <div id="debug-panel">
         <div class="debug-section">
