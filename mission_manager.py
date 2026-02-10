@@ -38,8 +38,10 @@ class MissionManager:
             # Target is [Current X, Current Y, TARGET_ALT] in Z-Up
             self.dpc_target = [drone_state_sim['px'], drone_state_sim['py'], self.target_alt]
 
+            if center is not None:
+                self.state = "HOMING"
             # Transition to SCAN if close to altitude
-            if current_alt >= self.target_alt - 5.0:
+            elif current_alt >= self.target_alt - 5.0:
                 self.state = "SCAN"
 
         elif self.state == "SCAN":
@@ -52,6 +54,7 @@ class MissionManager:
 
             if center is not None:
                 self.state = "HOMING"
+                extra_yaw = 0.0
 
         elif self.state == "HOMING":
             if target_wp:
