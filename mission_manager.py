@@ -8,10 +8,12 @@ class MissionManager:
         self.target_alt = target_alt
         self.reset()
 
-    def reset(self):
+    def reset(self, target_alt=None):
         self.state = "TAKEOFF"
+        if target_alt is not None:
+            self.target_alt = target_alt
         self.dpc_target = [0.0, 0.0, self.target_alt] # Z-Up Target
-        logger.info("MissionManager reset to TAKEOFF")
+        logger.info(f"MissionManager reset to TAKEOFF with Target Alt: {self.target_alt}")
 
     def update(self, drone_state_sim, detection_result):
         """
