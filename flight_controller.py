@@ -8,8 +8,8 @@ class DPCFlightController:
     def __init__(self, dt=0.05):
         self.dt = dt
         self.solver = PyDPCSolver()
-        # Tuned for responsiveness: Mass=1.0, Thrust=1.0, Drag=0.1, Tau=0.2
-        self.models_config = [{'mass': 1.0, 'drag_coeff': 0.1, 'thrust_coeff': 1.0, 'tau': 0.2}]
+        # Binary Exact Parity: Mass=1.0, Thrust=1.0, Drag=0.1, Tau=0.1
+        self.models_config = [{'mass': 1.0, 'drag_coeff': 0.1, 'thrust_coeff': 1.0, 'tau': 0.1}]
         self.weights = [1.0]
         self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
 
@@ -79,12 +79,16 @@ class DPCFlightController:
         self.last_target_rel_pos = raw_target_rel_ned
 
         # 3. Fuse Velocity
-        alpha = 0.5 # Measurement weight (Increased from 0.1 to trust measurements more)
-        if v_meas is not None:
-            # Simple Complementary Filter
-            v_est = (1.0 - alpha) * v_pred + alpha * v_meas
+        if 'vx' in state_obs and 'vy' in state_obs:
+             # Use perfect velocity if provided (Parity Mode)
+             v_est = np.array([state_obs['vx'], state_obs['vy'], state_obs.get('vz', 0.0)])
         else:
-            v_est = v_pred
+             alpha = 0.1 # Standard Measurement weight (Sufficient for perfect Sim)
+             if v_meas is not None:
+                 # Simple Complementary Filter
+                 v_est = (1.0 - alpha) * v_pred + alpha * v_meas
+             else:
+                 v_est = v_pred
 
         self.estimated_velocity = v_est
 

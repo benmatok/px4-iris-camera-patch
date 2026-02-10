@@ -97,6 +97,14 @@ class PyGhostModel:
         next_py = py + next_vy * dt
         next_pz = pz + next_vz * dt
 
+        # Add explicit normalization of angles (like DroneEnv did) to keep values bounded
+        # and prevent drift in long simulations?
+        # Actually, PyGhostModel is used for short horizon planning.
+        # But if used as SIM backend for long run, it should normalize.
+        next_roll = (next_roll + math.pi) % (2 * math.pi) - math.pi
+        next_pitch = (next_pitch + math.pi) % (2 * math.pi) - math.pi
+        next_yaw = (next_yaw + math.pi) % (2 * math.pi) - math.pi
+
         return {
             'px': next_px, 'py': next_py, 'pz': next_pz,
             'vx': next_vx, 'vy': next_vy, 'vz': next_vz,

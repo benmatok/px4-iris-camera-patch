@@ -1,53 +1,65 @@
 import numpy as np
 import logging
 import cv2
-from drone_env.drone import DroneEnv
+from ghost_dpc.ghost_dpc import PyGhostModel
 
 logger = logging.getLogger(__name__)
 
 class SimDroneInterface:
     def __init__(self, projector):
         self.projector = projector
-        try:
-            self.env = DroneEnv(num_agents=1, episode_length=100000)
-            self.env.reset_all_envs()
-            self.dd = self.env.data_dictionary
+        # Replace DroneEnv with PyGhostModel for binary exactness with planner
+        # Default Params: Mass=1.0, Drag=0.1, Thrust=1.0, Tau=0.1 (Ideal)
+        self.mass = 1.0
+        self.drag_coeff = 0.1
+        self.thrust_coeff = 1.0
+        self.tau = 0.1
 
-            # Init State
-            self.dd['pos_x'][0] = 0.0
-            self.dd['pos_y'][0] = 0.0
-            self.dd['pos_z'][0] = 1.0 # 1m Up (Sim Z is Up)
+        self.model = PyGhostModel(
+            mass=self.mass,
+            drag=self.drag_coeff,
+            thrust_coeff=self.thrust_coeff,
+            tau=self.tau,
+            wind_x=0.0,
+            wind_y=0.0
+        )
 
-            self.masses = self.dd['masses']
-            self.masses[0] = 1.0
-            self.thrust_coeffs = self.dd['thrust_coeffs']
-            self.thrust_coeffs[0] = 1.0
-            logger.info("DroneEnv initialized successfully.")
-        except Exception as e:
-            logger.error(f"Failed to initialize DroneEnv: {e}")
-            raise
+        # Initialize State Dictionary (Sim Frame Z-Up)
+        self.state = {
+            'px': 0.0, 'py': 0.0, 'pz': 1.0,
+            'vx': 0.0, 'vy': 0.0, 'vz': 0.0,
+            'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
+            'wx': 0.0, 'wy': 0.0, 'wz': 0.0
+        }
+
+        # Legacy attributes for compatibility (if needed)
+        self.masses = [self.mass]
+        self.thrust_coeffs = [self.thrust_coeff]
+        self.dd = {'drag_coeffs': [self.drag_coeff]}
+
+        logger.info("SimDroneInterface initialized with PyGhostModel (Binary Exact Mode).")
 
     def reset_to_scenario(self, name, **kwargs):
         if name == "Blind Dive":
             # High Altitude Dive
-            self.dd['pos_x'][0] = kwargs.get('pos_x', 0.0)
-            self.dd['pos_y'][0] = kwargs.get('pos_y', 0.0)
-            self.dd['pos_z'][0] = kwargs.get('pos_z', 100.0)
+            self.state['px'] = kwargs.get('pos_x', 0.0)
+            self.state['py'] = kwargs.get('pos_y', 0.0)
+            self.state['pz'] = kwargs.get('pos_z', 100.0)
 
             # Zero Velocities
-            self.dd['vel_x'][0] = 0.0
-            self.dd['vel_y'][0] = 0.0
-            self.dd['vel_z'][0] = 0.0
+            self.state['vx'] = 0.0
+            self.state['vy'] = 0.0
+            self.state['vz'] = 0.0
 
             # Zero Attitude
-            self.dd['roll'][0] = 0.0
-            self.dd['pitch'][0] = kwargs.get('pitch', 0.0)
-            self.dd['yaw'][0] = kwargs.get('yaw', 0.0)
+            self.state['roll'] = 0.0
+            self.state['pitch'] = kwargs.get('pitch', 0.0)
+            self.state['yaw'] = kwargs.get('yaw', 0.0)
 
             # Zero Angular Velocities
-            self.dd['ang_vel_x'][0] = 0.0
-            self.dd['ang_vel_y'][0] = 0.0
-            self.dd['ang_vel_z'][0] = 0.0
+            self.state['wx'] = 0.0
+            self.state['wy'] = 0.0
+            self.state['wz'] = 0.0
 
             logger.info(f"Reset to Scenario: {name}")
         else:
@@ -55,48 +67,30 @@ class SimDroneInterface:
 
     def step(self, action):
         # Action: [thrust, roll_rate, pitch_rate, yaw_rate]
-        self.dd['actions'][:] = action.astype(np.float32)
-
-        kwargs = self.env.get_step_function_kwargs()
-        args = {}
-        for k, v in kwargs.items():
-            if v in self.dd:
-                args[k] = self.dd[v]
-            elif k == "num_agents":
-                args[k] = self.env.num_agents
-            elif k == "episode_length":
-                args[k] = self.env.episode_length
-            else:
-                pass
-
-        self.env.step_function(**args)
-        self.dd['done_flags'][:] = 0.0 # Prevent auto-reset logic from interfering
-
-    def get_state(self):
-        # Return Sim State (Z-Up, Rads)
-        return {
-            'px': float(self.dd['pos_x'][0]),
-            'py': float(self.dd['pos_y'][0]),
-            'pz': float(self.dd['pos_z'][0]),
-            'vx': float(self.dd['vel_x'][0]),
-            'vy': float(self.dd['vel_y'][0]),
-            'vz': float(self.dd['vel_z'][0]),
-            'roll': float(self.dd['roll'][0]),
-            'pitch': float(self.dd['pitch'][0]),
-            'yaw': float(self.dd['yaw'][0]),
-            'wx': float(self.dd['ang_vel_x'][0]),
-            'wy': float(self.dd['ang_vel_y'][0]),
-            'wz': float(self.dd['ang_vel_z'][0])
+        action_dict = {
+            'thrust': float(action[0]),
+            'roll_rate': float(action[1]),
+            'pitch_rate': float(action[2]),
+            'yaw_rate': float(action[3])
         }
 
+        dt = 0.05 # Fixed Time Step matching Planner
+
+        # Binary Exact Step using the same code as planner
+        self.state = self.model.step(self.state, action_dict, dt)
+
+    def get_state(self):
+        # Return State (Copy)
+        return self.state.copy()
+
     def get_image(self, target_pos_world):
-        # Synthetic Vision
+        # Synthetic Vision using current state
         width = 640
         height = 480
         img = np.zeros((height, width, 3), dtype=np.uint8)
 
         # Sim State to NED for Projector
-        s = self.get_state()
+        s = self.state
         drone_state_ned = {
             'px': s['px'],
             'py': s['py'],
