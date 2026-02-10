@@ -61,5 +61,14 @@ class MissionManager:
                 # Target is found and localized
                 # Fly to 2m above target
                 self.dpc_target = [target_wp[0], target_wp[1], 2.0]
+            else:
+                # Lost Tracking: Dead Reckoning
+                # Assume DT = 0.05 (Standard Sim Step)
+                dt = 0.05
+                vx = drone_state_sim.get('vx', 0.0)
+                vy = drone_state_sim.get('vy', 0.0)
+                # Relative Target Position decreases as we move towards it
+                self.dpc_target[0] -= vx * dt
+                self.dpc_target[1] -= vy * dt
 
         return self.state, self.dpc_target, extra_yaw

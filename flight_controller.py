@@ -73,7 +73,10 @@ class DPCFlightController:
 
              # Convert NED Velocity to Sim Frame (X-North, Y-East, Z-Up)
              # NED: X-North, Y-East, Z-Down
-             v_meas = np.array([v_meas_ned[0], v_meas_ned[1], -v_meas_ned[2]])
+             # Sim X (East) = NED Y (East)
+             # Sim Y (North) = NED X (North)
+             # Sim Z (Up)   = -NED Z (Down)
+             v_meas = np.array([v_meas_ned[1], v_meas_ned[0], -v_meas_ned[2]])
 
         # Update History
         self.last_target_rel_pos = raw_target_rel_ned
