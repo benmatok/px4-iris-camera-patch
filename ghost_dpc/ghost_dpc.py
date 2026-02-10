@@ -1,5 +1,6 @@
 import numpy as np
 import math
+from .se3_math import so3_exp, rpy_to_matrix, matrix_to_rpy
 
 class PyGhostModel:
     def __init__(self, mass, drag, thrust_coeff, wind_x=0.0, wind_y=0.0, tau=0.1):
@@ -28,57 +29,62 @@ class PyGhostModel:
         pitch_rate_cmd = action_dict['pitch_rate']
         yaw_rate_cmd = action_dict['yaw_rate']
 
-        # 1. Update Angular Velocities (Lag Dynamics)
-        # next_w = w + (cmd - w) * (dt/tau)
-        next_wx = wx + (roll_rate_cmd - wx) * (dt / self.tau)
-        next_wy = wy + (pitch_rate_cmd - wy) * (dt / self.tau)
-        next_wz = wz + (yaw_rate_cmd - wz) * (dt / self.tau)
+        # 1. Update Angular Velocities (Implicit Lag Dynamics for Stability)
+        # next_w = (w + cmd * alpha) / (1 + alpha) where alpha = dt/tau
+        alpha = dt / self.tau
+        denom = 1.0 + alpha
+        next_wx = (wx + roll_rate_cmd * alpha) / denom
+        next_wy = (wy + pitch_rate_cmd * alpha) / denom
+        next_wz = (wz + yaw_rate_cmd * alpha) / denom
 
-        # 2. Update Attitude (Kinematics)
-        sp = math.sin(roll) # wait, roll is phi. Convention: r, p, y.
-        # r->phi, p->theta, y->psi
-        sr = math.sin(roll); cr = math.cos(roll)
-        sp = math.sin(pitch); cp = math.cos(pitch)
+        # 2. Update Attitude (SE3 Manifold Spline Integration)
+        # Compute Average Angular Velocity
+        avg_wx = 0.5 * (wx + next_wx)
+        avg_wy = 0.5 * (wy + next_wy)
+        avg_wz = 0.5 * (wz + next_wz)
 
-        # Avoid singularity
-        if abs(cp) < 1e-6: cp = 1e-6
-        tt = sp / cp
-        st = 1.0 / cp
+        # Convert current attitude to Rotation Matrix
+        R_curr = rpy_to_matrix(roll, pitch, yaw)
 
-        r_dot = next_wx + next_wy * sr * tt + next_wz * cr * tt
-        p_dot = next_wy * cr - next_wz * sr
-        y_dot = (next_wy * sr + next_wz * cr) * st
+        # Compute Rotation Update (Exponential Map)
+        omega_vec = np.array([avg_wx, avg_wy, avg_wz], dtype=np.float32) * dt
+        R_update = so3_exp(omega_vec)
 
-        next_roll = roll + r_dot * dt
-        next_pitch = pitch + p_dot * dt
-        next_yaw = yaw + y_dot * dt
+        # Update Rotation: R_next = R_curr * R_update (Body frame update)
+        # Wait, is omega in Body or World?
+        # Standard drone control inputs are body rates (p, q, r).
+        # R_dot = R * [omega]_x. So R(t+dt) = R(t) * exp([omega]_x * dt).
+        # This corresponds to right multiplication.
+        R_next = np.matmul(R_curr, R_update)
 
-        # 3. Compute Forces based on New Attitude
+        # Convert back to Euler Angles
+        next_roll, next_pitch, next_yaw = matrix_to_rpy(R_next)
+
+        # 3. Compute Forces based on New Attitude (R_next)
         max_thrust = self.MAX_THRUST_BASE * self.thrust_coeff
         thrust_force = thrust * max_thrust
         if thrust_force < 0:
             thrust_force = 0.0
 
-        cr = math.cos(next_roll)
-        sr = math.sin(next_roll)
-        cp = math.cos(next_pitch)
-        sp = math.sin(next_pitch)
-        cy = math.cos(next_yaw)
-        sy = math.sin(next_yaw)
+        # Extract World Acceleration Direction from R_next
+        # R_next columns are Body X, Y, Z axes in World Frame.
+        # Thrust is along Body Z (third column).
+        # R = [nx, ny, nz]
+        # Body Z axis vector in world frame is R[:, 2] -> (R02, R12, R22)? No.
+        # R indices: row=world, col=body.
+        # So Z-axis direction is (R[0, 2], R[1, 2], R[2, 2]).
 
-        # Rotation Matrix Elements (World Acceleration components)
-        # R31
-        ax_dir = cy * sp * cr + sy * sr
-        # R32
-        ay_dir = sy * sp * cr - cy * sr
-        # R33
-        az_dir = cp * cr
+        ax_dir = R_next[0, 2]
+        ay_dir = R_next[1, 2]
+        az_dir = R_next[2, 2]
 
         # Accelerations
         ax_thrust = thrust_force * ax_dir / self.mass
         ay_thrust = thrust_force * ay_dir / self.mass
         az_thrust = thrust_force * az_dir / self.mass
 
+        # Drag Force (Opposing velocity)
+        # Use current velocity for drag calculation (Explicit)
         ax_drag = -self.drag_coeff * (vx - self.wind_x)
         ay_drag = -self.drag_coeff * (vy - self.wind_y)
         az_drag = -self.drag_coeff * vz
@@ -87,23 +93,17 @@ class PyGhostModel:
         ay = ay_thrust + ay_drag
         az = az_thrust + az_drag - self.G
 
-        # 3. Update Velocity
+        # 3. Update Velocity (Symplectic Euler)
         next_vx = vx + ax * dt
         next_vy = vy + ay * dt
         next_vz = vz + az * dt
 
-        # 4. Update Position
+        # 4. Update Position (Symplectic Euler: use next_v)
         next_px = px + next_vx * dt
         next_py = py + next_vy * dt
         next_pz = pz + next_vz * dt
 
-        # Add explicit normalization of angles (like DroneEnv did) to keep values bounded
-        # and prevent drift in long simulations?
-        # Actually, PyGhostModel is used for short horizon planning.
-        # But if used as SIM backend for long run, it should normalize.
-        next_roll = (next_roll + math.pi) % (2 * math.pi) - math.pi
-        next_pitch = (next_pitch + math.pi) % (2 * math.pi) - math.pi
-        next_yaw = (next_yaw + math.pi) % (2 * math.pi) - math.pi
+        # Angles are naturally normalized by matrix_to_rpy (atan2)
 
         return {
             'px': next_px, 'py': next_py, 'pz': next_pz,
@@ -176,8 +176,8 @@ class PyGhostModel:
         J[2, 0] = J[5, 0] * dt
 
         # 2. Derivatives w.r.t RATES (Columns 1, 2, 3)
-        # d(W_next)/d(Rate_cmd) = dt / tau
-        factor_w = dt / self.tau
+        # d(W_next)/d(Rate_cmd) = alpha / (1 + alpha) = (dt/tau) / (1 + dt/tau) = dt / (tau + dt)
+        factor_w = dt / (self.tau + dt)
         J[9, 1] = factor_w
         J[10, 2] = factor_w
         J[11, 3] = factor_w
@@ -323,8 +323,8 @@ class PyGhostModel:
         # 3. dAtt'/dAtt = I
         J_state[6, 6] = 1.0; J_state[7, 7] = 1.0; J_state[8, 8] = 1.0
 
-        # 4. dW'/dW = I * (1 - dt/tau)
-        dw_dw = 1.0 - dt / self.tau
+        # 4. dW'/dW = I * (1 / (1 + dt/tau)) = I * (tau / (tau + dt))
+        dw_dw = self.tau / (self.tau + dt)
         J_state[9, 9] = dw_dw; J_state[10, 10] = dw_dw; J_state[11, 11] = dw_dw
 
         # 5. dP'/dV = dt
