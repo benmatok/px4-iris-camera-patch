@@ -2,6 +2,7 @@ import sys
 import os
 import asyncio
 import numpy as np
+import math
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -47,8 +48,8 @@ class TheShow:
     def __init__(self):
         try:
             # 1. Initialize Components
-            # Tilt -45.0 (Down) to see ground targets
-            self.projector = Projector(width=640, height=480, fov_deg=110.0, tilt_deg=-45.0)
+            # Tilt 30.0 (Up) as requested
+            self.projector = Projector(width=640, height=480, fov_deg=110.0, tilt_deg=30.0)
 
             # Scenario / Sim
             self.sim = SimDroneInterface(self.projector)
@@ -90,8 +91,8 @@ class TheShow:
         dist_xy = np.sqrt(dx*dx + dy*dy)
         pitch_vec = np.arctan2(dz, dist_xy)
 
-        # Camera Tilt is -45.0 (Down)
-        camera_tilt = np.deg2rad(-45.0)
+        # Camera Tilt is 30.0 (Up)
+        camera_tilt = np.deg2rad(30.0)
 
         # Body Pitch = Vec Pitch - Camera Tilt
         pitch = pitch_vec - camera_tilt
@@ -172,6 +173,50 @@ class TheShow:
         except Exception as e:
             logger.error(f"Error handling message: {e}")
 
+    def sim_to_ned(self, sim_state):
+        # Maps Sim (ENU) to NED (Right-Handed)
+        # Sim: X=East, Y=North, Z=Up
+        # NED: X=North, Y=East, Z=Down
+        # Yaw: Sim 0=East -> NED pi/2=East
+        #      Sim pi/2=North -> NED 0=North
+        #      Yaw_ned = pi/2 - Yaw_sim
+
+        # NED X (North) = Sim Y (North)
+        # NED Y (East) = Sim X (East)
+
+        ned = sim_state.copy()
+        ned['px'] = sim_state['py']
+        ned['py'] = sim_state['px']
+        ned['pz'] = -sim_state['pz']
+
+        ned['vx'] = sim_state['vy']
+        ned['vy'] = sim_state['vx']
+        ned['vz'] = -sim_state['vz']
+
+        # Roll/Pitch align if we only care about body frame definition (Fwd/Right/Down)
+        # Sim: Fwd/Left/Up. Roll(Fwd), Pitch(Left).
+        # NED: Fwd/Right/Down. Roll(Fwd), Pitch(Right).
+        # Pitch sign: Nose Up is Positive in both.
+        # Roll sign: Right Wing Down is Positive in both.
+
+        ned['roll'] = sim_state['roll']
+        ned['pitch'] = sim_state['pitch']
+        ned['yaw'] = (math.pi / 2.0) - sim_state['yaw']
+
+        # Normalize Yaw
+        ned['yaw'] = (ned['yaw'] + math.pi) % (2 * math.pi) - math.pi
+
+        return ned
+
+    def sim_pos_to_ned_pos(self, sim_pos):
+        # [x, y, z] -> [y, x, -z]
+        return [sim_pos[1], sim_pos[0], -sim_pos[2]]
+
+    def ned_rel_to_sim_rel(self, ned_rel):
+        # [dx, dy, dz] NED -> [dy, dx, -dz] Sim
+        # Because NED Rel X (North) corresponds to Sim Rel Y (North)
+        return [ned_rel[1], ned_rel[0], -ned_rel[2]]
+
     async def broadcast(self, data):
         if not self.websockets: return
 
@@ -207,29 +252,25 @@ class TheShow:
         # Get synthetic image
         img = self.sim.get_image(target_pos_sim_world)
 
-        # Convert Sim State to NED for Tracking/Control (but with ZERO POSITION)
-        # We perform relative tracking, so we zero out absolute position/velocity for the tracker
-        dpc_state_ned_rel = {
-            'px': 0.0, 'py': 0.0, 'pz': -s['pz'],
-            'vx': 0.0, 'vy': 0.0, 'vz': -s['vz'],
-            'roll': s['roll'], 'pitch': s['pitch'], 'yaw': s['yaw']
-        }
+        # Convert Sim State to NED (Absolute)
+        dpc_state_ned_abs = self.sim_to_ned(s)
 
-        # Construct Absolute NED State for Visualization and Correct Tracking
-        dpc_state_ned_abs = {
-            'px': s['px'], 'py': s['py'], 'pz': -s['pz'],
-            'vx': s['vx'], 'vy': s['vy'], 'vz': -s['vz'],
-            'roll': s['roll'], 'pitch': s['pitch'], 'yaw': s['yaw']
-        }
+        # Convert Target Sim Pos to NED Pos (Absolute)
+        target_pos_ned_abs = self.sim_pos_to_ned_pos(target_pos_sim_world)
 
         # Detect and Localize (Returns Relative Target Position in NED)
         # Using Ground Truth Target (Perfect Projection) per user request to bypass detection for now
-        # We pass Absolute Drone State because ground_truth_target_pos is Absolute.
-        center, target_wp, radius = self.tracker.process(
+        # We pass Absolute Drone State (NED) and Target (NED)
+        center, target_wp_ned, radius = self.tracker.process(
             img,
             dpc_state_ned_abs,
-            ground_truth_target_pos=target_pos_sim_world
+            ground_truth_target_pos=target_pos_ned_abs
         )
+
+        # Convert Result (target_wp_ned) back to Sim Relative Frame
+        target_wp_sim = None
+        if target_wp_ned:
+             target_wp_sim = self.ned_rel_to_sim_rel(target_wp_ned)
 
         # 3. Update Mission Logic
         # Pass sanitized relative state to mission (px=0, py=0)
@@ -237,7 +278,7 @@ class TheShow:
         sim_state_rel['px'] = 0.0
         sim_state_rel['py'] = 0.0
 
-        mission_state, dpc_target, extra_yaw = self.mission.update(sim_state_rel, (center, target_wp))
+        mission_state, dpc_target, extra_yaw = self.mission.update(sim_state_rel, (center, target_wp_sim))
 
         # 4. Compute Control
         # Construct observed state for controller
@@ -252,12 +293,12 @@ class TheShow:
             'wz': s['wz']
         }
 
-        # dpc_target is [RelX, RelY, AbsZ]
-        # target_wp is [RelX, RelY, RelZ] (NED)
+        # dpc_target is [RelX, RelY, AbsZ] (Sim Frame)
+        # target_wp_ned is [RelX, RelY, RelZ] (NED Frame) needed for Optical Flow calc in Controller
         action_out, ghost_paths = self.controller.compute_action(
             state_obs,
             dpc_target,
-            raw_target_rel_ned=target_wp,
+            raw_target_rel_ned=target_wp_ned,
             extra_yaw_rate=extra_yaw
         )
 
@@ -317,24 +358,21 @@ class TheShow:
             p = horizon_preds[-1]
 
             pred_s = p['state']
-            act_s = dpc_state_ned_rel
+            # act_s = dpc_state_ned_rel # Removed. Use dpc_state_ned_abs
 
             # 1. Height Error (Altitude)
-            # pred_s is Z-Up. act_s is NED.
+            # pred_s is Z-Up (Sim). dpc_state_ned_abs['pz'] is Z-Down (NED).
             pred_alt = pred_s['pz']
-            act_alt = -act_s['pz']
+            act_alt = -dpc_state_ned_abs['pz']
             height_err = pred_alt - act_alt
 
             # 2. Projection Error
-            # Convert pred_s (Z-Up) to NED for Projector
-            pred_s_ned = {
-                'px': pred_s['px'], 'py': pred_s['py'], 'pz': -pred_s['pz'],
-                'vx': pred_s['vx'], 'vy': pred_s['vy'], 'vz': -pred_s['vz'],
-                'roll': pred_s['roll'], 'pitch': pred_s['pitch'], 'yaw': pred_s['yaw']
-            }
+            # Convert pred_s (Sim Z-Up) to NED for Projector
+            pred_s_ned = self.sim_to_ned(pred_s)
 
-            tgt_used = p['target_used']
-            tx, ty, tz = tgt_used
+            tgt_used = p['target_used'] # Sim Frame
+            # Convert to NED
+            tx, ty, tz = self.sim_pos_to_ned_pos(tgt_used)
 
             pred_u, pred_v, pred_rad = 0, 0, 0
             res = self.projector.project_point_with_size(tx, ty, tz, pred_s_ned, object_radius=0.5)
@@ -360,50 +398,55 @@ class TheShow:
             }
 
         # 6. Prepare Payload
-        # Construct Absolute NED State for Visualization
-        dpc_state_ned_abs = {
-            'px': s['px'], 'py': s['py'], 'pz': -s['pz'],
-            'vx': s['vx'], 'vy': s['vy'], 'vz': -s['vz'],
-            'roll': s['roll'], 'pitch': s['pitch'], 'yaw': s['yaw']
-        }
+        # Construct Absolute NED State for Visualization (Already Computed)
+        # dpc_state_ned_abs = ...
 
         # Construct Absolute Target Viz (NED)
-        # dpc_target is [RelX, RelY, AbsZ_Up]
-        # TargetViz_NED = [AbsX, AbsY, AbsZ_Down]
-        # AbsX = DroneX + RelX
-        # AbsY = DroneY + RelY
-        # AbsZ_Down = -AbsZ_Up
-        target_viz_ned = [
-            dpc_state_ned_abs['px'] + dpc_target[0],
-            dpc_state_ned_abs['py'] + dpc_target[1],
-            -dpc_target[2]
-        ]
+        # dpc_target is [RelX, RelY, AbsZ_Up] (Sim Frame)
+        # Need Target Viz in NED Absolute.
+        # Target Sim Abs = Drone Sim Abs + Rel Target Sim
+        # Wait. dpc_target[0,1] is Relative. dpc_target[2] is Absolute Z.
+
+        target_sim_abs_x = s['px'] + dpc_target[0]
+        target_sim_abs_y = s['py'] + dpc_target[1]
+        target_sim_abs_z = dpc_target[2]
+
+        target_viz_ned = self.sim_pos_to_ned_pos([target_sim_abs_x, target_sim_abs_y, target_sim_abs_z])
 
         # Transform Ghosts to Absolute NED Frame for Frontend
         # ghost_paths: [px, py, pz] (Z-Up, Relative to Solver Origin [px=0, py=0])
         # Need: [px, py, pz] (NED, Absolute)
-        # 1. Shift px, py by s['px'], s['py']
-        # 2. Convert Z-Up to NED Z-Down (pz_ned = -pz_up)
 
         ghosts_viz = []
         if ghost_paths:
             for path in ghost_paths:
                 new_path = []
                 for pt in path:
+                    # Construct Sim Absolute
+                    sim_abs_x = s['px'] + pt['px']
+                    sim_abs_y = s['py'] + pt['py']
+                    sim_abs_z = pt['pz']
+
+                    # Convert to NED
+                    ned_pos = self.sim_pos_to_ned_pos([sim_abs_x, sim_abs_y, sim_abs_z])
+
                     new_pt = {
-                        'px': pt['px'] + s['px'],
-                        'py': pt['py'] + s['py'],
-                        'pz': -pt['pz']
+                        'px': ned_pos[0],
+                        'py': ned_pos[1],
+                        'pz': ned_pos[2]
                     }
                     new_path.append(new_pt)
                 ghosts_viz.append(new_path)
+
+        # Convert Sim Target to NED for Frontend
+        sim_target_ned = self.sim_pos_to_ned_pos(target_pos_sim_world)
 
         payload = {
             'state': mission_state,
             'drone': dpc_state_ned_abs, # Absolute for Viz
             'control': action_out,
-            'target': target_viz_ned, # Absolute for Viz
-            'sim_target': target_pos_sim_world,
+            'target': target_viz_ned, # Absolute for Viz (Red)
+            'sim_target': sim_target_ned, # Absolute NED (Green)
             'tracker': {'u': center[0] if center else 0, 'v': center[1] if center else 0, 'size': radius},
             'dpc_error': dpc_error,
             'ghosts': ghosts_viz,

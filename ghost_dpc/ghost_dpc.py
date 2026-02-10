@@ -765,10 +765,11 @@ class PyDPCSolver:
              yb = r21*dx_w + r22*dy_w + r23*dz_w
              zb = r31*dx_w + r32*dy_w + r33*dz_w
 
+             # Camera Tilt is 30.0 (Up)
              s30 = 0.5; c30 = 0.866025
              xc = yb
-             yc = -s30*xb + c30*zb
-             zc = c30*xb + s30*zb
+             yc = s30*xb + c30*zb
+             zc = c30*xb - s30*zb
 
              if zc < 0.1: zc = 0.1
              return xc/zc, yc/zc, zc
@@ -895,10 +896,11 @@ class PyDPCSolver:
                     yb = r21*dx_w + r22*dy_w + r23*dz_w
                     zb = r31*dx_w + r32*dy_w + r33*dz_w
 
+                    # Camera Tilt is 30.0 (Up)
                     s30 = 0.5; c30 = 0.866025
                     xc = yb
-                    yc = -s30*xb + c30*zb
-                    zc = c30*xb + s30*zb
+                    yc = s30*xb + c30*zb
+                    zc = c30*xb - s30*zb
 
                     if zc < 0.1: zc = 0.1
                     u_pred = xc / zc
@@ -955,8 +957,10 @@ class PyDPCSolver:
 
                     dxc_dyb = 1.0
 
-                    dyc_dxb = -s30; dyc_dzb = c30
-                    dzc_dxb = c30; dzc_dzb = s30
+                    s30 = 0.5; c30 = 0.866025
+
+                    dyc_dxb = s30; dyc_dzb = c30
+                    dzc_dxb = c30; dzc_dzb = -s30
 
                     du_dxb = du_dzc * dzc_dxb # (term from zc)
                     du_dyb = du_dxc * dxc_dyb # (term from xc)

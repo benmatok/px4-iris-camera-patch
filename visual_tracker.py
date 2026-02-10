@@ -29,7 +29,9 @@ class VisualTracker:
             tx, ty, tz = ground_truth_target_pos
 
             # 1. Project to Pixel
+            logger.debug(f"Projecting GT Target: {tx}, {ty}, {tz} with Drone State: {drone_state_ned}")
             uv = self.projector.world_to_pixel(tx, ty, tz, drone_state_ned)
+            logger.debug(f"Projected UV: {uv}")
 
             if uv:
                 u, v = uv
