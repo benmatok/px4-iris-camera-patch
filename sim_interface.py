@@ -113,11 +113,14 @@ class SimDroneInterface:
         ty_ned = tx_sim
         tz_ned = -tz_sim
 
-        uv = self.projector.world_to_pixel(tx_ned, ty_ned, tz_ned, drone_state_ned)
+        # Project with size (0.5m radius)
+        res = self.projector.project_point_with_size(tx_ned, ty_ned, tz_ned, drone_state_ned, object_radius=0.5)
 
-        if uv:
-            u, v = uv
+        if res:
+            u, v, r = res
             if 0 <= u < width and 0 <= v < height:
-                cv2.circle(img, (int(u), int(v)), 10, (0, 0, 255), -1)
+                # Ensure minimum visibility
+                draw_radius = max(2, int(r))
+                cv2.circle(img, (int(u), int(v)), draw_radius, (0, 0, 255), -1)
 
         return img
