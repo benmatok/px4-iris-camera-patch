@@ -15,26 +15,24 @@ from ghost_dpc.ghost_dpc import PyGhostModel, PyDPCSolver
 
 class TestWebSimParity(unittest.TestCase):
     def test_blind_dive_parity(self):
-        print("\n--- Testing Parity between Web Logic (Bypass) and Pure Sim ---")
+        print("\n--- Testing Binary Exact Parity between Web Logic (SimDroneInterface) and Pure Sim ---")
 
         # 1. Run Web Logic Replica (Bypass Vision)
-        # Using Default Init (1.0kg, 1.0 Thrust, 0.2 Tau)
         projector = Projector(width=640, height=480, fov_deg=110.0, tilt_deg=-45.0)
         sim = SimDroneInterface(projector)
 
-        # Verify Defaults
-        self.assertAlmostEqual(sim.masses[0], 1.0)
-        self.assertAlmostEqual(sim.thrust_coeffs[0], 1.0)
-
-        # Force Drag to 0.1 for deterministic comparison
-        sim.dd['drag_coeffs'][0] = 0.1
+        # Verify Model Init
+        self.assertEqual(sim.mass, 1.0)
+        self.assertEqual(sim.thrust_coeff, 1.0)
+        self.assertEqual(sim.tau, 0.1)
+        self.assertEqual(sim.drag_coeff, 0.1)
 
         controller = DPCFlightController(dt=0.05)
         # Verify Controller Defaults
         self.assertEqual(controller.models_config[0]['mass'], 1.0)
         self.assertEqual(controller.models_config[0]['thrust_coeff'], 1.0)
         self.assertEqual(controller.models_config[0]['drag_coeff'], 0.1)
-        self.assertEqual(controller.models_config[0]['tau'], 0.2)
+        self.assertEqual(controller.models_config[0]['tau'], 0.1)
 
         target_pos_sim_world = [50.0, 0.0, 0.0]
         drone_pos = [0.0, 0.0, 100.0]
@@ -50,6 +48,13 @@ class TestWebSimParity(unittest.TestCase):
         pitch = pitch_vec - camera_tilt
 
         sim.reset_to_scenario("Blind Dive", pos_x=drone_pos[0], pos_y=drone_pos[1], pos_z=drone_pos[2], pitch=pitch, yaw=yaw)
+
+        # Explicitly set initial state to match "Pure Sim" perfectly
+        # PyGhostModel uses 0.0 for initial velocities/rates unless specified
+        # SimDroneInterface.reset_to_scenario sets them to 0.0
+        # Check initial state
+        # Check initial state
+        s0 = sim.get_state()
 
         path_web = []
         for i in range(100):
@@ -68,7 +73,9 @@ class TestWebSimParity(unittest.TestCase):
             state_obs = {
                 'pz': s['pz'], 'vz': s['vz'],
                 'roll': s['roll'], 'pitch': s['pitch'], 'yaw': s['yaw'],
-                'wx': s['wx'], 'wy': s['wy'], 'wz': s['wz']
+                'wx': s['wx'], 'wy': s['wy'], 'wz': s['wz'],
+                # Pass perfect velocity to ensure binary exact parity with Pure Sim logic
+                'vx': s['vx'], 'vy': s['vy']
             }
 
             action_out, _ = controller.compute_action(
@@ -84,13 +91,8 @@ class TestWebSimParity(unittest.TestCase):
         path_web = np.array(path_web)
 
         # 2. Run Pure Sim Logic
-        # Matches Web Logic Params (1.0kg, 0.1 Drag, 1.0 Thrust)
-        # Note: PyGhostModel uses tau=0.1 by default in Sim loop,
-        # but Controller uses tau=0.2 in its model.
-        # This tests if Web Logic (DroneEnv + Controller) matches Pure Sim (PyGhostModel + Controller).
-        # Assuming PyGhostModel Plant matches DroneEnv (substeps=1).
-
-        model = PyGhostModel(mass=1.0, drag=0.1, thrust_coeff=1.0, tau=0.1) # Plant Tau 0.1
+        # Matches Web Logic Params (1.0kg, 0.1 Drag, 1.0 Thrust, 0.1 Tau)
+        model = PyGhostModel(mass=1.0, drag=0.1, thrust_coeff=1.0, tau=0.1)
         solver = PyDPCSolver()
 
         state = {
@@ -104,9 +106,6 @@ class TestWebSimParity(unittest.TestCase):
         dt = 0.05
         path_sim = []
 
-        # Config for Solver (Use Default 0.1 Tau for Ideal Sim)
-        # We compare Web Logic (Tuned Tau=0.2) against Pure Sim (Ideal Tau=0.1)
-        # Because we want Web to match the Ideal Sim behavior.
         models_config = [{'mass': 1.0, 'drag_coeff': 0.1, 'thrust_coeff': 1.0, 'tau': 0.1}]
         weights = [1.0]
 
@@ -121,10 +120,11 @@ class TestWebSimParity(unittest.TestCase):
         print(f"Web Final: {path_web[-1]}")
         print(f"Sim Final: {path_sim[-1]}")
         final_err = np.linalg.norm(path_web[-1] - path_sim[-1])
-        print(f"Final Error: {final_err:.4f} m")
+        print(f"Final Error: {final_err:.8f} m")
 
-        # Assert low error
-        self.assertLess(final_err, 1.0, "Web Logic differs significantly from Sim Logic!")
+        # Assert Binary Exactness (Floating Point Tolerance)
+        # Should be extremely close to 0.0
+        self.assertLess(final_err, 1e-4, "Web Logic is not binary exact with Sim Logic!")
 
 if __name__ == "__main__":
     unittest.main()
