@@ -216,7 +216,12 @@ class TheShow:
         }
 
         # Detect and Localize (Returns Relative Target Position in NED)
-        center, target_wp, radius = self.tracker.process(img, dpc_state_ned_rel)
+        # Using Ground Truth Target (Perfect Projection) per user request to bypass detection for now
+        center, target_wp, radius = self.tracker.process(
+            img,
+            dpc_state_ned_rel,
+            ground_truth_target_pos=target_pos_sim_world
+        )
 
         # 3. Update Mission Logic
         # Pass sanitized relative state to mission (px=0, py=0)
