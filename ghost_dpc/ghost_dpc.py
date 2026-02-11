@@ -691,9 +691,11 @@ class PyDPCSolver:
              current_action['yaw_rate'] = forced_yaw_rate
 
         def compute_uv(s, t_pos):
-             dx_w = s['px'] - t_pos[0]
-             dy_w = s['py'] - t_pos[1]
-             dz_w = s['pz'] - t_pos[2]
+             # Gaze Target is the actual object at (0,0,0)
+             # Vector points from Camera (Drone) to Object
+             dx_w = 0.0 - s['px']
+             dy_w = 0.0 - s['py']
+             dz_w = 0.0 - s['pz']
 
              r, p, y = s['roll'], s['pitch'], s['yaw']
              cr=math.cos(r); sr=math.sin(r)
@@ -767,9 +769,10 @@ class PyDPCSolver:
                             dL_dPz_ttc = dL_dtau * dtau_dz
                             dL_dVz_ttc = dL_dtau * dtau_dvz
 
-                    dx_w = next_state['px'] - target_pos[0]
-                    dy_w = next_state['py'] - target_pos[1]
-                    dz_w = next_state['pz'] - target_pos[2]
+                    # Gaze Vector: Camera (Drone) -> Object (Origin)
+                    dx_w = 0.0 - next_state['px']
+                    dy_w = 0.0 - next_state['py']
+                    dz_w = 0.0 - next_state['pz']
 
                     r, p, y = next_state['roll'], next_state['pitch'], next_state['yaw']
                     cr=math.cos(r); sr=math.sin(r)
@@ -850,18 +853,57 @@ class PyDPCSolver:
                     dL_dYaw_g = dL_dxb * yb + dL_dyb * (-xb)
                     dL_dPitch_g = dL_dxb * (-zb) + dL_dzb * xb
 
+                    # --- Dive Angle Cost ---
+                    dL_dVx_gamma = 0.0
+                    dL_dVy_gamma = 0.0
+                    dL_dVz_gamma = 0.0
+                    dL_dPz_gamma = 0.0
+
+                    # Only apply Dive Cost if we are significantly above the goal altitude
+                    if next_state['pz'] > goal_z + 1.0:
+                        # gamma_ref based on altitude: 20 deg at ground, 70 deg at 100m
+                        gamma_pz_clamped = max(0.0, min(next_state['pz'], 100.0))
+                        gamma_ref_deg = 20.0 + 50.0 * (gamma_pz_clamped / 100.0)
+                        gamma_ref = gamma_ref_deg * math.pi / 180.0
+
+                        vx = next_state['vx']
+                        vy = next_state['vy']
+                        vz = next_state['vz']
+                        h_speed = math.sqrt(vx*vx + vy*vy + 1e-6)
+                        gamma = math.atan2(-vz, h_speed)
+
+                        w_gamma = 50.0
+                        gamma_diff = gamma - gamma_ref
+
+                        dL_dGamma = 2.0 * w_gamma * gamma_diff
+
+                        speed_sq = vx*vx + vy*vy + vz*vz + 1e-6
+
+                        # dGamma/dVz = -h_speed / speed_sq
+                        dL_dVz_gamma = dL_dGamma * (-h_speed / speed_sq)
+
+                        # dGamma/dVx = (vz / speed_sq) * (vx / h_speed)
+                        term_h = vz / (speed_sq * h_speed)
+                        dL_dVx_gamma = dL_dGamma * term_h * vx
+                        dL_dVy_gamma = dL_dGamma * term_h * vy
+
+                        # dL/dPz (Gradient of Ref w.r.t Pz)
+                        if 0.0 < next_state['pz'] < 100.0:
+                             dRef_dPz = 0.5 * math.pi / 180.0 # 50/100 * deg2rad
+                             dL_dPz_gamma = dL_dGamma * (-1.0) * dRef_dPz
+
                     dL_dS = np.zeros(12, dtype=np.float32)
                     dL_dS[0] += dL_dP[0] + dL_dP_g[0]
                     dL_dS[1] += dL_dP[1] + dL_dP_g[1]
-                    dL_dS[2] += dL_dP[2] + dL_dPz_alt + dL_dPz_ttc + dL_dP_g[2]
+                    dL_dS[2] += dL_dP[2] + dL_dPz_alt + dL_dPz_ttc + dL_dP_g[2] + dL_dPz_gamma
 
                     dL_dS[7] += dL_dPitch_g
                     dL_dS[8] += dL_dYaw_g
 
                     k_damp = 2.0
-                    dL_dS[3] += k_damp * next_state['vx']
-                    dL_dS[4] += k_damp * next_state['vy']
-                    dL_dS[5] += k_damp * next_state['vz'] + dL_dVz_ttc
+                    dL_dS[3] += k_damp * next_state['vx'] + dL_dVx_gamma
+                    dL_dS[4] += k_damp * next_state['vy'] + dL_dVy_gamma
+                    dL_dS[5] += k_damp * next_state['vz'] + dL_dVz_ttc + dL_dVz_gamma
 
                     dL_dS[9] += 0.1 * next_state.get('wx', 0.0)
                     dL_dS[10] += 0.1 * next_state.get('wy', 0.0)
