@@ -1,11 +1,13 @@
 import logging
 import math
+import time
 
 logger = logging.getLogger(__name__)
 
 class MissionManager:
     def __init__(self, target_alt=50.0):
         self.target_alt = target_alt
+        self.staircase_start_time = 0.0
         self.reset()
 
     def reset(self, target_alt=None):
@@ -13,6 +15,7 @@ class MissionManager:
         if target_alt is not None:
             self.target_alt = target_alt
         self.dpc_target = [0.0, 0.0, self.target_alt] # Z-Up Target
+        self.staircase_target_z = 0.0
         logger.info(f"MissionManager reset to TAKEOFF with Target Alt: {self.target_alt}")
 
     def update(self, drone_state_sim, detection_result):
@@ -34,22 +37,15 @@ class MissionManager:
         extra_yaw = 0.0
 
         if self.state == "TAKEOFF":
-            # Hold position (hover) at TARGET_ALT
-            # Target is [0, 0, TARGET_ALT] relative to current position (Z-Up)
             self.dpc_target = [0.0, 0.0, self.target_alt]
 
             if center is not None:
                 self.state = "HOMING"
-            # Transition to SCAN if close to altitude
             elif current_alt >= self.target_alt - 5.0:
                 self.state = "SCAN"
 
         elif self.state == "SCAN":
-            # Spin to find target
             extra_yaw = math.radians(15.0)
-
-            # Maintain hover at current position but adjust to target altitude
-            # This prevents the stale target issue causing dives
             self.dpc_target = [0.0, 0.0, self.target_alt]
 
             if center is not None:
@@ -58,17 +54,77 @@ class MissionManager:
 
         elif self.state == "HOMING":
             if target_wp:
-                # Target is found and localized
-                # Fly to 2m above target
-                self.dpc_target = [target_wp[0], target_wp[1], 2.0]
+                # Calculate Lateral Distance
+                lat_dist = math.sqrt(target_wp[0]**2 + target_wp[1]**2)
+
+                # Check for "Too High and Steep" Condition (Staircase Trigger)
+                # Alt > 20m AND Dist < 10m (Steep)
+                if current_alt > 30.0 and lat_dist < 15.0:
+                    self.state = "STAIRCASE_DESCEND"
+                    self.staircase_target_z = current_alt - 20.0
+                    if self.staircase_target_z < 5.0:
+                         self.staircase_target_z = 5.0 # Floor for safety during staircasing
+                    logger.info(f"Triggering STAIRCASE_DESCEND. Alt: {current_alt}, Dist: {lat_dist}, TargetZ: {self.staircase_target_z}")
+
+                    # Target: Relative XY = 0 (Hover), Absolute Z = Target
+                    # In HOMING, dpc_target[0,1] is relative vector to target.
+                    # If we switch to Hover relative to *Drone*, we set dpc_target[0,1] = 0.
+                    # But we want to hover *over the target*?
+                    # "Drop 20m then stabilize and reacquire".
+                    # If we hover over drone, we drift away from target if moving.
+                    # Let's try to maintain XY tracking but force Z drop.
+                    self.dpc_target = [target_wp[0], target_wp[1], self.staircase_target_z]
+                else:
+                    # Normal Homing (Intercept)
+                    # Fly to 0.0m (Collision allowed)
+                    self.dpc_target = [target_wp[0], target_wp[1], 0.0]
             else:
-                # Lost Tracking: Dead Reckoning
-                # Assume DT = 0.05 (Standard Sim Step)
+                # Lost Tracking
                 dt = 0.05
                 vx = drone_state_sim.get('vx', 0.0)
                 vy = drone_state_sim.get('vy', 0.0)
-                # Relative Target Position decreases as we move towards it
                 self.dpc_target[0] -= vx * dt
                 self.dpc_target[1] -= vy * dt
+
+        elif self.state == "STAIRCASE_DESCEND":
+            # Continue tracking XY, but force Z
+            if target_wp:
+                self.dpc_target = [target_wp[0], target_wp[1], self.staircase_target_z]
+            else:
+                # Dead reckon
+                dt = 0.05
+                vx = drone_state_sim.get('vx', 0.0)
+                vy = drone_state_sim.get('vy', 0.0)
+                self.dpc_target[0] -= vx * dt
+                self.dpc_target[1] -= vy * dt
+
+            # Check completion
+            if abs(current_alt - self.staircase_target_z) < 2.0:
+                self.state = "STAIRCASE_STABILIZE"
+                self.staircase_start_time = time.time()
+                logger.info("STAIRCASE_STABILIZE. Holding position.")
+
+        elif self.state == "STAIRCASE_STABILIZE":
+            # Hold current XY and Z
+            # If we see target, track it but hold Z? Or assume stabilized?
+            # Instructions: "Stabilize and reacquire target"
+            if target_wp:
+                 self.dpc_target = [target_wp[0], target_wp[1], self.staircase_target_z]
+            else:
+                 # Drift
+                 dt = 0.05
+                 vx = drone_state_sim.get('vx', 0.0)
+                 vy = drone_state_sim.get('vy', 0.0)
+                 self.dpc_target[0] -= vx * dt
+                 self.dpc_target[1] -= vy * dt
+
+            # Timer
+            if time.time() - self.staircase_start_time > 2.0:
+                if center is not None:
+                    logger.info("Staircase complete. Reacquired. Resume HOMING.")
+                    self.state = "HOMING"
+                else:
+                    logger.info("Staircase complete. Target lost. Resume SCAN.")
+                    self.state = "SCAN"
 
         return self.state, self.dpc_target, extra_yaw
