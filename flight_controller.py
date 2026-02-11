@@ -70,6 +70,10 @@ class DPCFlightController:
         # 3. Solve
         forced_yaw = extra_yaw_rate if extra_yaw_rate != 0.0 else None
 
+        # dpc_target (target_cmd) is [RelX, RelY, AbsZ]
+        # We pass RelX, RelY to solver for dead reckoning / drift correction
+        target_rel_xy = [target_cmd[0], target_cmd[1]]
+
         action_out, ghost_paths = self.solver.solve(
             list(self.history),
             self.last_action,
@@ -78,7 +82,8 @@ class DPCFlightController:
             self.dt,
             forced_yaw_rate=forced_yaw,
             goal_z=goal_z,
-            intercept_mode=intercept_mode
+            intercept_mode=intercept_mode,
+            target_pos_rel_xy=target_rel_xy
         )
         self.last_action = action_out
 
