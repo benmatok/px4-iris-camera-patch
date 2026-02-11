@@ -909,6 +909,14 @@ class PyDPCSolver:
                     # Cost = w_g * (u^2 + v^2) + w_flow * ((u - u_prev)^2 + (v - v_prev)^2)
                     w_g = 1.0
                     w_flow = 0.5
+                    w_fov = 10.0  # FOV Barrier
+                    w_z_cam = 10.0 # Keep target in front
+
+                    # Gaze Scaling (Disable if target is very close/hovering on top)
+                    dist_sq = dx_w*dx_w + dy_w*dy_w + dz_w*dz_w
+                    dist_val = math.sqrt(dist_sq + 1e-6)
+                    # Smooth scale: 0.0 at dist=5.0, ~0.76 at dist=10.0
+                    gaze_scale = math.tanh(max(0.0, dist_val - 5.0) / 5.0)
 
                     diff_u = u_pred - u_prev
                     diff_v = v_pred - v_prev
@@ -916,17 +924,42 @@ class PyDPCSolver:
                     # Gate Visual Costs if target is behind camera plane
                     # We only add Flow Cost if we were visible AND are now visible
                     # Added tighter bounds to ignore "edge of FOV" singularities
-                    valid_curr = (zc > 1.0) and (abs(u_pred) < 3.0) and (abs(v_pred) < 3.0)
+                    # valid_curr check REMOVED for Gaze Cost to ensure re-acquisition
                     valid_prev = (zc_prev > 1.0) and (abs(u_prev) < 3.0) and (abs(v_prev) < 3.0)
 
                     dL_du = 0.0
                     dL_dv = 0.0
 
-                    if valid_curr:
-                        dL_du += 2.0 * w_g * u_pred
-                        dL_dv += 2.0 * w_g * v_pred
+                    # 1. Centering Cost (Always Active, Scaled by Distance)
+                    # Only apply to U (Horizontal/Yaw).
+                    # Do NOT apply to V (Vertical/Pitch) because camera tilt makes centering conflict with approach.
+                    dL_du += 2.0 * w_g * gaze_scale * u_pred
+                    # dL_dv += 2.0 * w_g * gaze_scale * v_pred # DISABLED for Pitch
 
-                    if valid_curr and valid_prev:
+                    # 2. FOV Barrier Cost (Penalize if outside limit)
+                    limit = 1.5
+                    excess_u = max(0.0, abs(u_pred) - limit)
+                    excess_v = max(0.0, abs(v_pred) - limit)
+
+                    if excess_u > 0:
+                        dL_du += 2.0 * w_fov * gaze_scale * excess_u * (1.0 if u_pred > 0 else -1.0)
+                    if excess_v > 0:
+                        dL_dv += 2.0 * w_fov * gaze_scale * excess_v * (1.0 if v_pred > 0 else -1.0)
+
+                    # 3. Z-Camera Barrier (Keep target in front)
+                    # Cost = w_z * ReLU(1.0 - zc)^2
+                    # dCost/dZc = -2 * w_z * ReLU(1.0 - zc)
+                    # We add this directly to dL_dzc logic below
+                    dL_dzc_barrier = 0.0
+                    excess_zc = max(0.0, 1.0 - zc) # Penalize zc < 1.0
+                    if excess_zc > 0:
+                        dL_dzc_barrier = -2.0 * w_z_cam * gaze_scale * excess_zc
+
+                    # 4. Flow Cost (Gated)
+                    # Check if current is "reasonable" for flow calculation
+                    valid_curr_flow = (zc > 0.5) and (abs(u_pred) < 5.0) and (abs(v_pred) < 5.0)
+
+                    if valid_curr_flow and valid_prev:
                         # Gated Flow Cost (only damp when tracking, not when acquiring)
                         error_sq = u_pred*u_pred + v_pred*v_pred
                         flow_gate = math.exp(-error_sq / 10.0)
@@ -970,9 +1003,14 @@ class PyDPCSolver:
                     dv_dyb = 0.0
                     dv_dzb = dv_dyc * dyc_dzb + dv_dzc * dzc_dzb
 
-                    dL_dxb = dL_du * du_dxb + dL_dv * dv_dxb
+                    # Include Z-Barrier Gradient
+                    # dL/dzc comes from dL_dzc_barrier
+                    # zc = c30*xb - s30*zb
+                    # dzc/dxb = c30, dzc/dzb = -s30
+
+                    dL_dxb = dL_du * du_dxb + dL_dv * dv_dxb + dL_dzc_barrier * c30
                     dL_dyb = dL_du * du_dyb + dL_dv * dv_dyb
-                    dL_dzb = dL_du * du_dzb + dL_dv * dv_dzb
+                    dL_dzb = dL_du * du_dzb + dL_dv * dv_dzb + dL_dzc_barrier * (-s30)
 
                     # Now dL/dP and dL/dAtt
                     # xb = R * dP_w
