@@ -298,7 +298,7 @@ class TheShow:
         action_out, ghost_paths = self.controller.compute_action(
             state_obs,
             dpc_target,
-            raw_target_rel_ned=target_wp_ned,
+            tracking_uv=center,
             extra_yaw_rate=extra_yaw
         )
 

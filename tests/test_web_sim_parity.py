@@ -2,6 +2,7 @@ import numpy as np
 import unittest
 import sys
 import os
+from collections import deque
 
 # Add parent directory to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -50,10 +51,6 @@ class TestWebSimParity(unittest.TestCase):
         sim.reset_to_scenario("Blind Dive", pos_x=drone_pos[0], pos_y=drone_pos[1], pos_z=drone_pos[2], pitch=pitch, yaw=yaw)
 
         # Explicitly set initial state to match "Pure Sim" perfectly
-        # PyGhostModel uses 0.0 for initial velocities/rates unless specified
-        # SimDroneInterface.reset_to_scenario sets them to 0.0
-        # Check initial state
-        # Check initial state
         s0 = sim.get_state()
 
         path_web = []
@@ -62,24 +59,24 @@ class TestWebSimParity(unittest.TestCase):
             path_web.append([s['px'], s['py'], s['pz']])
 
             # Bypass Vision Logic (Perfect Relative Target)
-            # NED: X-North, Y-East, Z-Down
-            # Sim: X-East, Y-North, Z-Up
-
             # Rel Sim X (East)
             rel_sim_x = target_pos_sim_world[0] - s['px']
-            # Rel Sim Y (North)
             rel_sim_y = target_pos_sim_world[1] - s['py']
-            # Rel Sim Z (Up)
             rel_sim_z = target_pos_sim_world[2] - s['pz']
 
-            # Map to NED
-            rel_ned_x = rel_sim_y # North
-            rel_ned_y = rel_sim_x # East
-            rel_ned_z = -rel_sim_z # Down
-
-            target_wp = [rel_ned_x, rel_ned_y, rel_ned_z]
+            # Map to NED for Target WP (Not used by new controller but kept for completeness of context if needed)
+            # target_wp = [rel_sim_y, rel_sim_x, -rel_sim_z]
 
             dpc_target = [rel_sim_x, rel_sim_y, target_pos_sim_world[2]]
+
+            # Generate Tracking UV
+            # Use Projector for consistent U,V generation
+            # world_to_normalized(tx, ty, tz, state)
+            uv = projector.world_to_normalized(target_pos_sim_world[0], target_pos_sim_world[1], target_pos_sim_world[2], s)
+
+            tracking_uv = None
+            if uv:
+                 tracking_uv = uv
 
             state_obs = {
                 'pz': s['pz'], 'vz': s['vz'],
@@ -88,7 +85,7 @@ class TestWebSimParity(unittest.TestCase):
             }
 
             action_out, _ = controller.compute_action(
-                state_obs, dpc_target, raw_target_rel_ned=target_wp, extra_yaw_rate=0.0
+                state_obs, dpc_target, tracking_uv=tracking_uv, extra_yaw_rate=0.0
             )
 
             sim_action = np.array([
@@ -118,21 +115,17 @@ class TestWebSimParity(unittest.TestCase):
             path_sim.append([state['px'], state['py'], state['pz']])
 
             # Replicate Inputs
-            # Rel Sim X (East)
             rel_sim_x = target_pos_sim_world[0] - state['px']
-            # Rel Sim Y (North)
             rel_sim_y = target_pos_sim_world[1] - state['py']
-            # Rel Sim Z (Up)
             rel_sim_z = target_pos_sim_world[2] - state['pz']
 
-            # Map to NED
-            rel_ned_x = rel_sim_y # North
-            rel_ned_y = rel_sim_x # East
-            rel_ned_z = -rel_sim_z # Down
-
-            target_wp = [rel_ned_x, rel_ned_y, rel_ned_z]
-
             dpc_target = [rel_sim_x, rel_sim_y, target_pos_sim_world[2]]
+
+            # Generate Tracking UV (Must be identical logic)
+            uv = projector.world_to_normalized(target_pos_sim_world[0], target_pos_sim_world[1], target_pos_sim_world[2], state)
+            tracking_uv = None
+            if uv:
+                 tracking_uv = uv
 
             state_obs = {
                 'pz': state['pz'], 'vz': state['vz'],
@@ -141,7 +134,7 @@ class TestWebSimParity(unittest.TestCase):
             }
 
             action_out, _ = sim_controller.compute_action(
-                state_obs, dpc_target, raw_target_rel_ned=target_wp, extra_yaw_rate=0.0
+                state_obs, dpc_target, tracking_uv=tracking_uv, extra_yaw_rate=0.0
             )
 
             state = model.step(state, action_out, dt)
