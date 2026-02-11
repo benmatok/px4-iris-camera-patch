@@ -4,6 +4,7 @@ import sys
 import os
 import time
 import random
+from collections import deque
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from ghost_dpc.ghost_dpc import PyGhostModel, PyGhostEstimator, PyDPCSolver
@@ -39,6 +40,8 @@ class GhostController:
         self.last_action = {
             'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0
         }
+
+        self.history = deque(maxlen=80)
 
     def control(self, state, measured_accel, measured_alpha, target_pos, solver_dt=None, measured_uv=None):
         if solver_dt is None:
@@ -89,8 +92,38 @@ class GhostController:
         solver_models.append(m5)
         solver_weights.append(0.2)
 
+        # Populate History
+        # Construct observed state for controller
+        obs = {
+            'time': 0.0,
+            'roll': state['roll'],
+            'pitch': state['pitch'],
+            'yaw': state['yaw'],
+            'pz': state['pz'],
+            'vz': state['vz'],
+            'wx': state.get('wx', 0.0),
+            'wy': state.get('wy', 0.0),
+            'wz': state.get('wz', 0.0),
+            'thrust': self.last_action['thrust'],
+            'roll_rate': self.last_action['roll_rate'],
+            'pitch_rate': self.last_action['pitch_rate'],
+            'yaw_rate': self.last_action['yaw_rate'],
+            'u': measured_uv[0] if measured_uv else None,
+            'v': measured_uv[1] if measured_uv else None
+        }
+        self.history.append(obs)
+
         # 4. Solve
-        opt_action = self.solver.solve(state, target_pos, self.last_action, solver_models, solver_weights, solver_dt)
+        # target_pos is [LatDist, 0, 0] in Blind Dive.
+        # But DPC Solver now treats target as [0,0,0] (Tracked Object)
+        # However, in Blind Dive, we *are* tracking a virtual target at [LatDist, 0, 0].
+        # The 'measured_uv' calculation in 'run_blind_dive_scenario' correctly projects this target.
+        # So passing 'history' with this UV will make the solver try to center that UV.
+        # This implicitly flies to the target.
+        # The 'goal_z' is 0.0? No, we probably want to land or hover above?
+        # Standard logic: fly to 2m above target.
+
+        opt_action, _ = self.solver.solve(list(self.history), self.last_action, solver_models, solver_weights, solver_dt, goal_z=2.0)
 
         self.last_action = opt_action
         return opt_action, probs, weighted_model
@@ -161,21 +194,21 @@ def run_blind_dive_scenario(params, scenario_id):
         # world_to_normalized returns (u, v) normalized or None
         uv = projector.world_to_normalized(target_pos[0], target_pos[1], target_pos[2], state)
 
-        u, v = 0.0, 0.0
+        u_val, v_val = None, None
         if uv is not None:
-            u, v = uv
+            u_val, v_val = uv
 
         # --- CONTROLLER ---
         # Pass u,v to controller (Estimator)
-        action, probs, est_model = controller.control(state, [ax, ay, az], [alphax, alphay, alphaz], target_pos, solver_dt=dt, measured_uv=[u, v])
+        action, probs, est_model = controller.control(state, [ax, ay, az], [alphax, alphay, alphaz], target_pos, solver_dt=dt, measured_uv=[u_val, v_val])
 
         # --- LOGGING ---
         history['t'].append(t)
         history['tau_est'].append(est_model.get('tau', 0.1))
         history['tau_true'].append(real_model.tau)
         history['alt'].append(state['pz'])
-        history['u_meas'].append(u)
-        history['v_meas'].append(v)
+        history['u_meas'].append(u_val if u_val else 0.0)
+        history['v_meas'].append(v_val if v_val else 0.0)
         history['pos_x'].append(state['px'])
         history['pos_y'].append(state['py'])
         history['thrust_cmd'].append(action['thrust'])

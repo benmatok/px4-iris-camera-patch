@@ -1,6 +1,7 @@
 import numpy as np
 import logging
-from ghost_dpc.ghost_dpc import PyDPCSolver, PyGhostModel
+from collections import deque
+from ghost_dpc.ghost_dpc import PyDPCSolver
 
 logger = logging.getLogger(__name__)
 
@@ -13,27 +14,22 @@ class DPCFlightController:
         self.weights = [1.0]
         self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
 
-        # Velocity Estimation
-        self.estimated_velocity = np.array([0.0, 0.0, 0.0], dtype=np.float32)
-        # Predictor model (Nominal)
-        cfg = self.models_config[0]
-        self.predictor = PyGhostModel(cfg['mass'], cfg['drag_coeff'], cfg['thrust_coeff'], tau=cfg['tau'])
-        self.last_target_rel_pos = None
+        # History buffer for 4 seconds at 20Hz (dt=0.05) -> 80 steps
+        self.history = deque(maxlen=80)
 
     def reset(self):
         self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
-        self.estimated_velocity = np.array([0.0, 0.0, 0.0], dtype=np.float32)
-        self.last_target_rel_pos = None
+        self.history.clear()
         logger.info("DPCFlightController reset")
 
-    def compute_action(self, state_obs, target_cmd, raw_target_rel_ned=None, extra_yaw_rate=0.0):
+    def compute_action(self, state_obs, target_cmd, tracking_uv=None, extra_yaw_rate=0.0):
         """
         Computes the optimal control action using DPC with Relative State Estimation.
 
         Args:
             state_obs: dict (pz, vz, roll, pitch, yaw, wx, wy, wz) - No px, py, vx, vy
-            target_cmd: list [rel_x, rel_y, abs_z] (Command Target)
-            raw_target_rel_ned: list [dx, dy, dz] (Measured Relative Target Position in NED) or None
+            target_cmd: list [rel_x, rel_y, abs_z] (Command Target). Only abs_z is used as goal_z.
+            tracking_uv: tuple (u, v) or None (Tracking measurement)
             extra_yaw_rate: float (additional yaw rate for scanning)
 
         Returns:
@@ -41,110 +37,43 @@ class DPCFlightController:
             ghost_paths: list of trajectory lists
         """
 
-        # 1. Prediction Step (Velocity)
-        # Construct state for predictor using previous velocity estimate
-        pred_state_in = {
-            'px': 0.0, 'py': 0.0, 'pz': state_obs.get('pz', 0.0),
-            'vx': self.estimated_velocity[0],
-            'vy': self.estimated_velocity[1],
-            'vz': state_obs.get('vz', self.estimated_velocity[2]), # Use measured Vz if available
+        # 1. Update History
+        # Observation Dict matching _estimate_relative_state expectation
+        obs = {
+            'time': 0.0, # Not strictly used yet but good practice
             'roll': state_obs['roll'],
             'pitch': state_obs['pitch'],
             'yaw': state_obs['yaw'],
+            'pz': state_obs['pz'], # Altitude
+            'vz': state_obs.get('vz', 0.0),
             'wx': state_obs.get('wx', 0.0),
             'wy': state_obs.get('wy', 0.0),
-            'wz': state_obs.get('wz', 0.0)
+            'wz': state_obs.get('wz', 0.0),
+            'thrust': self.last_action['thrust'],
+            'roll_rate': self.last_action['roll_rate'],
+            'pitch_rate': self.last_action['pitch_rate'],
+            'yaw_rate': self.last_action['yaw_rate'],
+            'u': tracking_uv[0] if tracking_uv else None,
+            'v': tracking_uv[1] if tracking_uv else None
         }
+        self.history.append(obs)
 
-        # Predict next state to get velocity change
-        predicted_state_next = self.predictor.step(pred_state_in, self.last_action, self.dt)
-        v_pred = np.array([predicted_state_next['vx'], predicted_state_next['vy'], predicted_state_next['vz']])
-
-        # 2. Measurement Update (Velocity from Optical Flow)
-        v_meas = None
-        if raw_target_rel_ned is not None and self.last_target_rel_pos is not None:
-             # Calculate derivative of relative position
-             curr_rel = np.array(raw_target_rel_ned)
-             prev_rel = np.array(self.last_target_rel_pos)
-             d_rel = (curr_rel - prev_rel) / self.dt
-
-             # V_meas_ned = -d_rel (assuming static target)
-             v_meas_ned = -d_rel
-
-             # Convert NED Velocity to Sim Frame (X-North, Y-East, Z-Up)
-             # NED: X-North, Y-East, Z-Down
-             # Sim X (East) = NED Y (East)
-             # Sim Y (North) = NED X (North)
-             # Sim Z (Up)   = -NED Z (Down)
-             v_meas = np.array([v_meas_ned[1], v_meas_ned[0], -v_meas_ned[2]])
-
-        # Update History
-        self.last_target_rel_pos = raw_target_rel_ned
-
-        # 3. Fuse Velocity
-        alpha = 0.1 # Standard Measurement weight (Sufficient for perfect Sim)
-        if v_meas is not None:
-            # Simple Complementary Filter
-            v_est = (1.0 - alpha) * v_pred + alpha * v_meas
-        else:
-            v_est = v_pred
-
-        self.estimated_velocity = v_est
-
-        # 4. Construct Solver State (Relative Frame)
-        solver_state = {
-            'px': 0.0, 'py': 0.0, 'pz': state_obs['pz'],
-            'vx': v_est[0], 'vy': v_est[1], 'vz': v_est[2],
-            'roll': state_obs['roll'],
-            'pitch': state_obs['pitch'],
-            'yaw': state_obs['yaw'],
-            'wx': state_obs.get('wx', 0.0),
-            'wy': state_obs.get('wy', 0.0),
-            'wz': state_obs.get('wz', 0.0)
-        }
-
-        # 5. Construct Solver Target
+        # 2. Extract Goal Z
         # target_cmd is [RelX, RelY, AbsZ]
-        # Solver Frame: Drone at (0,0,pz).
-        # Target X (Abs) = DroneX + RelX = 0 + RelX
-        # Target Y (Abs) = DroneY + RelY = 0 + RelY
-        # Target Z (Abs) = AbsZ
-        solver_target = [
-            target_cmd[0],
-            target_cmd[1],
-            target_cmd[2]
-        ]
+        goal_z = target_cmd[2]
 
-        # Solve
-        # Pass extra_yaw_rate as forced_yaw_rate if it's non-zero
+        # 3. Solve
         forced_yaw = extra_yaw_rate if extra_yaw_rate != 0.0 else None
 
-        action_out = self.solver.solve(
-            solver_state,
-            solver_target,
+        action_out, ghost_paths = self.solver.solve(
+            list(self.history),
             self.last_action,
             self.models_config,
             self.weights,
             self.dt,
-            forced_yaw_rate=forced_yaw
+            forced_yaw_rate=forced_yaw,
+            goal_z=goal_z
         )
         self.last_action = action_out
 
-        # Rollout Ghosts for Visualization
-        ghost_paths = self.rollout_ghosts(solver_state, action_out)
-
         return action_out, ghost_paths
-
-    def rollout_ghosts(self, start_state, action_dict, horizon=10):
-        ghosts = []
-        for cfg in self.models_config:
-            model = PyGhostModel(cfg['mass'], cfg['drag_coeff'], cfg['thrust_coeff'], tau=cfg.get('tau', 0.1))
-            path = []
-            curr = start_state.copy()
-
-            for _ in range(horizon):
-                next_s = model.step(curr, action_dict, self.dt)
-                path.append(next_s)
-                curr = next_s
-            ghosts.append(path)
-        return ghosts
