@@ -666,11 +666,19 @@ class PyDPCSolver:
         #    We assume Drone is at Origin (or last known).
         #    We set Target Pos to the external 'target_pos_rel_xy' (Vector from Drone to Target).
 
+        # Target Position for Drone (Goal State)
         target_pos = [0.0, 0.0, goal_z]
 
+        # Gaze Target (Object to Look At)
+        gaze_target = [0.0, 0.0, 0.0]
+
         if not vision_active and target_pos_rel_xy:
+            # If blind, we assume tracking target is at the provided relative offset
             target_pos[0] = target_pos_rel_xy[0]
             target_pos[1] = target_pos_rel_xy[1]
+            gaze_target[0] = target_pos_rel_xy[0]
+            gaze_target[1] = target_pos_rel_xy[1]
+            # gaze_target[2] remains 0.0 (Object on ground)
 
         models = []
         for md in models_list:
@@ -712,8 +720,8 @@ class PyDPCSolver:
 
              s30 = 0.5; c30 = 0.866025
              xc = yb
-             yc = s30*xb + c30*zb
-             zc = c30*xb - s30*zb
+             yc = s30*xb - c30*zb
+             zc = c30*xb + s30*zb
 
              if zc < 0.1: zc = 0.1
              return xc/zc, yc/zc, zc
@@ -730,7 +738,7 @@ class PyDPCSolver:
                 if weight < 1e-5: continue
 
                 state = state_dict.copy()
-                u_prev, v_prev, zc_prev = compute_uv(state, target_pos)
+                u_prev, v_prev, zc_prev = compute_uv(state, gaze_target)
 
                 G_mat = np.zeros((12, 4), dtype=np.float32)
 
@@ -771,10 +779,10 @@ class PyDPCSolver:
                             dL_dPz_ttc = dL_dtau * dtau_dz
                             dL_dVz_ttc = dL_dtau * dtau_dvz
 
-                    # Gaze Vector: Camera (Drone) -> Target
-                    dx_w = target_pos[0] - next_state['px']
-                    dy_w = target_pos[1] - next_state['py']
-                    dz_w = target_pos[2] - next_state['pz']
+                    # Gaze Vector: Camera (Drone) -> Gaze Target (Object at Z=0)
+                    dx_w = gaze_target[0] - next_state['px']
+                    dy_w = gaze_target[1] - next_state['py']
+                    dz_w = gaze_target[2] - next_state['pz']
 
                     r, p, y = next_state['roll'], next_state['pitch'], next_state['yaw']
                     cr=math.cos(r); sr=math.sin(r)
@@ -791,8 +799,8 @@ class PyDPCSolver:
 
                     s30 = 0.5; c30 = 0.866025
                     xc = yb
-                    yc = s30*xb + c30*zb
-                    zc = c30*xb - s30*zb
+                    yc = s30*xb - c30*zb
+                    zc = c30*xb + s30*zb
 
                     if zc < 0.1: zc = 0.1
                     u_pred = xc / zc
@@ -820,32 +828,65 @@ class PyDPCSolver:
                         dL_du += 2.0 * w_flow * flow_gate * diff_u
                         dL_dv += 2.0 * w_flow * flow_gate * diff_v
 
-                    u_prev = u_pred
-                    v_prev = v_pred
-                    zc_prev = zc
+                    dL_dxb = 0.0
+                    dL_dyb = 0.0
+                    dL_dzb = 0.0
 
-                    inv_zc = 1.0 / zc
-                    inv_zc2 = inv_zc * inv_zc
-                    du_dxc = inv_zc
-                    du_dzc = -xc * inv_zc2
-                    dv_dyc = inv_zc
-                    dv_dzc = -yc * inv_zc2
+                    if valid_curr:
+                        u_prev = u_pred
+                        v_prev = v_pred
+                        zc_prev = zc
 
-                    dxc_dyb = 1.0
-                    dyc_dxb = s30; dyc_dzb = c30
-                    dzc_dxb = c30; dzc_dzb = -s30
+                        inv_zc = 1.0 / zc
+                        inv_zc2 = inv_zc * inv_zc
+                        du_dxc = inv_zc
+                        du_dzc = -xc * inv_zc2
+                        dv_dyc = inv_zc
+                        dv_dzc = -yc * inv_zc2
 
-                    du_dxb = du_dzc * dzc_dxb
-                    du_dyb = du_dxc * dxc_dyb
-                    du_dzb = du_dzc * dzc_dzb
+                        dxc_dyb = 1.0
+                        dyc_dxb = s30; dyc_dzb = -c30
+                        dzc_dxb = c30; dzc_dzb = s30
 
-                    dv_dxb = dv_dyc * dyc_dxb + dv_dzc * dzc_dxb
-                    dv_dyb = 0.0
-                    dv_dzb = dv_dyc * dyc_dzb + dv_dzc * dzc_dzb
+                        du_dxb = du_dzc * dzc_dxb
+                        du_dyb = du_dxc * dxc_dyb
+                        du_dzb = du_dzc * dzc_dzb
 
-                    dL_dxb = dL_du * du_dxb + dL_dv * dv_dxb
-                    dL_dyb = dL_du * du_dyb + dL_dv * dv_dyb
-                    dL_dzb = dL_du * du_dzb + dL_dv * dv_dzb
+                        dv_dxb = dv_dyc * dyc_dxb + dv_dzc * dzc_dxb
+                        dv_dyb = 0.0
+                        dv_dzb = dv_dyc * dyc_dzb + dv_dzc * dzc_dzb
+
+                        dL_dxb = dL_du * du_dxb + dL_dv * dv_dxb
+                        dL_dyb = dL_du * du_dyb + dL_dv * dv_dyb
+                        dL_dzb = dL_du * du_dzb + dL_dv * dv_dzb
+                    else:
+                        # Out of FOV: Maximize Alignment with Camera Axis
+                        # Camera Axis in Body Frame: (c30, 0, s30) (Upward Tilt)
+                        # Vector: (xb, yb, zb)
+                        norm_sq = xb*xb + yb*yb + zb*zb + 1e-6
+                        norm = math.sqrt(norm_sq)
+                        inv_norm = 1.0 / norm
+
+                        # Dot Product
+                        dot = xb * c30 + zb * s30
+
+                        # Cost = -dot / norm (Maximize Cosine Similarity)
+                        # Gradient of (-dot/norm) w.r.t x:
+                        # - ( c30*norm - dot*(x/norm) ) / norm^2
+                        # = - ( c30/norm - dot*x/norm^3 )
+                        # = dot*x*inv_norm**3 - c30*inv_norm
+
+                        inv_norm3 = inv_norm * inv_norm * inv_norm
+
+                        dL_dxb = dot * xb * inv_norm3 - c30 * inv_norm
+                        dL_dyb = dot * yb * inv_norm3
+                        dL_dzb = dot * zb * inv_norm3 - s30 * inv_norm
+
+                        # Scale the guidance gradient
+                        w_align = 5.0
+                        dL_dxb *= w_align
+                        dL_dyb *= w_align
+                        dL_dzb *= w_align
 
                     dL_dP_g = np.zeros(3, dtype=np.float32)
                     dL_dP_g[0] = -(r11*dL_dxb + r21*dL_dyb + r31*dL_dzb)

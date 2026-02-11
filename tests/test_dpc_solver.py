@@ -17,8 +17,9 @@ def test_solver():
 
     # --- TEST 1: Dive Scenario (Start High, Target Low) ---
     print("\n--- TEST 1: Dive Scenario ---")
+    # px = -30 ensures Target (at 0,0) is Forward (+X relative to Drone)
     state_dive = {
-        'px': 30.0, 'py': 0.0, 'pz': 100.0,
+        'px': -30.0, 'py': 0.0, 'pz': 100.0,
         'vx': 0.0, 'vy': 0.0, 'vz': 0.0,
         'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0
     }
@@ -65,18 +66,18 @@ def test_solver():
 
     # --- TEST 3: Lateral Move (Maintain Altitude) ---
     print("\n--- TEST 3: Lateral Move ---")
-    # Target at (5, 0, 10). Drone at (0, 0, 10). Goal Z = 10.
+    # Target at (20, 0, 0). Drone at (0, 0, 10). Goal Z = 10.
     # Dive Cost should be INACTIVE because 10 !> 10 + 1.
     # Re-use state_climb (which is at 10m).
-    opt_lat, _ = solver.solve(history_climb, init_action, models, weights, dt, target_pos_rel_xy=[5.0, 0.0], goal_z=10.0)
+    opt_lat, _ = solver.solve(history_climb, init_action, models, weights, dt, target_pos_rel_xy=[20.0, 0.0], goal_z=10.0)
 
     print("Opt Pitch Rate:", opt_lat['pitch_rate'])
 
-    # We assume it should pitch forward (Nose Down = Negative Rate).
-    if opt_lat['pitch_rate'] < -0.05:
-        print("PASS: Pitch rate negative (Nose Down) to move forward.")
+    # Expect Pitch Forward (Positive = Nose Down)
+    if opt_lat['pitch_rate'] > 0.05:
+        print("PASS: Pitch rate positive (Nose Down) to move forward.")
     else:
-        print("FAIL: Pitch rate not negative (forward).")
+        print("FAIL: Pitch rate not positive (forward).")
         sys.exit(1)
 
 if __name__ == "__main__":
