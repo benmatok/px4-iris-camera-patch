@@ -691,11 +691,11 @@ class PyDPCSolver:
              current_action['yaw_rate'] = forced_yaw_rate
 
         def compute_uv(s, t_pos):
-             # Gaze Target is the actual object at (0,0,0)
-             # Vector points from Camera (Drone) to Object
-             dx_w = 0.0 - s['px']
-             dy_w = 0.0 - s['py']
-             dz_w = 0.0 - s['pz']
+             # Gaze Vector: Camera (Drone) -> Target
+             # Use t_pos to support both tracking and offsets
+             dx_w = t_pos[0] - s['px']
+             dy_w = t_pos[1] - s['py']
+             dz_w = t_pos[2] - s['pz']
 
              r, p, y = s['roll'], s['pitch'], s['yaw']
              cr=math.cos(r); sr=math.sin(r)
@@ -746,7 +746,9 @@ class PyDPCSolver:
                     dist = math.sqrt(dx*dx + dy*dy + dz*dz + 1e-6)
 
                     k_pos = 20.0
-                    dL_dP = np.array([k_pos*dx/dist, k_pos*dy/dist, k_pos*dz/dist], dtype=np.float32)
+                    # Screen Space Tracking: Disable X/Y Position Cost
+                    # Rely on Gaze Cost (u/v) to align with target
+                    dL_dP = np.array([0.0, 0.0, k_pos*dz/dist], dtype=np.float32)
 
                     target_safe_z = goal_z
                     dz_safe = next_state['pz'] - target_safe_z
@@ -769,10 +771,10 @@ class PyDPCSolver:
                             dL_dPz_ttc = dL_dtau * dtau_dz
                             dL_dVz_ttc = dL_dtau * dtau_dvz
 
-                    # Gaze Vector: Camera (Drone) -> Object (Origin)
-                    dx_w = 0.0 - next_state['px']
-                    dy_w = 0.0 - next_state['py']
-                    dz_w = 0.0 - next_state['pz']
+                    # Gaze Vector: Camera (Drone) -> Target
+                    dx_w = target_pos[0] - next_state['px']
+                    dy_w = target_pos[1] - next_state['py']
+                    dz_w = target_pos[2] - next_state['pz']
 
                     r, p, y = next_state['roll'], next_state['pitch'], next_state['yaw']
                     cr=math.cos(r); sr=math.sin(r)
