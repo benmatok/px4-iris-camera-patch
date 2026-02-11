@@ -96,6 +96,15 @@ class VisualTracker:
         if center:
             # Project pixel to world (assuming target on ground/surface or ray intersection)
             # The original logic used projector.pixel_to_world
-            target_world_pos = self.projector.pixel_to_world(center[0], center[1], drone_state_ned)
+            abs_target_pos = self.projector.pixel_to_world(center[0], center[1], drone_state_ned)
+
+            if abs_target_pos:
+                # Convert to Relative NED Vector for Controller
+                # Rel = Target - Drone
+                target_world_pos = [
+                    abs_target_pos[0] - drone_state_ned['px'],
+                    abs_target_pos[1] - drone_state_ned['py'],
+                    abs_target_pos[2] - drone_state_ned['pz']
+                ]
 
         return center, target_world_pos, radius

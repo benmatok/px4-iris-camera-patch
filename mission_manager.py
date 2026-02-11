@@ -35,8 +35,8 @@ class MissionManager:
 
         if self.state == "TAKEOFF":
             # Hold position (hover) at TARGET_ALT
-            # Target is [Current X, Current Y, TARGET_ALT] in Z-Up
-            self.dpc_target = [drone_state_sim['px'], drone_state_sim['py'], self.target_alt]
+            # Target is [0, 0, TARGET_ALT] relative to current position (Z-Up)
+            self.dpc_target = [0.0, 0.0, self.target_alt]
 
             if center is not None:
                 self.state = "HOMING"
@@ -50,7 +50,7 @@ class MissionManager:
 
             # Maintain hover at current position but adjust to target altitude
             # This prevents the stale target issue causing dives
-            self.dpc_target = [drone_state_sim['px'], drone_state_sim['py'], self.target_alt]
+            self.dpc_target = [0.0, 0.0, self.target_alt]
 
             if center is not None:
                 self.state = "HOMING"
