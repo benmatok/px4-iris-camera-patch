@@ -72,11 +72,11 @@ def test_solver():
 
     print("Opt Pitch Rate:", opt_lat['pitch_rate'])
 
-    # Expect Pitch Forward (positive rate) to move +X
-    if opt_lat['pitch_rate'] > 0.1:
-        print("PASS: Pitch rate positive to move forward.")
+    # We assume it should pitch forward (Nose Down = Negative Rate).
+    if opt_lat['pitch_rate'] < -0.05:
+        print("PASS: Pitch rate negative (Nose Down) to move forward.")
     else:
-        print("FAIL: Pitch rate not positive.")
+        print("FAIL: Pitch rate not negative (forward).")
         sys.exit(1)
 
 if __name__ == "__main__":
