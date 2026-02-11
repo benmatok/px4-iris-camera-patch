@@ -99,13 +99,14 @@ class TestMissionManager(unittest.TestCase):
         state, target, yaw = mm.update({'px':0, 'py':0, 'pz':9.0, 'vx':0, 'vy':0, 'vz':0}, (None, None))
         self.assertEqual(state, "LOST_RECOVERY")
         self.assertNotEqual(yaw, 0.0)
-        # Target Alt should be max(9+5, 20) = 20.0 (Recovery Floor)
-        self.assertEqual(target[2], 20.0)
+
+        # Target Alt should be set to 100.0 (Recovery Alt) per new logic
+        self.assertEqual(target[2], 100.0)
 
         # If we are at 20m.
         state, target, yaw = mm.update({'px':0, 'py':0, 'pz':20.0, 'vx':0, 'vy':0, 'vz':0}, (None, None))
-        # Target Alt = max(20+5, 20) = 25.0
-        self.assertEqual(target[2], 25.0)
+        # Target Alt = 100.0
+        self.assertEqual(target[2], 100.0)
 
         # 5. LOST_RECOVERY -> HOMING
         state, target, yaw = mm.update({'px':0, 'py':0, 'pz':20.0, 'vx':0, 'vy':0, 'vz':0}, (center, target_wp))

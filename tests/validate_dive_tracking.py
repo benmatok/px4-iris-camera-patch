@@ -33,7 +33,8 @@ class DiveValidator:
         self.target_pos_sim_world = [50.0, 0.0, 0.0] # Blind Dive Target
 
         # Initial Pos for Blind Dive (Adjusted to avoid Gimbal Lock at -90 deg pitch)
-        drone_pos = [0.0, 0.0, 50.0]
+        # CHANGED: Start from 100m as requested
+        drone_pos = [0.0, 0.0, 100.0]
         pitch, yaw = self.calculate_initial_orientation(drone_pos, self.target_pos_sim_world)
 
         self.sim.reset_to_scenario("Blind Dive", pos_x=drone_pos[0], pos_y=drone_pos[1], pos_z=drone_pos[2], pitch=pitch, yaw=yaw)
@@ -42,7 +43,7 @@ class DiveValidator:
         self.tracker = VisualTracker(self.projector)
 
         # Logic
-        self.mission = MissionManager(target_alt=50.0) # Start with target alt matching start
+        self.mission = MissionManager(target_alt=100.0) # Start with target alt matching start
 
         # Control
         self.controller = DPCFlightController(dt=DT)
@@ -184,23 +185,6 @@ class DiveValidator:
             if target_wp_sim:
                 est_x = s['px'] + target_wp_sim[0]
                 est_y = s['py'] + target_wp_sim[1]
-                est_z = s['pz'] + target_wp_sim[2] # dpc_target[2] is Absolute Z, but target_wp_sim is Relative
-                # Wait, mission_manager uses target_wp (Relative) to set dpc_target (Relative XY, Absolute Z?)
-                # MissionManager: dpc_target = [target_wp[0], target_wp[1], 2.0] -> 2.0 is Abs Z.
-                # Actually, target_wp from tracker is [RelX, RelY, RelZ].
-                # So Est Target Pos = Drone Pos + Rel Target Pos
-                # Let's verify `target_wp_sim` components.
-                # `ned_rel_to_sim_rel`: [dy, dx, -dz].
-                # NED Rel: Target - Drone.
-                # NED Rel Z: Target Z (Down) - Drone Z (Down).
-                # Sim Rel Z = - (Target Z_ned - Drone Z_ned) = Drone Z_ned - Target Z_ned
-                # Drone Z_ned = -Drone Z_sim. Target Z_ned = -Target Z_sim.
-                # Sim Rel Z = (-Drone Z_sim) - (-Target Z_sim) = Target Z_sim - Drone Z_sim.
-                # Correct.
-
-                # So Est Target Absolute = Drone Pos + Target Rel Sim
-                est_x = s['px'] + target_wp_sim[0]
-                est_y = s['py'] + target_wp_sim[1]
                 est_z = s['pz'] + target_wp_sim[2]
                 history['target_est'].append([est_x, est_y, est_z])
             else:
@@ -267,12 +251,12 @@ def plot_results(hist_gt, hist_vis, filename="validation_dive_tracking.png"):
     # 4. Mission State
     axs[1, 1].set_title("Mission State (Vision Run)")
     states = hist_vis['state']
-    # Map states to ints
-    state_map = {"TAKEOFF": 0, "SCAN": 1, "HOMING": 2}
+    # Map states to ints (Added LOST_RECOVERY)
+    state_map = {"TAKEOFF": 0, "SCAN": 1, "HOMING": 2, "LOST_RECOVERY": 3}
     y_vals = [state_map.get(s, -1) for s in states]
     axs[1, 1].plot(hist_vis['t'], y_vals, 'k-')
-    axs[1, 1].set_yticks([0, 1, 2])
-    axs[1, 1].set_yticklabels(["TAKEOFF", "SCAN", "HOMING"])
+    axs[1, 1].set_yticks([0, 1, 2, 3])
+    axs[1, 1].set_yticklabels(["TAKEOFF", "SCAN", "HOMING", "LOST_RECOVERY"])
     axs[1, 1].set_xlabel("Time (s)")
     axs[1, 1].grid(True)
 

@@ -92,11 +92,34 @@ class MissionManager:
 
         elif self.state == "LOST_RECOVERY":
             # Climb and Rotate
-            extra_yaw = math.radians(15.0)
+            # Calculate Yaw to Last Known Position
+            # est_rel_pos is [RelX, RelY, RelZ] in Sim Frame
+            rel_x = est_rel_pos[0]
+            rel_y = est_rel_pos[1]
 
-            # Target Altitude: Climb to (Current + 5m) or (Recovery Floor 20m)
-            recovery_alt = max(current_alt + 5.0, 20.0)
-            if recovery_alt > 100.0: recovery_alt = 100.0
+            # Yaw to Target
+            yaw_to_target = math.atan2(rel_y, rel_x)
+            current_yaw = drone_state_sim.get('yaw', 0.0)
+
+            # Normalize diff
+            yaw_diff = yaw_to_target - current_yaw
+            yaw_diff = (yaw_diff + math.pi) % (2 * math.pi) - math.pi
+
+            # If diff is large, rotate fast towards it. If small, spin slowly to scan.
+            # Threshold: 20 degrees (approx 0.35 rad)
+            if abs(yaw_diff) > 0.35:
+                 # Proportional Yaw Control towards target
+                 extra_yaw = 2.0 * yaw_diff
+                 # Clamp
+                 extra_yaw = max(-1.0, min(1.0, extra_yaw))
+            else:
+                 # Scan rotation
+                 extra_yaw = math.radians(20.0)
+
+            # Target Altitude: Climb to 100m for better view (Dive Logic)
+            # Was: max(current_alt + 5.0, 20.0)
+            # Now: Aim for 100.0 directly if possible, or climb
+            recovery_alt = 100.0
 
             # Hover over Estimated Target Position
             # dpc_target[0, 1] are Relative Setpoints
