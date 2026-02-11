@@ -645,40 +645,22 @@ class PyDPCSolver:
 
         return est, vision_active
 
-    def solve(self, history, initial_action_dict, models_list, weights_list, dt, forced_yaw_rate=None, goal_z=2.0, intercept_mode=False, target_pos_rel_xy=None):
+    def solve(self, history, initial_action_dict, models_list, weights_list, dt, forced_yaw_rate=None, goal_z=2.0, intercept_mode=False):
         """
         Solves for the optimal control action using internal relative state estimation.
         Inputs:
             history: List of observation dicts (roll, pitch, yaw, alt, u, v, ...)
             goal_z: Desired relative altitude (default 2.0m)
             intercept_mode: If True, relax collision avoidance to allow impact/landing.
-            target_pos_rel_xy: List [x, y] or None. Relative offset of the target (e.g. from dead reckoning).
-        Note: Absolute Position and Velocity are never known/passed. Target is implicitly the tracked object (0,0,0) plus offset.
+        Note: Absolute Position and Velocity are never known/passed. Target is implicitly the tracked object (0,0,0).
         """
         state_dict, vision_active = self._estimate_relative_state(history, dt)
-
-        # Construct Target Position relative to Drone's Estimated Origin
-        # Logic:
-        # 1. If Vision is Active:
-        #    We estimate Drone Position relative to Target (at Origin).
-        #    So Target Pos should be [0, 0].
-        # 2. If Vision is NOT Active (Blind):
-        #    We assume Drone is at Origin (or last known).
-        #    We set Target Pos to the external 'target_pos_rel_xy' (Vector from Drone to Target).
 
         # Target Position for Drone (Goal State)
         target_pos = [0.0, 0.0, goal_z]
 
         # Gaze Target (Object to Look At)
         gaze_target = [0.0, 0.0, 0.0]
-
-        if not vision_active and target_pos_rel_xy:
-            # If blind, we assume tracking target is at the provided relative offset
-            target_pos[0] = target_pos_rel_xy[0]
-            target_pos[1] = target_pos_rel_xy[1]
-            gaze_target[0] = target_pos_rel_xy[0]
-            gaze_target[1] = target_pos_rel_xy[1]
-            # gaze_target[2] remains 0.0 (Object on ground)
 
         models = []
         for md in models_list:
