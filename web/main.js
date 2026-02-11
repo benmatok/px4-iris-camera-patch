@@ -78,6 +78,47 @@ positions.forEach(pos => {
 
 const axesHelper = new THREE.AxesHelper(1);
 droneGroup.add(axesHelper);
+
+// FOV Frustum
+const frustumGroup = new THREE.Group();
+// Tilt 30 deg Up (Positive Pitch around X)
+frustumGroup.rotation.x = 30 * Math.PI / 180;
+
+const fov = 120;
+const aspect = 4/3;
+const near = 0.0;
+const far = 2.0;
+const halfFovRad = (fov / 2) * Math.PI / 180;
+const halfWidth = far * Math.tan(halfFovRad);
+const halfHeight = halfWidth / aspect;
+
+// Vertices
+// Origin, TL, TR, BR, BL
+const fVertices = [
+    0, 0, 0,
+    -halfWidth, halfHeight, -far,
+    halfWidth, halfHeight, -far,
+    halfWidth, -halfHeight, -far,
+    -halfWidth, -halfHeight, -far
+];
+
+// Indices for lines
+// 0-1, 0-2, 0-3, 0-4 (Rays)
+// 1-2, 2-3, 3-4, 4-1 (Rect)
+const fIndices = [
+    0, 1, 0, 2, 0, 3, 0, 4,
+    1, 2, 2, 3, 3, 4, 4, 1
+];
+
+const fGeo = new THREE.BufferGeometry();
+fGeo.setAttribute('position', new THREE.Float32BufferAttribute(fVertices, 3));
+fGeo.setIndex(fIndices);
+const fMat = new THREE.LineBasicMaterial({ color: 0xffff00, opacity: 0.5, transparent: true });
+const frustum = new THREE.LineSegments(fGeo, fMat);
+frustumGroup.add(frustum);
+
+droneGroup.add(frustumGroup);
+
 scene.add(droneGroup);
 
 // Target Mesh

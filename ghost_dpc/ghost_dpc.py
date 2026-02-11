@@ -513,12 +513,9 @@ class PyDPCSolver:
     def _estimate_relative_state(self, history, dt=0.05):
         """
         Estimates the current relative state (Drone rel to Target) from history.
-        History items: {
-            'roll', 'pitch', 'yaw', 'alt',
-            'thrust', 'roll_rate', 'pitch_rate', 'yaw_rate',
-            'u', 'v' (tracking result or None),
-            'wx', 'wy', 'wz'
-        }
+        Returns:
+            est: dict (px, py, pz, vx, vy, vz, ...)
+            vision_active: bool (True if valid UV points were used)
         """
         est = {
             'px': 0.0, 'py': 0.0, 'pz': 2.0,
@@ -526,9 +523,10 @@ class PyDPCSolver:
             'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
             'wx': 0.0, 'wy': 0.0, 'wz': 0.0
         }
+        vision_active = False
 
         if not history:
-             return est
+             return est, False
 
         last_obs = history[-1]
         est['pz'] = last_obs['pz']
@@ -566,6 +564,7 @@ class PyDPCSolver:
         # Slope of P vs T is Velocity.
 
         if len(valid_points) >= 2:
+            vision_active = True
             # Use up to last 10 points for smoothing (0.5s)
             recent = valid_points[-10:]
 
@@ -617,6 +616,7 @@ class PyDPCSolver:
                  est['py'] = p_curr['py'] + vy * (end_idx - p_curr['idx']) * dt
 
         elif len(valid_points) == 1:
+            vision_active = True
             # Only one point ever seen. Velocity 0?
             p = valid_points[0]
             est['px'] = float(p['px'])
@@ -641,20 +641,36 @@ class PyDPCSolver:
              if steps_since_last > 20: # 1 second blind
                  # Damp velocity
                  self.last_estimated_vel *= 0.95
+                 vision_active = False # Treat as lost if too old?
 
-        return est
+        return est, vision_active
 
-    def solve(self, history, initial_action_dict, models_list, weights_list, dt, forced_yaw_rate=None, goal_z=2.0, intercept_mode=False):
+    def solve(self, history, initial_action_dict, models_list, weights_list, dt, forced_yaw_rate=None, goal_z=2.0, intercept_mode=False, target_pos_rel_xy=None):
         """
         Solves for the optimal control action using internal relative state estimation.
         Inputs:
             history: List of observation dicts (roll, pitch, yaw, alt, u, v, ...)
             goal_z: Desired relative altitude (default 2.0m)
             intercept_mode: If True, relax collision avoidance to allow impact/landing.
-        Note: Absolute Position and Velocity are never known/passed. Target is implicitly the tracked object (0,0,0).
+            target_pos_rel_xy: List [x, y] or None. Relative offset of the target (e.g. from dead reckoning).
+        Note: Absolute Position and Velocity are never known/passed. Target is implicitly the tracked object (0,0,0) plus offset.
         """
-        state_dict = self._estimate_relative_state(history, dt)
-        target_pos = [0.0, 0.0, 0.0]
+        state_dict, vision_active = self._estimate_relative_state(history, dt)
+
+        # Construct Target Position relative to Drone's Estimated Origin
+        # Logic:
+        # 1. If Vision is Active:
+        #    We estimate Drone Position relative to Target (at Origin).
+        #    So Target Pos should be [0, 0].
+        # 2. If Vision is NOT Active (Blind):
+        #    We assume Drone is at Origin (or last known).
+        #    We set Target Pos to the external 'target_pos_rel_xy' (Vector from Drone to Target).
+
+        target_pos = [0.0, 0.0, goal_z]
+
+        if not vision_active and target_pos_rel_xy:
+            target_pos[0] = target_pos_rel_xy[0]
+            target_pos[1] = target_pos_rel_xy[1]
 
         models = []
         for md in models_list:
