@@ -507,7 +507,7 @@ class PyDPCSolver:
     def __init__(self, horizon=40):
         self.horizon = horizon
         self.iterations = 30
-        self.learning_rate = 0.01
+        self.learning_rate = 0.005
         self.last_estimated_vel = np.zeros(3, dtype=np.float32)
 
     def _estimate_relative_state(self, history, dt=0.05):
@@ -727,7 +727,7 @@ class PyDPCSolver:
                     dz = next_state['pz'] - target_pos[2]
                     dist = math.sqrt(dx*dx + dy*dy + dz*dz + 1e-6)
 
-                    k_pos = 100.0
+                    k_pos = 20.0
                     dL_dP = np.array([k_pos*dx/dist, k_pos*dy/dist, k_pos*dz/dist], dtype=np.float32)
 
                     target_safe_z = goal_z
@@ -842,7 +842,7 @@ class PyDPCSolver:
                     dL_dS[7] += dL_dPitch_g
                     dL_dS[8] += dL_dYaw_g
 
-                    k_damp = 0.5
+                    k_damp = 2.0
                     dL_dS[3] += k_damp * next_state['vx']
                     dL_dS[4] += k_damp * next_state['vy']
                     dL_dS[5] += k_damp * next_state['vz'] + dL_dVz_ttc
@@ -863,6 +863,14 @@ class PyDPCSolver:
                     dL_dU_rate[1] = 0.2 * current_action['roll_rate']
                     dL_dU_rate[2] = 0.2 * current_action['pitch_rate']
                     dL_dU_rate[3] = 0.2 * current_action['yaw_rate']
+
+                    # Smoothness Cost: Penalize large changes from initial action
+                    w_smooth = 1.0
+                    dL_dU_rate[0] += w_smooth * (current_action['thrust'] - initial_action_dict['thrust'])
+                    dL_dU_rate[1] += w_smooth * (current_action['roll_rate'] - initial_action_dict['roll_rate'])
+                    dL_dU_rate[2] += w_smooth * (current_action['pitch_rate'] - initial_action_dict['pitch_rate'])
+                    if forced_yaw_rate is None:
+                        dL_dU_rate[3] += w_smooth * (current_action['yaw_rate'] - initial_action_dict['yaw_rate'])
 
                     term = np.matmul(dL_dS, G_next)
                     total_grad += weight * (term + dL_dU_rate)
