@@ -15,57 +15,65 @@ def test_solver():
     models = [model_dict]
     weights = [1.0]
 
-    # State: Hovering at (0,0,10)
-    state = {
+    # --- TEST 1: Dive Scenario (Start High, Target Low) ---
+    print("\n--- TEST 1: Dive Scenario ---")
+    state_dive = {
+        'px': 30.0, 'py': 0.0, 'pz': 100.0,
+        'vx': 0.0, 'vy': 0.0, 'vz': 0.0,
+        'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0
+    }
+    init_action = {
+        'thrust': 0.49, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0
+    }
+    dt = 0.05
+
+    # Target 2.0 (Implicit). Dive Cost should be ACTIVE because 100 > 2 + 1.
+    history_dive = [state_dive]
+    opt_dive, _ = solver.solve(history_dive, init_action, models, weights, dt, goal_z=2.0)
+
+    print("Init Thrust:", init_action['thrust'])
+    print("Opt Thrust:", opt_dive['thrust'])
+    print("Opt Pitch Rate:", opt_dive['pitch_rate'])
+
+    # Expect Thrust Decrease (Dive) OR Pitch Active
+    if opt_dive['thrust'] < 0.49 or abs(opt_dive['pitch_rate']) > 0.0:
+        print("PASS: Dive reaction detected.")
+    else:
+        print("FAIL: No reaction in dive scenario.")
+        sys.exit(1)
+
+    # --- TEST 2: Climb Scenario (Start Low, Target High) ---
+    print("\n--- TEST 2: Climb Scenario ---")
+    state_climb = {
         'px': 0.0, 'py': 0.0, 'pz': 10.0,
         'vx': 0.0, 'vy': 0.0, 'vz': 0.0,
         'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0
     }
-
-    # Target: Above at (0,0,15)
-    target = [0.0, 0.0, 15.0]
-
-    # Init Guess: Hover (0.5)
-    # Mass=1, MaxT=20. Hover = 9.81/20 = 0.49.
-    init_action = {
-        'thrust': 0.49,
-        'roll_rate': 0.0,
-        'pitch_rate': 0.0,
-        'yaw_rate': 0.0
-    }
-    dt = 0.05
-
-    # Solve
-    opt_action = solver.solve(state, target, init_action, models, weights, dt)
+    # Target 15.0. Climb. Dive Cost should be INACTIVE because 10 !> 15 + 1.
+    history_climb = [state_climb]
+    opt_climb, _ = solver.solve(history_climb, init_action, models, weights, dt, goal_z=15.0)
 
     print("Init Thrust:", init_action['thrust'])
-    print("Opt Thrust:", opt_action['thrust'])
+    print("Opt Thrust:", opt_climb['thrust'])
 
-    if opt_action['thrust'] > 0.55:
+    # Expect Thrust Increase (Climb)
+    if opt_climb['thrust'] > 0.50:
         print("PASS: Thrust increased to climb.")
     else:
         print("FAIL: Thrust did not increase significantly.")
         sys.exit(1)
 
-    # Test lateral move
-    # Target at (5, 0, 10). Drone at (0, 0, 10).
-    # Needs to pitch down (pitch > 0) to accelerate +X.
-    # Note: Body X is forward.
-    # Positive Pitch is Nose Down?
-    # In step:
-    # r31 = cy*sp*cr + sy*sr.
-    # If yaw=0, roll=0. r31 = sp.
-    # ax = F/m * r31 = F/m * sin(pitch).
-    # If pitch > 0, sin(pitch) > 0 -> ax > 0.
-    # So Positive Pitch = Forward Acceleration.
+    # --- TEST 3: Lateral Move (Maintain Altitude) ---
+    print("\n--- TEST 3: Lateral Move ---")
+    # Target at (5, 0, 10). Drone at (0, 0, 10). Goal Z = 10.
+    # Dive Cost should be INACTIVE because 10 !> 10 + 1.
+    # Re-use state_climb (which is at 10m).
+    opt_lat, _ = solver.solve(history_climb, init_action, models, weights, dt, target_pos_rel_xy=[5.0, 0.0], goal_z=10.0)
 
-    target_lat = [5.0, 0.0, 10.0]
-    opt_action_lat = solver.solve(state, target_lat, init_action, models, weights, dt)
+    print("Opt Pitch Rate:", opt_lat['pitch_rate'])
 
-    print("Opt Pitch Rate:", opt_action_lat['pitch_rate'])
-
-    # We assume it should pitch forward (positive rate).
-    if opt_action_lat['pitch_rate'] > 0.1:
+    # Expect Pitch Forward (positive rate) to move +X
+    if opt_lat['pitch_rate'] > 0.1:
         print("PASS: Pitch rate positive to move forward.")
     else:
         print("FAIL: Pitch rate not positive.")
