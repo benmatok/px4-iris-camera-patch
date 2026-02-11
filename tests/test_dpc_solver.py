@@ -64,16 +64,44 @@ def test_solver():
         print("FAIL: Thrust did not increase significantly.")
         sys.exit(1)
 
-    # --- TEST 3: Lateral Move (Maintain Altitude) ---
-    print("\n--- TEST 3: Lateral Move ---")
-    # Target at (20, 0, 0). Drone at (0, 0, 10). Goal Z = 10.
-    # Dive Cost should be INACTIVE because 10 !> 10 + 1.
-    # Re-use state_climb (which is at 10m).
-    opt_lat, _ = solver.solve(history_climb, init_action, models, weights, dt, target_pos_rel_xy=[20.0, 0.0], goal_z=10.0)
+    # --- TEST 3: Lateral Move (Visual Tracking) ---
+    print("\n--- TEST 3: Lateral Move (Visual Tracking) ---")
+    # Simulation: Drone at (0,0,10). Target at (20,0,0).
+    # Camera Tilt +30 deg.
+    # We must populate history with a mock visual observation (u, v)
+    # matching this geometry so the solver "sees" the target ahead.
+
+    # Geometry:
+    # Drone Pos: (0,0,10). Target: (20,0,0).
+    # Relative Vector (Drone->Target): (20, 0, -10).
+    # Rotation Matrix (Identity for 0 attitude).
+    # Camera Transform (from compute_uv logic):
+    # s30=0.5, c30=0.866
+    # xb = 20, yb = 0, zb = -10
+    # xc = yb = 0
+    # yc = s30*xb - c30*zb = 0.5*20 - 0.866*(-10) = 10 + 8.66 = 18.66
+    # zc = c30*xb + s30*zb = 0.866*20 + 0.5*(-10) = 17.32 - 5 = 12.32
+    # u = xc/zc = 0
+    # v = yc/zc = 18.66 / 12.32 = 1.51
+
+    u_mock = 0.0
+    v_mock = 1.51
+
+    state_lat = {
+        'px': 0.0, 'py': 0.0, 'pz': 10.0,
+        'vx': 0.0, 'vy': 0.0, 'vz': 0.0,
+        'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
+        'u': u_mock, 'v': v_mock # Add visual observation
+    }
+
+    history_lat = [state_lat]
+
+    # We remove target_pos_rel_xy. The solver should infer target direction from u,v.
+    opt_lat, _ = solver.solve(history_lat, init_action, models, weights, dt, goal_z=10.0)
 
     print("Opt Pitch Rate:", opt_lat['pitch_rate'])
 
-    # Expect Pitch Forward (Positive = Nose Down)
+    # Expect Pitch Forward (Positive = Nose Down) to center the target (reduce v)
     if opt_lat['pitch_rate'] > 0.05:
         print("PASS: Pitch rate positive (Nose Down) to move forward.")
     else:
