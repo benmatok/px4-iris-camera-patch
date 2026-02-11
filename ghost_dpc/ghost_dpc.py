@@ -656,11 +656,13 @@ class PyDPCSolver:
         """
         state_dict, vision_active = self._estimate_relative_state(history, dt)
 
-        # Target Position for Drone (Goal State)
-        target_pos = [0.0, 0.0, goal_z]
-
-        # Gaze Target (Object to Look At)
-        gaze_target = [0.0, 0.0, 0.0]
+        # Get latest measured UV from history if available
+        measured_u, measured_v = 0.0, 0.0
+        if history:
+            last = history[-1]
+            if last.get('u') is not None and last.get('v') is not None:
+                measured_u = last['u']
+                measured_v = last['v']
 
         models = []
         for md in models_list:
@@ -680,34 +682,6 @@ class PyDPCSolver:
         if forced_yaw_rate is not None:
              current_action['yaw_rate'] = forced_yaw_rate
 
-        def compute_uv(s, t_pos):
-             # Gaze Vector: Camera (Drone) -> Target
-             # Use t_pos to support both tracking and offsets
-             dx_w = t_pos[0] - s['px']
-             dy_w = t_pos[1] - s['py']
-             dz_w = t_pos[2] - s['pz']
-
-             r, p, y = s['roll'], s['pitch'], s['yaw']
-             cr=math.cos(r); sr=math.sin(r)
-             cp=math.cos(p); sp=math.sin(p)
-             cy=math.cos(y); sy=math.sin(y)
-
-             r11 = cy*cp; r12 = sy*cp; r13 = -sp
-             r21 = cy*sp*sr - sy*cr; r22 = sy*sp*sr + cy*cr; r23 = cp*sr
-             r31 = cy*sp*cr + sy*sr; r32 = sy*sp*cr - cy*sr; r33 = cp*cr
-
-             xb = r11*dx_w + r12*dy_w + r13*dz_w
-             yb = r21*dx_w + r22*dy_w + r23*dz_w
-             zb = r31*dx_w + r32*dy_w + r33*dz_w
-
-             s30 = 0.5; c30 = 0.866025
-             xc = yb
-             yc = s30*xb - c30*zb
-             zc = c30*xb + s30*zb
-
-             if zc < 0.1: zc = 0.1
-             return xc/zc, yc/zc, zc
-
         for _ in range(self.iterations):
             current_action['thrust'] = max(0.0, min(1.0, current_action['thrust']))
             if forced_yaw_rate is not None:
@@ -720,7 +694,12 @@ class PyDPCSolver:
                 if weight < 1e-5: continue
 
                 state = state_dict.copy()
-                u_prev, v_prev, zc_prev = compute_uv(state, gaze_target)
+
+                # Initialize previous UV with ACTUAL measurement, not calculated projection
+                # This ensures we start the flow cost from reality
+                u_prev = measured_u
+                v_prev = measured_v
+                zc_prev = 2.0 # Approximation for initial gate
 
                 G_mat = np.zeros((12, 4), dtype=np.float32)
 
@@ -730,9 +709,11 @@ class PyDPCSolver:
                     G_next = np.matmul(J_state, G_mat) + J_act
                     next_state = model.step(state, current_action, dt)
 
-                    dx = next_state['px'] - target_pos[0]
-                    dy = next_state['py'] - target_pos[1]
-                    dz = next_state['pz'] - target_pos[2]
+                    # Altitude Error (Relative to Target Z=0 + goal_z)
+                    # We assume Target is at Z=0 in our relative frame
+                    dx = next_state['px']
+                    dy = next_state['py']
+                    dz = next_state['pz'] - goal_z
                     dist = math.sqrt(dx*dx + dy*dy + dz*dz + 1e-6)
 
                     k_pos = 20.0
@@ -761,10 +742,11 @@ class PyDPCSolver:
                             dL_dPz_ttc = dL_dtau * dtau_dz
                             dL_dVz_ttc = dL_dtau * dtau_dvz
 
-                    # Gaze Vector: Camera (Drone) -> Gaze Target (Object at Z=0)
-                    dx_w = gaze_target[0] - next_state['px']
-                    dy_w = gaze_target[1] - next_state['py']
-                    dz_w = gaze_target[2] - next_state['pz']
+                    # Gaze Vector: Camera (Drone) -> Target (Origin)
+                    # We assume the tracked object is at (0,0,0) in the relative frame
+                    dx_w = 0.0 - next_state['px']
+                    dy_w = 0.0 - next_state['py']
+                    dz_w = 0.0 - next_state['pz']
 
                     r, p, y = next_state['roll'], next_state['pitch'], next_state['yaw']
                     cr=math.cos(r); sr=math.sin(r)
@@ -789,8 +771,9 @@ class PyDPCSolver:
                     v_pred = yc / zc
 
                     # Tune Gaze Weight higher for Intercept Mode to ensure lock
-                    w_g = 5.0 if intercept_mode else 1.0
-                    w_flow = 0.5
+                    w_g = 5.0 if intercept_mode else 2.0
+                    # Reduced Flow Weight to prioritize Centering over Stabilization
+                    w_flow = 0.05
                     diff_u = u_pred - u_prev
                     diff_v = v_pred - v_prev
 
@@ -908,9 +891,24 @@ class PyDPCSolver:
                         dL_dVz_gamma = dL_dGamma * (-h_speed / speed_sq)
 
                         # dGamma/dVx = (vz / speed_sq) * (vx / h_speed)
+                        # Fix Singularity at Hover: If h_speed is small, gradients vanish.
+                        # Add Forward Progress Kick if diving and slow.
+                        if h_speed < 0.5:
+                             # Assume forward direction is towards target (screen space u)
+                             # Or just Body X.
+                             # Kick: Maximize H-Speed
+                             kick = 10.0 * (0.5 - h_speed)
+                             dL_d_hspeed_kick = -kick
+                             if h_speed < 1e-3:
+                                  # Force X
+                                  dL_dVx_gamma += dL_d_hspeed_kick
+                             else:
+                                  dL_dVx_gamma += dL_d_hspeed_kick * (vx / h_speed)
+                                  dL_dVy_gamma += dL_d_hspeed_kick * (vy / h_speed)
+
                         term_h = vz / (speed_sq * h_speed)
-                        dL_dVx_gamma = dL_dGamma * term_h * vx
-                        dL_dVy_gamma = dL_dGamma * term_h * vy
+                        dL_dVx_gamma += dL_dGamma * term_h * vx
+                        dL_dVy_gamma += dL_dGamma * term_h * vy
 
                         # dL/dPz (Gradient of Ref w.r.t Pz)
                         if 0.0 < next_state['pz'] < 100.0:
