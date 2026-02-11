@@ -272,6 +272,11 @@ class TheShow:
         if target_wp_ned:
              target_wp_sim = self.ned_rel_to_sim_rel(target_wp_ned)
 
+        # Normalize Tracking UV for Controller
+        tracking_norm = None
+        if center:
+            tracking_norm = self.projector.pixel_to_normalized(center[0], center[1])
+
         # 3. Update Mission Logic
         # Pass sanitized relative state to mission (px=0, py=0)
         sim_state_rel = s.copy()
@@ -298,7 +303,7 @@ class TheShow:
         action_out, ghost_paths = self.controller.compute_action(
             state_obs,
             dpc_target,
-            tracking_uv=center,
+            tracking_uv=tracking_norm,
             extra_yaw_rate=extra_yaw
         )
 

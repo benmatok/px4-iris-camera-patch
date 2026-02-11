@@ -262,3 +262,15 @@ class Projector:
         proj_radius = (object_radius / zc) * self.fx
 
         return (u, v, proj_radius)
+
+    def pixel_to_normalized(self, u, v):
+        """
+        Converts pixel coordinates to normalized image plane coordinates (tangents).
+        Args:
+            u, v: Pixel coordinates
+        Returns:
+            (u_norm, v_norm): Normalized coordinates (xc/zc, yc/zc)
+        """
+        u_norm = (u - self.cx) / self.fx
+        v_norm = (v - self.cy) / self.fy
+        return (u_norm, v_norm)
