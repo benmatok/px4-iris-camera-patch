@@ -137,13 +137,31 @@ class TestWebSimParity(unittest.TestCase):
                 state_obs, dpc_target, tracking_uv=tracking_uv, extra_yaw_rate=0.0
             )
 
-            state = model.step(state, action_out, dt)
+            # Match SimDroneInterface casting to float
+            action_out_cast = {
+                'thrust': float(action_out['thrust']),
+                'roll_rate': float(action_out['roll_rate']),
+                'pitch_rate': float(action_out['pitch_rate']),
+                'yaw_rate': float(action_out['yaw_rate'])
+            }
+
+            state = model.step(state, action_out_cast, dt)
 
         path_sim = np.array(path_sim)
 
         # 3. Compare
         print(f"Web Final: {path_web[-1]}")
         print(f"Sim Final: {path_sim[-1]}")
+
+        # Check divergence step
+        for i in range(len(path_web)):
+            err = np.linalg.norm(path_web[i] - path_sim[i])
+            if err > 1e-4:
+                print(f"Divergence at Step {i}: Error {err}")
+                print(f"Web: {path_web[i]}")
+                print(f"Sim: {path_sim[i]}")
+                break
+
         final_err = np.linalg.norm(path_web[-1] - path_sim[-1])
         print(f"Final Error: {final_err:.8f} m")
 

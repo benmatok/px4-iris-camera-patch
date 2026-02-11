@@ -62,6 +62,11 @@ class DPCFlightController:
         # target_cmd is [RelX, RelY, AbsZ]
         goal_z = target_cmd[2]
 
+        # Determine Intercept Mode
+        # If goal_z is very low (< 1.0m), we likely want to intercept/land.
+        # This disables the TTC barrier in the solver.
+        intercept_mode = (goal_z < 1.0)
+
         # 3. Solve
         forced_yaw = extra_yaw_rate if extra_yaw_rate != 0.0 else None
 
@@ -72,7 +77,8 @@ class DPCFlightController:
             self.weights,
             self.dt,
             forced_yaw_rate=forced_yaw,
-            goal_z=goal_z
+            goal_z=goal_z,
+            intercept_mode=intercept_mode
         )
         self.last_action = action_out
 

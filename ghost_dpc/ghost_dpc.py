@@ -644,12 +644,13 @@ class PyDPCSolver:
 
         return est
 
-    def solve(self, history, initial_action_dict, models_list, weights_list, dt, forced_yaw_rate=None, goal_z=2.0):
+    def solve(self, history, initial_action_dict, models_list, weights_list, dt, forced_yaw_rate=None, goal_z=2.0, intercept_mode=False):
         """
         Solves for the optimal control action using internal relative state estimation.
         Inputs:
             history: List of observation dicts (roll, pitch, yaw, alt, u, v, ...)
             goal_z: Desired relative altitude (default 2.0m)
+            intercept_mode: If True, relax collision avoidance to allow impact/landing.
         Note: Absolute Position and Velocity are never known/passed. Target is implicitly the tracked object (0,0,0).
         """
         state_dict = self._estimate_relative_state(history, dt)
@@ -738,15 +739,17 @@ class PyDPCSolver:
                     dL_dPz_ttc = 0.0
                     dL_dVz_ttc = 0.0
 
-                    if dz_safe > 0 and vz < -0.1:
-                        tau = dz_safe / -vz
-                        gain = 200.0
-                        denom = tau + 0.1
-                        dL_dtau = -gain / (denom * denom)
-                        dtau_dz = 1.0 / -vz
-                        dtau_dvz = dz_safe / (vz * vz)
-                        dL_dPz_ttc = dL_dtau * dtau_dz
-                        dL_dVz_ttc = dL_dtau * dtau_dvz
+                    # Use TTC Barrier only if NOT in intercept mode
+                    if not intercept_mode:
+                        if dz_safe > 0 and vz < -0.1:
+                            tau = dz_safe / -vz
+                            gain = 200.0
+                            denom = tau + 0.1
+                            dL_dtau = -gain / (denom * denom)
+                            dtau_dz = 1.0 / -vz
+                            dtau_dvz = dz_safe / (vz * vz)
+                            dL_dPz_ttc = dL_dtau * dtau_dz
+                            dL_dVz_ttc = dL_dtau * dtau_dvz
 
                     dx_w = next_state['px'] - target_pos[0]
                     dy_w = next_state['py'] - target_pos[1]
@@ -774,7 +777,8 @@ class PyDPCSolver:
                     u_pred = xc / zc
                     v_pred = yc / zc
 
-                    w_g = 1.0
+                    # Tune Gaze Weight higher for Intercept Mode to ensure lock
+                    w_g = 5.0 if intercept_mode else 1.0
                     w_flow = 0.5
                     diff_u = u_pred - u_prev
                     diff_v = v_pred - v_prev
@@ -847,11 +851,13 @@ class PyDPCSolver:
                     dL_dS[10] += 0.1 * next_state.get('wy', 0.0)
                     dL_dS[11] += 0.1 * next_state.get('wz', 0.0)
 
-                    safe_limit = 15.0
-                    w_vel_limit = 5000.0
-                    violation = (-next_state['vz']) - safe_limit
-                    if violation > 0:
-                         dL_dS[5] += -2.0 * w_vel_limit * violation
+                    # Descent Velocity Constraint (Disable in Intercept Mode)
+                    if not intercept_mode:
+                        safe_limit = 15.0
+                        w_vel_limit = 5000.0
+                        violation = (-next_state['vz']) - safe_limit
+                        if violation > 0:
+                             dL_dS[5] += -2.0 * w_vel_limit * violation
 
                     dL_dU_rate = np.zeros(4, dtype=np.float32)
                     dL_dU_rate[1] = 0.2 * current_action['roll_rate']
