@@ -5,8 +5,9 @@ import time
 logger = logging.getLogger(__name__)
 
 class MissionManager:
-    def __init__(self, target_alt=50.0):
+    def __init__(self, target_alt=50.0, enable_staircase=False):
         self.target_alt = target_alt
+        self.enable_staircase = enable_staircase
         self.staircase_start_time = 0.0
         self.reset()
 
@@ -59,7 +60,7 @@ class MissionManager:
 
                 # Check for "Too High and Steep" Condition (Staircase Trigger)
                 # Alt > 20m AND Dist < 10m (Steep)
-                if current_alt > 30.0 and lat_dist < 15.0:
+                if self.enable_staircase and current_alt > 30.0 and lat_dist < 15.0:
                     self.state = "STAIRCASE_DESCEND"
                     self.staircase_target_z = current_alt - 20.0
                     if self.staircase_target_z < 5.0:
