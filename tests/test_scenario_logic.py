@@ -20,27 +20,14 @@ class TestScenarioLogic(unittest.TestCase):
     def test_reset_scenario(self):
         proj = MagicMock()
 
-        # Mock Data Dictionary
-        dd = {
-            'pos_x': [0.0], 'pos_y': [0.0], 'pos_z': [0.0],
-            'vel_x': [0.0], 'vel_y': [0.0], 'vel_z': [0.0],
-            'roll': [0.0], 'pitch': [0.0], 'yaw': [0.0],
-            'masses': [1.0], 'thrust_coeffs': [1.0],
-            'actions': np.zeros(4),
-            'done_flags': [0.0]
-        }
+        # SimDroneInterface now uses PyGhostModel which is inlined and lightweight
+        # No need to mock DroneEnv anymore
+        sim = SimDroneInterface(proj)
+        sim.reset_to_scenario("Blind Dive", pos_z=100.0)
 
-        mock_env = MagicMock()
-        mock_env.data_dictionary = dd
-
-        # Patch where it is imported in sim_interface
-        with patch('sim_interface.DroneEnv', return_value=mock_env):
-            sim = SimDroneInterface(proj)
-            sim.reset_to_scenario("Blind Dive")
-
-            s = sim.get_state()
-            self.assertEqual(s['pz'], 100.0)
-            self.assertEqual(s['px'], 0.0)
+        s = sim.get_state()
+        self.assertEqual(s['pz'], 100.0)
+        self.assertEqual(s['px'], 0.0)
 
     def test_projector_size(self):
         proj = Projector(width=640, height=480, fov_deg=90.0) # fov 90 -> fx = 320
@@ -65,7 +52,9 @@ class TestScenarioLogic(unittest.TestCase):
         tracker = VisualTracker(proj)
         tracker.detector = MockDetector()
 
-        c, wp, r = tracker.process(np.zeros((10,10,3)), {})
+        # Provide a valid dummy state
+        dummy_state = {'px': 0.0, 'py': 0.0, 'pz': 0.0, 'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0}
+        c, wp, r = tracker.process(np.zeros((10,10,3)), dummy_state)
 
         self.assertAlmostEqual(r, 10.0, delta=0.1)
 
