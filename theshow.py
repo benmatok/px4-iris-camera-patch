@@ -29,21 +29,6 @@ except ImportError as e:
 # Constants
 DT = 0.05
 
-class ResidualLogger:
-    def __init__(self, filename="residuals.csv"):
-        self.f = open(filename, "w")
-        self.f.write("time,type,dx,dy,dz,dvx,dvy,dvz,pred_pz,act_pz\n")
-
-    def log(self, t, p_type, pred, act):
-        dx = pred['px'] - act['px']
-        dy = pred['py'] - act['py']
-        dz = pred['pz'] - act['pz']
-        dvx = pred['vx'] - act['vx']
-        dvy = pred['vy'] - act['vy']
-        dvz = pred['vz'] - act['vz']
-        self.f.write(f"{t:.3f},{p_type},{dx:.3f},{dy:.3f},{dz:.3f},{dvx:.3f},{dvy:.3f},{dvz:.3f},{pred['pz']:.3f},{act['pz']:.3f}\n")
-        self.f.flush()
-
 class TheShow:
     def __init__(self):
         try:
@@ -72,7 +57,6 @@ class TheShow:
 
             self.loops = 0
             self.prediction_history = []
-            self.logger = ResidualLogger()
             self.websockets = set()
             self.paused = False
             self.step_once = False
@@ -189,9 +173,9 @@ class TheShow:
         ned['py'] = sim_state['px']
         ned['pz'] = -sim_state['pz']
 
-        ned['vx'] = sim_state['vy']
-        ned['vy'] = sim_state['vx']
-        ned['vz'] = -sim_state['vz']
+        ned['vx'] = sim_state.get('vy', 0.0)
+        ned['vy'] = sim_state.get('vx', 0.0)
+        ned['vz'] = -sim_state.get('vz', 0.0)
 
         # Roll/Pitch align if we only care about body frame definition (Fwd/Right/Down)
         # Sim: Fwd/Left/Up. Roll(Fwd), Pitch(Left).
@@ -349,10 +333,6 @@ class TheShow:
         # Process Mature Predictions
         dpc_error = {}
         valid_preds = [p for p in self.prediction_history if p['time'] <= current_time]
-
-        # Log all valid predictions
-        for p in valid_preds:
-            self.logger.log(current_time, p['type'], p['state'], s)
 
         # Remove processed predictions from history
         self.prediction_history = [x for x in self.prediction_history if x['time'] > current_time]
