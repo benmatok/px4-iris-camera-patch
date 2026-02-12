@@ -30,10 +30,11 @@ class DiveValidator:
 
         # Scenario / Sim
         self.sim = SimDroneInterface(self.projector)
-        self.target_pos_sim_world = [50.0, 0.0, 0.0] # Blind Dive Target
+        # CLOSER TARGET: 20m
+        self.target_pos_sim_world = [20.0, 0.0, 0.0]
 
-        # Initial Pos for Blind Dive (Adjusted to avoid Gimbal Lock at -90 deg pitch)
-        drone_pos = [0.0, 0.0, 50.0]
+        # Initial Pos for Blind Dive
+        drone_pos = [0.0, 0.0, 20.0]
         pitch, yaw = self.calculate_initial_orientation(drone_pos, self.target_pos_sim_world)
 
         self.sim.reset_to_scenario("Blind Dive", pos_x=drone_pos[0], pos_y=drone_pos[1], pos_z=drone_pos[2], pitch=pitch, yaw=yaw)
@@ -42,7 +43,7 @@ class DiveValidator:
         self.tracker = VisualTracker(self.projector)
 
         # Logic
-        self.mission = MissionManager(target_alt=50.0) # Start with target alt matching start
+        self.mission = MissionManager(target_alt=20.0, enable_staircase=False)
 
         # Control
         self.controller = DPCFlightController(dt=DT)
@@ -60,11 +61,6 @@ class DiveValidator:
         camera_tilt = np.deg2rad(30.0)
 
         # PyGhostModel Convention: Positive Pitch = Nose Down.
-        # Standard Math (atan2): Positive Angle = Up.
-        # Target Angle (Std) = Body Angle (Std) + Camera Tilt (Std)
-        # Body Angle (Std) = Target Angle (Std) - Camera Tilt (Std)
-        # Model Pitch = - Body Angle (Std) = Camera Tilt (Std) - Target Angle (Std)
-
         pitch = camera_tilt - pitch_vec
 
         return pitch, yaw
@@ -184,27 +180,16 @@ class DiveValidator:
             history['t'].append(t)
             history['drone_pos'].append([s['px'], s['py'], s['pz']])
             if i % 20 == 0:
-                print(f"T={t:.2f} State={mission_state} Dist={dist:.2f} Pos=({s['px']:.1f}, {s['py']:.1f}, {s['pz']:.1f})")
+                uv_str = f"UV=({center[0]:.2f}, {center[1]:.2f})" if center else "UV=None"
+                print(f"T={t:.2f} State={mission_state} Dist={dist:.2f} Pos=({s['px']:.1f}, {s['py']:.1f}, {s['pz']:.1f}) {uv_str}")
+
+            # Terminate if collision (close enough)
+            if dist < 1.0: # Close collision
+                 logger.info("Collision Detected! Stopping.")
+                 break
 
             # Estimate Target Pos (Absolute Sim Frame)
             if target_wp_sim:
-                est_x = s['px'] + target_wp_sim[0]
-                est_y = s['py'] + target_wp_sim[1]
-                est_z = s['pz'] + target_wp_sim[2] # dpc_target[2] is Absolute Z, but target_wp_sim is Relative
-                # Wait, mission_manager uses target_wp (Relative) to set dpc_target (Relative XY, Absolute Z?)
-                # MissionManager: dpc_target = [target_wp[0], target_wp[1], 2.0] -> 2.0 is Abs Z.
-                # Actually, target_wp from tracker is [RelX, RelY, RelZ].
-                # So Est Target Pos = Drone Pos + Rel Target Pos
-                # Let's verify `target_wp_sim` components.
-                # `ned_rel_to_sim_rel`: [dy, dx, -dz].
-                # NED Rel: Target - Drone.
-                # NED Rel Z: Target Z (Down) - Drone Z (Down).
-                # Sim Rel Z = - (Target Z_ned - Drone Z_ned) = Drone Z_ned - Target Z_ned
-                # Drone Z_ned = -Drone Z_sim. Target Z_ned = -Target Z_sim.
-                # Sim Rel Z = (-Drone Z_sim) - (-Target Z_sim) = Target Z_sim - Drone Z_sim.
-                # Correct.
-
-                # So Est Target Absolute = Drone Pos + Target Rel Sim
                 est_x = s['px'] + target_wp_sim[0]
                 est_y = s['py'] + target_wp_sim[1]
                 est_z = s['pz'] + target_wp_sim[2]
@@ -229,7 +214,7 @@ def plot_results(hist_gt, hist_vis, filename="validation_dive_tracking.png"):
     axs[0, 0].plot(pos_vis[:, 0], pos_vis[:, 2], 'g--', label='Vision Tracking')
 
     # Target
-    axs[0, 0].plot(50.0, 0.0, 'rx', markersize=10, label='Target')
+    axs[0, 0].plot(20.0, 0.0, 'rx', markersize=10, label='Target')
 
     axs[0, 0].set_xlabel("X (m)")
     axs[0, 0].set_ylabel("Z (m)")
@@ -252,7 +237,7 @@ def plot_results(hist_gt, hist_vis, filename="validation_dive_tracking.png"):
     errs = []
     valid_t = []
 
-    target_true = np.array([50.0, 0.0, 0.0])
+    target_true = np.array([20.0, 0.0, 0.0])
 
     for i, p in enumerate(est):
         if p[0] is not None:
@@ -274,26 +259,29 @@ def plot_results(hist_gt, hist_vis, filename="validation_dive_tracking.png"):
     axs[1, 1].set_title("Mission State (Vision Run)")
     states = hist_vis['state']
     # Map states to ints
-    state_map = {"TAKEOFF": 0, "SCAN": 1, "HOMING": 2}
+    state_map = {"TAKEOFF": 0, "SCAN": 1, "HOMING": 2, "STAIRCASE_DESCEND": 3, "STAIRCASE_STABILIZE": 4}
     y_vals = [state_map.get(s, -1) for s in states]
     axs[1, 1].plot(hist_vis['t'], y_vals, 'k-')
-    axs[1, 1].set_yticks([0, 1, 2])
-    axs[1, 1].set_yticklabels(["TAKEOFF", "SCAN", "HOMING"])
+    axs[1, 1].set_yticks([0, 1, 2, 3, 4])
+    axs[1, 1].set_yticklabels(["TAKEOFF", "SCAN", "HOMING", "DESCEND", "STABILIZE"])
     axs[1, 1].set_xlabel("Time (s)")
     axs[1, 1].grid(True)
 
     plt.tight_layout()
-    plt.savefig(filename)
-    print(f"Saved plot to {filename}")
+    try:
+        plt.savefig(filename)
+        print(f"Saved plot to {filename}")
+    except:
+        pass
 
 if __name__ == "__main__":
     # Run with Ground Truth (Web Parity)
     validator_gt = DiveValidator(use_ground_truth=True)
-    hist_gt = validator_gt.run(duration=15.0)
+    hist_gt = validator_gt.run(duration=10.0)
 
     # Run with Vision (Detection)
     validator_vis = DiveValidator(use_ground_truth=False)
-    hist_vis = validator_vis.run(duration=15.0)
+    hist_vis = validator_vis.run(duration=10.0)
 
     plot_results(hist_gt, hist_vis)
 
@@ -304,12 +292,13 @@ if __name__ == "__main__":
     print(f"Final Distance (GT Tracking): {final_dist_gt:.2f}m")
     print(f"Final Distance (Vision Tracking): {final_dist_vis:.2f}m")
 
-    if final_dist_gt < 5.0:
+    # STRICT CRITERIA: Must be close to 0 (Collision)
+    if final_dist_gt < 2.0:
         print("SUCCESS: GT Tracking Dive Successful")
     else:
         print("FAILURE: GT Tracking Dive Failed")
 
-    if final_dist_vis < 5.0:
+    if final_dist_vis < 2.0:
         print("SUCCESS: Vision Tracking Dive Successful")
     else:
         print("FAILURE: Vision Tracking Dive Failed")

@@ -663,6 +663,45 @@ class PyDPCSolver:
             if last.get('u') is not None and last.get('v') is not None:
                 measured_u = last['u']
                 measured_v = last['v']
+            elif vision_active:
+                # Use estimated relative position to predict u, v for initialization
+                # This helps "estimate target distance to predict target screen location"
+                # as requested by user, filling in gaps when measure is lost but estimate exists.
+                px_rel, py_rel, pz_rel = state_dict['px'], state_dict['py'], state_dict['pz']
+
+                # Transform Relative Position (Target in Drone Frame?)
+                # Wait, state_dict is Drone relative to Target. Target is at (0,0,0).
+                # Drone at (px, py, pz).
+                # Vector Drone->Target = (-px, -py, -pz)
+
+                dx_w = -px_rel
+                dy_w = -py_rel
+                dz_w = -pz_rel
+
+                r, p, y = state_dict['roll'], state_dict['pitch'], state_dict['yaw']
+                cr=math.cos(r); sr=math.sin(r)
+                cp=math.cos(p); sp=math.sin(p)
+                cy=math.cos(y); sy=math.sin(y)
+
+                # World to Body
+                r11 = cy*cp; r12 = sy*cp; r13 = -sp
+                r21 = cy*sp*sr - sy*cr; r22 = sy*sp*sr + cy*cr; r23 = cp*sr
+                r31 = cy*sp*cr + sy*sr; r32 = sy*sp*cr - cy*sr; r33 = cp*cr
+
+                xb = r11*dx_w + r12*dy_w + r13*dz_w
+                yb = r21*dx_w + r22*dy_w + r23*dz_w
+                zb = r31*dx_w + r32*dy_w + r33*dz_w
+
+                # Body to Camera (30 deg pitch up)
+                s30 = 0.5; c30 = 0.866025
+                xc = yb
+                yc = s30*xb + c30*zb
+                zc = c30*xb - s30*zb
+
+                if zc > 0.1:
+                    measured_u = xc / zc
+                    measured_v = yc / zc
+
 
         models = []
         for md in models_list:
@@ -695,11 +734,10 @@ class PyDPCSolver:
 
                 state = state_dict.copy()
 
-                # Initialize previous UV with ACTUAL measurement, not calculated projection
-                # This ensures we start the flow cost from reality
+                # Initialize previous UV with measurement (or estimate)
                 u_prev = measured_u
                 v_prev = measured_v
-                zc_prev = 2.0 # Approximation for initial gate
+                zc_prev = 2.0
 
                 G_mat = np.zeros((12, 4), dtype=np.float32)
 
@@ -709,16 +747,13 @@ class PyDPCSolver:
                     G_next = np.matmul(J_state, G_mat) + J_act
                     next_state = model.step(state, current_action, dt)
 
-                    # Altitude Error (Relative to Target Z=0 + goal_z)
-                    # We assume Target is at Z=0 in our relative frame
+                    # Altitude Error
                     dx = next_state['px']
                     dy = next_state['py']
                     dz = next_state['pz'] - goal_z
                     dist = math.sqrt(dx*dx + dy*dy + dz*dz + 1e-6)
 
                     k_pos = 20.0
-                    # Screen Space Tracking: Disable X/Y Position Cost
-                    # Rely on Gaze Cost (u/v) to align with target
                     dL_dP = np.array([0.0, 0.0, k_pos*dz/dist], dtype=np.float32)
 
                     target_safe_z = goal_z
@@ -742,8 +777,7 @@ class PyDPCSolver:
                             dL_dPz_ttc = dL_dtau * dtau_dz
                             dL_dVz_ttc = dL_dtau * dtau_dvz
 
-                    # Gaze Vector: Camera (Drone) -> Target (Origin)
-                    # We assume the tracked object is at (0,0,0) in the relative frame
+                    # Gaze Vector
                     dx_w = 0.0 - next_state['px']
                     dy_w = 0.0 - next_state['py']
                     dz_w = 0.0 - next_state['pz']
@@ -772,7 +806,7 @@ class PyDPCSolver:
 
                     # Tune Gaze Weight higher for Intercept Mode to ensure lock
                     w_g = 5.0 if intercept_mode else 2.0
-                    # Reduced Flow Weight to prioritize Centering over Stabilization
+
                     w_flow = 0.05
                     diff_u = u_pred - u_prev
                     diff_v = v_pred - v_prev
@@ -825,29 +859,17 @@ class PyDPCSolver:
                         dL_dyb = dL_du * du_dyb + dL_dv * dv_dyb
                         dL_dzb = dL_du * du_dzb + dL_dv * dv_dzb
                     else:
-                        # Out of FOV: Maximize Alignment with Camera Axis
-                        # Camera Axis in Body Frame: (c30, 0, s30) (Upward Tilt)
-                        # Vector: (xb, yb, zb)
+                        # Out of FOV
                         norm_sq = xb*xb + yb*yb + zb*zb + 1e-6
                         norm = math.sqrt(norm_sq)
                         inv_norm = 1.0 / norm
-
-                        # Dot Product
                         dot = xb * c30 + zb * s30
 
-                        # Cost = -dot / norm (Maximize Cosine Similarity)
-                        # Gradient of (-dot/norm) w.r.t x:
-                        # - ( c30*norm - dot*(x/norm) ) / norm^2
-                        # = - ( c30/norm - dot*x/norm^3 )
-                        # = dot*x*inv_norm**3 - c30*inv_norm
-
                         inv_norm3 = inv_norm * inv_norm * inv_norm
-
                         dL_dxb = dot * xb * inv_norm3 - c30 * inv_norm
                         dL_dyb = dot * yb * inv_norm3
                         dL_dzb = dot * zb * inv_norm3 - s30 * inv_norm
 
-                        # Scale the guidance gradient
                         w_align = 5.0
                         dL_dxb *= w_align
                         dL_dyb *= w_align
@@ -867,17 +889,19 @@ class PyDPCSolver:
                     dL_dVz_gamma = 0.0
                     dL_dPz_gamma = 0.0
 
-                    # Only apply Dive Cost if we are above the goal altitude
+                    # Apply Dive Cost if above goal
                     if next_state['pz'] > goal_z + 0.5:
-                        # gamma_ref based on RELATIVE altitude to goal
-                        # 0 deg at goal_z, 70 deg at goal_z + 100m
                         rel_alt = next_state['pz'] - goal_z
                         gamma_ratio = max(0.0, min(rel_alt / 100.0, 1.0))
 
-                        # User requested 20 deg convergence. But we must level off (0 deg) to hover.
-                        # We use 20 deg minimum for the "Approach" phase, but blend to 0 close to target?
-                        # Let's stick to 0 at goal to ensure safety.
-                        gamma_ref_deg = 70.0 * gamma_ratio
+                        # In Intercept Mode, we maintain steep angle to impact.
+                        # Target 20 deg at Impact (0m)
+                        if intercept_mode:
+                            target_deg_at_0 = 20.0
+                        else:
+                            target_deg_at_0 = 0.0 # Level off if not intercepting
+
+                        gamma_ref_deg = target_deg_at_0 + (70.0 - target_deg_at_0) * gamma_ratio
                         gamma_ref = gamma_ref_deg * math.pi / 180.0
 
                         vx = next_state['vx']
@@ -897,16 +921,10 @@ class PyDPCSolver:
                         dL_dVz_gamma = dL_dGamma * (-h_speed / speed_sq)
 
                         # dGamma/dVx = (vz / speed_sq) * (vx / h_speed)
-                        # Fix Singularity at Hover: If h_speed is small, gradients vanish.
-                        # Add Forward Progress Kick if diving and slow.
                         if h_speed < 0.5:
-                             # Assume forward direction is towards target (screen space u)
-                             # Or just Body X.
-                             # Kick: Maximize H-Speed
                              kick = 10.0 * (0.5 - h_speed)
                              dL_d_hspeed_kick = -kick
                              if h_speed < 1e-3:
-                                  # Force X
                                   dL_dVx_gamma += dL_d_hspeed_kick
                              else:
                                   dL_dVx_gamma += dL_d_hspeed_kick * (vx / h_speed)
@@ -916,9 +934,9 @@ class PyDPCSolver:
                         dL_dVx_gamma += dL_dGamma * term_h * vx
                         dL_dVy_gamma += dL_dGamma * term_h * vy
 
-                        # dL/dPz (Gradient of Ref w.r.t Pz)
+                        # dL/dPz
                         if 0.0 < next_state['pz'] < 100.0:
-                             dRef_dPz = 0.5 * math.pi / 180.0 # 50/100 * deg2rad
+                             dRef_dPz = (70.0 - target_deg_at_0) / 100.0 * math.pi / 180.0
                              dL_dPz_gamma = dL_dGamma * (-1.0) * dRef_dPz
 
                     dL_dS = np.zeros(12, dtype=np.float32)
@@ -951,7 +969,7 @@ class PyDPCSolver:
                     dL_dU_rate[2] = 0.2 * current_action['pitch_rate']
                     dL_dU_rate[3] = 0.2 * current_action['yaw_rate']
 
-                    # Smoothness Cost: Penalize large changes from initial action
+                    # Smoothness Cost
                     w_smooth = 1.0
                     dL_dU_rate[0] += w_smooth * (current_action['thrust'] - initial_action_dict['thrust'])
                     dL_dU_rate[1] += w_smooth * (current_action['roll_rate'] - initial_action_dict['roll_rate'])
