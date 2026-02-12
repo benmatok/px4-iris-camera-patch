@@ -172,7 +172,7 @@ class DPCFlightController:
         sim_vz = vz
         for i in range(20):
              sim_z += sim_vz * self.dt
-             path.append({'px': 0.0, 'py': 0.0, 'pz': sim_z})
+             path.append({'px': 0.0, 'py': 0.0, 'pz': sim_z, 'vx': 0.0, 'vy': 0.0, 'vz': sim_vz})
         ghost_paths.append(path)
 
         return action, ghost_paths
