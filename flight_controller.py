@@ -30,6 +30,7 @@ class DPCFlightController:
         self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
         logger.info("DPCFlightController (Simple) reset")
 
+
     def compute_action(self, state_obs, target_cmd, tracking_uv=None, extra_yaw_rate=0.0):
         # Unpack State
         pz = state_obs.get('pz', 100.0) # Default if missing
@@ -46,66 +47,28 @@ class DPCFlightController:
         yaw_rate_cmd = 0.0
         if tracking_uv:
             u, v = tracking_uv
-            # Inverted Sim Logic: Positive u -> Positive Rate turns Right (Corrects Left error? No.)
-            # Target Right (u>0). We want turn Right.
-            # Sim Yaw: Right is Negative Rate? No. Right is CW. Sim 0=East, 90=North.
-            # Decreasing Yaw = Right.
-            # So Rate should be Negative.
-            # Previous fix used Positive. Let's stick to what worked or re-verify.
-            # Validation showed Yaw worked with `k * u`.
+            # Inverted Sim Logic: Positive u -> Positive Rate turns Right
             yaw_rate_cmd = self.k_yaw * u
         else:
             yaw_rate_cmd = extra_yaw_rate
 
-        # 2. Estimate Distance and Gamma Ref
-        tilt_rad = math.radians(30.0)
-        gamma_ref = math.radians(-30.0) # Default
+        # 2. Estimate Distance and Compute Adaptive Gamma Ref
+        # Use target_cmd (from MissionManager/Tracker) to get relative position
+        # target_cmd is [rel_x, rel_y, abs_z_target] (Sim Frame)
+        dx = target_cmd[0]
+        dy = target_cmd[1]
+        dist_est = math.sqrt(dx*dx + dy*dy)
+        alt_est = max(0.1, pz - goal_z)
 
-        use_visual_gamma = False
-        d_est = 100.0
+        # Guidance Logic: Biased LOS (Flare Strategy)
+        # We fly steeper than LOS to approach from below, creating a parabolic flare.
+        los = -math.atan2(alt_est, dist_est)
+        gamma_ref = los - math.radians(15.0)
+        gamma_ref = max(gamma_ref, math.radians(-85.0))
 
-        if tracking_uv:
-            u, v = tracking_uv
-            # v is normalized. v = tan(angle_from_center).
-            # Center is +30 deg up from Body.
-            # Ray Angle (in Body Frame) = 30 - atan(v)? No.
-            # v increases DOWN.
-            # Camera Axis (Center) is +30 deg relative to Body (if Pitch=0).
-            # Ray is `atan(v)` relative to Camera Axis (Down is positive).
-            # Ray Elevation relative to Horizon = (Pitch + 30) - atan(v_pixels * scale).
-            # Normalized v: v = y/z. tan(phi) = v.
-            # Angle down from axis = atan(v).
-            # Elevation = (Pitch + 30) - atan(v). (deg).
-            # Depression = -Elevation = atan(v) - Pitch - 30.
-
-            # v range [-1.73, 1.73] for 120 FOV?
-            # atan(v) gives angle from camera axis.
-
-            angle_from_cam_axis = math.atan(v) # Positive is Down.
-            # Camera Axis Elevation = Pitch + Tilt.
-            # Ray Elevation = (Pitch + Tilt) - angle_from_cam_axis.
-            # We want Depression Angle (Positive Down).
-            # Depression = -Ray Elevation = angle_from_cam_axis - (Pitch + Tilt).
-
-            depression = angle_from_cam_axis - (pitch + tilt_rad)
-
-            if depression > 0.1: # At least ~6 degrees down
-                d_est = max(0.1, (pz - goal_z) / math.tan(depression))
-
-                # Desired Gamma to hit target
-                # gamma_ref = -atan2(pz, d)
-                gamma_ref = -math.atan2(pz - goal_z, d_est)
-                use_visual_gamma = True
-            else:
-                # Target is above or level. Far away.
-                d_est = 100.0
-
-        if not use_visual_gamma:
-            # Fallback to Altitude Profile
-            dive_start_alt = 100.0
-            ratio = max(0.0, min(1.0, (pz - goal_z) / (dive_start_alt - goal_z)))
-            gamma_deg = self.dive_angle_end + (self.dive_angle_start - self.dive_angle_end) * ratio
-            gamma_ref = math.radians(gamma_deg)
+        # Terminal Phase Safety: If close, fly directly at target to ensure hit
+        if dist_est < 30.0:
+             gamma_ref = los
 
         # 3. Speed Control (Thrust)
         if vz is not None:
@@ -123,8 +86,9 @@ class DPCFlightController:
             thrust_cmd = self.thrust_hover
 
         # Limit Thrust in Steep Dive to prevent Forward Acceleration
-        if pitch < math.radians(-45.0):
-             thrust_cmd = min(thrust_cmd, 0.2)
+        # Use Command gamma_ref instead of current pitch to anticipate
+        if gamma_ref < math.radians(-45.0) or pitch < math.radians(-45.0):
+             thrust_cmd = min(thrust_cmd, 0.35)
 
         # Debug
         # if pz < 150.0:
