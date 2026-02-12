@@ -7,6 +7,7 @@ import cv2
 import time
 import json
 import argparse
+
 try:
     import rclpy
     from rclpy.node import Node
@@ -29,7 +30,7 @@ except ImportError:
 
 # MAVSDK Imports
 from mavsdk import System
-from mavsdk.offboard import AttitudeRate, OffboardError
+from mavsdk.offboard import AttitudeRate, OffboardError, VelocityBodyYawspeed
 # Removed explicit telemetry imports to avoid version issues
 
 # Add current directory to path
@@ -45,7 +46,7 @@ except ImportError as e:
     sys.exit(1)
 
 # Constants
-TARGET_ALT = 50.0        # Meters (Relative) - Target Altitude
+TARGET_ALT = 2.0        # Meters (Relative) - Target Altitude
 SCAN_YAW_RATE = 15.0     # deg/s (Override for scanning)
 DT = 0.05                # 20Hz
 
@@ -64,6 +65,8 @@ class DroneInterface:
     async def land(self): raise NotImplementedError
     def get_latest_image(self): return None # Returns cv2 image or None
     def get_dpc_state_sync(self): return None # Returns dict or None
+    async def set_velocity_body(self, vf, vr, vd, yaw_rate): raise NotImplementedError
+
 
 class RealDroneInterface(DroneInterface):
     def __init__(self, projector=None, target_pos=None, system_address="udp://:14540"):
@@ -98,9 +101,9 @@ class RealDroneInterface(DroneInterface):
     async def arm(self):
         await self.drone.action.arm()
 
-    async def offboard_start(self):
-        await self.drone.offboard.set_attitude_rate(AttitudeRate(0.0, 0.0, 0.0, 0.0))
-        await self.drone.offboard.start()
+    async def is_armed(self):
+        async for armed in self.drone.telemetry.armed():
+            return armed
 
     async def offboard_stop(self):
         try:
@@ -108,13 +111,26 @@ class RealDroneInterface(DroneInterface):
         except:
             pass
 
-    async def set_attitude_rate(self, roll_deg, pitch_deg, yaw_deg, thrust):
-        await self.drone.offboard.set_attitude_rate(
-            AttitudeRate(roll_deg, pitch_deg, yaw_deg, thrust)
+
+    async def offboard_start(self):
+        await self.drone.offboard.set_velocity_body(
+            VelocityBodyYawspeed(0.0, 0.0, 0.0, 0.0)
         )
+        await self.drone.offboard.start()
+
+    async def set_velocity_body(self, vf, vr, vd, yaw_rate):
+        await self.drone.offboard.set_velocity_body(
+            VelocityBodyYawspeed(vf, vr, vd, yaw_rate)
+        )
+
+
+
 
     async def land(self):
         await self.drone.action.land()
+
+
+
 
     def set_latest_image(self, img):
         self.latest_image = img
@@ -152,6 +168,9 @@ class RealDroneInterface(DroneInterface):
 
     def get_dpc_state_sync(self):
         return None
+
+
+
 
 # Mock Classes for Sim Interface
 class MockAttitudeEuler:
@@ -558,6 +577,12 @@ class TheShow(Node):
         self.dpc_target = [0.0, 0.0, -TARGET_ALT]
         self.start_time_real = None
 
+        # --- Attitude targets (ABSOLUTE) ---
+        self.target_roll = 0.0          # rad
+        self.target_pitch = 0.0         # rad
+        self.target_yaw = None          # rad (will lock on takeoff)
+
+
     def img_cb(self, msg):
         try:
             img = self.bridge.imgmsg_to_cv2(msg, "bgr8")
@@ -606,10 +631,30 @@ class TheShow(Node):
 
     async def control_loop(self):
         print("Arming...")
+
         try:
             await self.interface.arm()
-        except:
-            print("Arming failed.")
+        except Exception as e:
+            print(f"Arming command failed: {e}")
+            return
+
+        # Wait up to 10 seconds for ARM confirmation
+        armed = False
+        for i in range(100):  # 100 × 0.1s = 10s
+            try:
+                if await self.interface.is_armed():
+                    armed = True
+                    break
+            except:
+                pass
+            await asyncio.sleep(0.1)
+
+        if not armed:
+            print("ERROR: Drone did not arm after 10 seconds")
+            return
+
+        print("Drone armed.")
+
 
         print("Wait for Telemetry...")
         while self.pos_ned is None:
@@ -622,12 +667,18 @@ class TheShow(Node):
             print(f"Offboard failed: {e}")
             return
 
+
         self.state = "TAKEOFF"
+        # Lock yaw at takeoff
+        self.target_yaw = self.get_dpc_state()['yaw']
         start_x = self.pos_ned.north_m
         start_y = self.pos_ned.east_m
         self.dpc_target = [start_x, start_y, -TARGET_ALT]
 
         print(f"State: {self.state} - Target: {self.dpc_target}")
+
+        self.scan_yaw = math.degrees(self.target_yaw)
+
 
         if not self.headless:
             try:
@@ -640,6 +691,7 @@ class TheShow(Node):
 
         try:
             while True:
+
                 if _HAS_ROS:
                     if not rclpy.ok():
                         break
@@ -651,6 +703,7 @@ class TheShow(Node):
                 else:
                     current_time = time.time() - self.start_time_real
 
+                #get drone state
                 dpc_state = self.get_dpc_state()
                 if dpc_state is None:
                     await asyncio.sleep(0.01)
@@ -658,7 +711,12 @@ class TheShow(Node):
 
                 # Get Image
                 img = self.interface.get_latest_image()
+                if img is None:
+                  print("NO IMAGE")
+                  continue
 
+
+                #system state (TAKEOFF, SCAN, HOMING, DONE)
                 self.update_logic(dpc_state, img, timestamp=current_time)
 
                 action_out = self.solver.solve(
@@ -671,25 +729,78 @@ class TheShow(Node):
                 )
                 self.last_action = action_out
 
-                roll_rate = math.degrees(action_out['roll_rate'])
-                pitch_rate = math.degrees(action_out['pitch_rate'])
-                yaw_rate = math.degrees(action_out['yaw_rate'])
                 thrust = action_out['thrust']
 
+                # ======================================
+                # SELECT COMMAND BY STATE
+                # ======================================
+
+                if self.state == "TAKEOFF":
+
+                    v_forward = 0.0
+                    v_right   = 0.0
+                    v_down    = -0.5
+                    yaw_rate  = 0.0
+
+                    vx = 0.0
+                    vy = 0.0
+                    vz = -0.5
+
+                else:
+
+                    # Position P-controller
+                    Kp_pos = 0.6
+
+                    vx = Kp_pos * (self.dpc_target[0] - dpc_state['px'])
+                    vy = Kp_pos * (self.dpc_target[1] - dpc_state['py'])
+                    vz = Kp_pos * (self.dpc_target[2] - dpc_state['pz'])
+
+                    # Velocity limits
+                    MAX_V = 2.0
+                    vx = max(-MAX_V, min(MAX_V, vx))
+                    vy = max(-MAX_V, min(MAX_V, vy))
+                    vz = max(-MAX_V, min(MAX_V, vz))
+
+                    # ===============================
+                    # Convert NED velocity -> Body velocity
+                    # ===============================
+
+                    yaw = dpc_state['yaw']  # radians
+
+                    v_forward =  math.cos(yaw) * vx + math.sin(yaw) * vy
+                    v_right   = -math.sin(yaw) * vx + math.cos(yaw) * vy
+                    v_down    = vz
+
+                # Yaw control
                 if self.state == "SCAN":
                     yaw_rate = SCAN_YAW_RATE
+                else:
+                        yaw_rate = 0.0
 
-                # Takeoff Assist: Force climb if low
-                if self.state == "TAKEOFF" and -dpc_state['pz'] < 2.0:
-                    thrust = 0.8 # Force climb
+                await self.interface.set_velocity_body(
+                    v_forward,
+                    v_right,
+                    v_down,
+                    yaw_rate
+                )
 
-                thrust = max(0.0, min(1.0, thrust))
 
-                await self.interface.set_attitude_rate(roll_rate, pitch_rate, yaw_rate, thrust)
+
+                if self.loops < 30:
+                    print(
+                        f"[DBG {self.loops}] "
+                        f"state={self.state} "
+                        f"pos=({dpc_state['px']:.2f},{dpc_state['py']:.2f},{dpc_state['pz']:.2f}) "
+                        f"vel_cmd=({vx:.2f},{vy:.2f},{vz:.2f})"
+                    )
+
 
                 # Logging
                 if self.logger:
                     self.logger.log_step(dpc_state, self.dpc_target, action_out, self.state, timestamp=current_time)
+
+                print("IMG:", img is None, "HEADLESS:", self.headless)
+
 
                 # Visualization
                 if img is not None and not self.headless:
@@ -703,9 +814,9 @@ class TheShow(Node):
                             cv2.circle(disp, (int(center[0]), int(center[1])), 10, (0, 0, 255), 2)
 
                     cv2.imshow("The Show", disp)
-                    cv2.waitKey(1)
+                    cv2.waitKey(16)
+                    print("next frame")
 
-                await asyncio.sleep(DT)
                 self.loops += 1
 
         except KeyboardInterrupt:
@@ -728,7 +839,7 @@ class TheShow(Node):
         current_alt = -state['pz']
 
         if self.state == "TAKEOFF":
-            if current_alt >= TARGET_ALT - 5.0: # Relaxed check
+            if current_alt >= TARGET_ALT - 0.2:
                 print("Altitude Reached. Switching to SCAN.")
                 self.state = "SCAN"
                 if self.logger: self.logger.log_event("SCAN_START", timestamp=timestamp)
