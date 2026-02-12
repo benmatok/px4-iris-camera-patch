@@ -33,7 +33,7 @@ class DPCFlightController:
     def compute_action(self, state_obs, target_cmd, tracking_uv=None, extra_yaw_rate=0.0):
         # Unpack State
         pz = state_obs.get('pz', 100.0) # Default if missing
-        vz = state_obs.get('vz', 0.0)   # Default if missing
+        vz = state_obs.get('vz')        # None if missing (Blind Mode)
         roll = state_obs['roll']
         pitch = state_obs['pitch']
         # Compatibility if keys missing (though they shouldn't be used)
@@ -108,13 +108,19 @@ class DPCFlightController:
             gamma_ref = math.radians(gamma_deg)
 
         # 3. Speed Control (Thrust)
-        speed_limit = 10.0
-        vz_cmd = speed_limit * math.sin(gamma_ref)
+        if vz is not None:
+            # Closed-Loop Speed Control
+            speed_limit = 10.0
+            vz_cmd = speed_limit * math.sin(gamma_ref)
 
-        vz_err = vz_cmd - vz
-        # Positive Error (Too fast/low) -> Increase Thrust
-        thrust_cmd = self.thrust_hover + self.kp_vz * vz_err
-        thrust_cmd = max(0.0, min(1.0, thrust_cmd))
+            vz_err = vz_cmd - vz
+            # Positive Error (Too fast/low) -> Increase Thrust
+            thrust_cmd = self.thrust_hover + self.kp_vz * vz_err
+            thrust_cmd = max(0.0, min(1.0, thrust_cmd))
+        else:
+            # Blind Mode (Open-Loop Thrust)
+            # Default to hover thrust to maintain forward momentum without overspeeding
+            thrust_cmd = self.thrust_hover
 
         # Limit Thrust in Steep Dive to prevent Forward Acceleration
         if pitch < math.radians(-45.0):
@@ -169,7 +175,12 @@ class DPCFlightController:
         ghost_paths = []
         path = []
         sim_z = pz
-        sim_vz = vz
+        if vz is not None:
+            sim_vz = vz
+        else:
+            # Blind Mode: Assume nominal dive speed for viz
+            sim_vz = 5.0 * math.sin(gamma_ref)
+
         for i in range(20):
              sim_z += sim_vz * self.dt
              path.append({'px': 0.0, 'py': 0.0, 'pz': sim_z})
