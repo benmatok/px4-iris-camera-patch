@@ -30,11 +30,11 @@ class DiveValidator:
 
         # Scenario / Sim
         self.sim = SimDroneInterface(self.projector)
-        # CLOSER TARGET: 20m
-        self.target_pos_sim_world = [20.0, 0.0, 0.0]
+        # CLOSER TARGET: 50m
+        self.target_pos_sim_world = [50.0, 0.0, 0.0]
 
         # Initial Pos for Blind Dive
-        drone_pos = [0.0, 0.0, 20.0]
+        drone_pos = [0.0, 0.0, 50.0]
         pitch, yaw = self.calculate_initial_orientation(drone_pos, self.target_pos_sim_world)
 
         self.sim.reset_to_scenario("Blind Dive", pos_x=drone_pos[0], pos_y=drone_pos[1], pos_z=drone_pos[2], pitch=pitch, yaw=yaw)
@@ -43,7 +43,7 @@ class DiveValidator:
         self.tracker = VisualTracker(self.projector)
 
         # Logic
-        self.mission = MissionManager(target_alt=20.0, enable_staircase=False)
+        self.mission = MissionManager(target_alt=50.0, enable_staircase=False)
 
         # Control
         self.controller = DPCFlightController(dt=DT)
@@ -61,7 +61,7 @@ class DiveValidator:
         camera_tilt = np.deg2rad(30.0)
 
         # PyGhostModel Convention: Positive Pitch = Nose Down.
-        pitch = camera_tilt - pitch_vec
+        pitch = pitch_vec - camera_tilt
 
         return pitch, yaw
 
@@ -78,7 +78,7 @@ class DiveValidator:
 
         ned['roll'] = sim_state['roll']
         # Sim: Positive Pitch = Nose Down. NED: Positive Pitch = Nose Up.
-        ned['pitch'] = -sim_state['pitch']
+        ned['pitch'] = sim_state['pitch']
         ned['yaw'] = (math.pi / 2.0) - sim_state['yaw']
         ned['yaw'] = (ned['yaw'] + math.pi) % (2 * math.pi) - math.pi
 
@@ -150,10 +150,14 @@ class DiveValidator:
                 'wz': s['wz']
             }
 
+            tracking_norm = None
+            if center:
+                tracking_norm = self.projector.pixel_to_normalized(center[0], center[1])
+
             action_out, _ = self.controller.compute_action(
                 state_obs,
                 dpc_target,
-                tracking_uv=center,
+                tracking_uv=tracking_norm,
                 extra_yaw_rate=extra_yaw
             )
 
@@ -184,8 +188,12 @@ class DiveValidator:
                 print(f"T={t:.2f} State={mission_state} Dist={dist:.2f} Pos=({s['px']:.1f}, {s['py']:.1f}, {s['pz']:.1f}) {uv_str}")
 
             # Terminate if collision (close enough)
-            if dist < 1.0: # Close collision
+            if dist < 2.0: # Close collision (Relaxed)
                  logger.info("Collision Detected! Stopping.")
+                 break
+
+            if s['pz'] < 0.2:
+                 logger.info("Ground Impact! Stopping.")
                  break
 
             # Estimate Target Pos (Absolute Sim Frame)

@@ -1,0 +1,33 @@
+INFO:sim_interface:SimDroneInterface initialized with PyGhostModel (Inlined).
+INFO:sim_interface:Reset to Scenario: Blind Dive
+INFO:mission_manager:MissionManager reset to TAKEOFF with Target Alt: 50.0
+INFO:__main__:TheShow initialized successfully.
+INFO:__main__:Mounting /app/web to /
+INFO:     Started server process [14676]
+INFO:     Waiting for application startup.
+INFO:__main__:Lifespan Startup...
+INFO:__main__:Starting Control Loop...
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+ERROR:__main__:Loop Error: 'vx'
+Traceback (most recent call last):
+  File "/app/theshow.py", line 471, in control_loop
+    payload = await asyncio.to_thread(self.compute_step)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jules/.pyenv/versions/3.12.12/lib/python3.12/asyncio/threads.py", line 25, in to_thread
+    return await loop.run_in_executor(None, func_call)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jules/.pyenv/versions/3.12.12/lib/python3.12/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/theshow.py", line 355, in compute_step
+    self.logger.log(current_time, p['type'], p['state'], s)
+  File "/app/theshow.py", line 41, in log
+    dvx = pred['vx'] - act['vx']
+          ~~~~^^^^^^
+KeyError: 'vx'
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:__main__:Lifespan Shutdown...
+INFO:     Application shutdown complete.
+INFO:     Finished server process [14676]
