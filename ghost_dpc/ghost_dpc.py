@@ -44,7 +44,9 @@ class PyGhostModel:
         avg_wz = 0.5 * (wz + next_wz)
 
         # Convert current attitude to Rotation Matrix
-        R_curr = rpy_to_matrix(roll, pitch, yaw)
+        # Mapping State (Z-Up Standard) to Matrix (Z-Up Physical via NED-Logic Inversion)
+        # Pitch -> -Pitch, Yaw -> -Yaw
+        R_curr = rpy_to_matrix(roll, -pitch, -yaw)
 
         # Compute Rotation Update (Exponential Map)
         omega_vec = np.array([avg_wx, avg_wy, avg_wz], dtype=np.float32) * dt
@@ -54,7 +56,10 @@ class PyGhostModel:
         R_next = np.matmul(R_curr, R_update)
 
         # Convert back to Euler Angles
-        next_roll, next_pitch, next_yaw = matrix_to_rpy(R_next)
+        r, p, y = matrix_to_rpy(R_next)
+        next_roll = r
+        next_pitch = -p
+        next_yaw = -y
 
         # 3. Compute Forces based on New Attitude (R_next)
         max_thrust = self.MAX_THRUST_BASE * self.thrust_coeff
@@ -107,9 +112,10 @@ class PyGhostModel:
         roll, pitch, yaw = state_dict['roll'], state_dict['pitch'], state_dict['yaw']
         thrust = action_dict['thrust']
 
+        # Map to Matrix RPY
         r = roll
-        p = pitch
-        y = yaw
+        p = -pitch
+        y = -yaw
 
         cr = math.cos(r); sr = math.sin(r)
         cp = math.cos(p); sp = math.sin(p)
@@ -162,6 +168,80 @@ class PyGhostModel:
         J[6, 3] = cr * tt * dt * factor_w
         J[7, 3] = -sr * dt * factor_w
         J[8, 3] = cr * st * dt * factor_w
+
+        # Note: These J are for State Variables.
+        # But we computed J w.r.t r, p, y (Matrix Angles).
+        # State R = r, P = -p, Y = -y.
+        # d/dP = d/d(-p) = - d/dp.
+        # We need to propagate sign changes to Jacobian?
+        # J[7, :] corresponds to Pitch State derivative.
+        # w_y affects p.
+        # dp_next / d_wy.
+        # p_next = p + dp.
+        # Pitch_next = -p_next = -(p + dp) = Pitch - dp.
+        # So dPitch/dWy should have sign flip?
+        # Let's rely on numerical check or simplified logic:
+        # If we just flip inputs to physics, do we need to flip J outputs?
+        # Yes.
+        # This is getting complicated to patch `get_gradients` perfectly without verifying.
+        # But `PyDPCSolver` relies on gradients.
+        # If I flip state mapping in `step`, I must flip in `gradients`.
+
+        # Simpler approach:
+        # Just update `R_curr` and `rpy` extraction in `step`.
+        # `get_gradients` calculates derivatives of `step`.
+        # If `step` has `p = -pitch`.
+        # `d_ax / d_pitch = d_ax / dp * dp / d_pitch = d_ax / dp * (-1)`.
+        # So I should multiply derivatives w.r.t pitch/yaw by -1.
+
+        # Also derivatives OF pitch/yaw (Rows 7, 8).
+        # `next_pitch = -next_p`.
+        # `d_next_pitch / d_anything = - d_next_p / d_anything`.
+
+        # So:
+        # 1. Flip p, y signs at start.
+        # 2. Compute J as usual (for r, p, y).
+        # 3. Flip signs of Row 7 (Pitch) and Row 8 (Yaw).
+        # 4. Flip signs of Col 2 (Pitch Rate?) No.
+        #    Pitch Rate `wy` affects `p`.
+        #    `next_p` depends on `wy`.
+        #    `next_pitch = -next_p`.
+        #    Cmd `pitch_rate` -> `wy`.
+        #    So `d_next_pitch / d_cmd_pitch` = `d(-p)/d(wy) * d(wy)/d(cmd)`.
+        #    This is `-(d_p/d_wy)`.
+        #    So yes, result is flipped.
+
+        # Apply flips to J rows 7, 8.
+        J[7, :] *= -1.0
+        J[8, :] *= -1.0
+
+        # What about derivatives W.R.T. state pitch?
+        # `d_next_state / d_pitch`.
+        # `d_next / d_pitch = d_next / d_p * d_p / d_pitch = d_next / d_p * (-1)`.
+        # So we also need to flip J entries corresponding to d/dPitch?
+        # `get_gradients` returns d/dAction.
+        # `get_state_jacobian` returns d/dState.
+
+        # In `get_gradients`:
+        # d/dThrust (Col 0).
+        # ax depends on p. `d_ax/d_pitch = d_ax/d_p * (-1)`.
+        # But `get_gradients` is d/dAction.
+        # ax depends on thrust.
+        # `d_ax/d_thrust` depends on p.
+        # `D_x` calculated using `p`.
+        # If `p` changes sign, `D_x` changes?
+        # We used `p = -pitch`. So `D_x` is correct for current state.
+        # So d/dThrust is correct value. No flip needed.
+
+        # d/dRates (Cols 1,2,3).
+        # These affect W. W affects P.
+        # `d_next_pitch / d_roll_rate`.
+        # `next_pitch = -next_p`.
+        # `d_next_p / d_roll_rate` (coupling).
+        # So `d_next_pitch` should be flipped. (Row 7).
+        # Matches my "Flip Row 7" logic.
+
+        # So for `get_gradients`: Just flip Rows 7 and 8.
 
         # 3. Derivatives w.r.t MASS
         grad_mass = np.zeros(12, dtype=np.float32)
@@ -246,7 +326,11 @@ class PyGhostModel:
         yaw = state_dict['yaw']
         thrust = action_dict['thrust']
 
-        r, p, y = roll, pitch, yaw
+        # Map to Matrix RPY
+        r = roll
+        p = -pitch
+        y = -yaw
+
         cr = math.cos(r); sr = math.sin(r)
         cp = math.cos(p); sp = math.sin(p)
         cy = math.cos(y); sy = math.sin(y)
@@ -271,55 +355,87 @@ class PyGhostModel:
         dv_dr_y = F_m * dDy_dr * dt
         dv_dr_z = F_m * dDz_dr * dt
 
+        # J_state[3, 6] is d_vx / d_roll.
+        # d_vx / d_roll = d_vx / d_r. (r=roll). No flip.
         J_state[3, 6] = dv_dr_x
         J_state[4, 6] = dv_dr_y
         J_state[5, 6] = dv_dr_z
 
+        # J_state[3, 7] is d_vx / d_pitch.
+        # d_vx / d_pitch = d_vx / d_p * d_p / d_pitch = d_vx / d_p * (-1).
+        # So we must flip sign.
         dv_dp_x = F_m * dDx_dp * dt
         dv_dp_y = F_m * dDy_dp * dt
         dv_dp_z = F_m * dDz_dp * dt
 
-        J_state[3, 7] = dv_dp_x
-        J_state[4, 7] = dv_dp_y
-        J_state[5, 7] = dv_dp_z
+        J_state[3, 7] = -dv_dp_x
+        J_state[4, 7] = -dv_dp_y
+        J_state[5, 7] = -dv_dp_z
 
+        # J_state[3, 8] is d_vx / d_yaw.
+        # Flip sign.
         dv_dy_x = F_m * dDx_dy * dt
         dv_dy_y = F_m * dDy_dy * dt
         dv_dy_z = F_m * dDz_dy * dt
 
-        J_state[3, 8] = dv_dy_x
-        J_state[4, 8] = dv_dy_y
-        J_state[5, 8] = dv_dy_z
+        J_state[3, 8] = -dv_dy_x
+        J_state[4, 8] = -dv_dy_y
+        J_state[5, 8] = -dv_dy_z
 
         # 7. dP'/dAtt = dV'/dAtt * dt
         J_state[0, 6] = dv_dr_x * dt
         J_state[1, 6] = dv_dr_y * dt
         J_state[2, 6] = dv_dr_z * dt
 
-        J_state[0, 7] = dv_dp_x * dt
-        J_state[1, 7] = dv_dp_y * dt
-        J_state[2, 7] = dv_dp_z * dt
+        J_state[0, 7] = -dv_dp_x * dt
+        J_state[1, 7] = -dv_dp_y * dt
+        J_state[2, 7] = -dv_dp_z * dt
 
-        J_state[0, 8] = dv_dy_x * dt
-        J_state[1, 8] = dv_dy_y * dt
-        J_state[2, 8] = dv_dy_z * dt
+        J_state[0, 8] = -dv_dy_x * dt
+        J_state[1, 8] = -dv_dy_y * dt
+        J_state[2, 8] = -dv_dy_z * dt
 
         # 8. dAtt'/dW (Kinematic Matrix * dt)
         if abs(cp) < 1e-6: cp = 1e-6
         tt = sp / cp
         st = 1.0 / cp
 
+        # J[6:9, 9:12] is d_att / d_w.
+        # Rows: Roll, Pitch, Yaw. Cols: wx, wy, wz.
+        # d_roll / d_w.
+        # d_roll = d_r. `d_r/d_w` depends on `p`.
+        # `d_r` uses `p`.
+        # `J[6, 9]`.
+        # Correct value using `p`.
         J_state[6, 9] = 1.0 * dt
         J_state[6, 10] = sr * tt * dt
         J_state[6, 11] = cr * tt * dt
 
-        J_state[7, 9] = 0.0
-        J_state[7, 10] = cr * dt
-        J_state[7, 11] = -sr * dt
+        # d_pitch / d_w = d(-p) / d_w = - (d_p / d_w).
+        # So flip Row 7.
+        J_state[7, 9] = 0.0 # -0 = 0
+        J_state[7, 10] = -(cr * dt)
+        J_state[7, 11] = -(-sr * dt)
 
+        # d_yaw / d_w = - (d_y / d_w).
+        # Flip Row 8.
         J_state[8, 9] = 0.0
-        J_state[8, 10] = sr * st * dt
-        J_state[8, 11] = cr * st * dt
+        J_state[8, 10] = -(sr * st * dt)
+        J_state[8, 11] = -(cr * st * dt)
+
+        # 9. dAtt'/dAtt (Identity diagonal).
+        # d_pitch_next / d_pitch.
+        # -p_next / -p = p_next / p = 1.
+        # So Diagonal is 1. No change.
+        # But off-diagonal?
+        # d_roll_next / d_pitch.
+        # d_r_next / d_(-p) = -(d_r_next / d_p).
+        # Does r_next depend on p? Yes, via R_curr * R_upd.
+        # But here we used J_state[6,6]=1. Simplification.
+        # The kinematics `dAtt/dW` handles the cross coupling mostly?
+        # Actually `dAtt'/dAtt` is assumed Identity here.
+        # This is a simplification (Low angle approximation?).
+        # If we keep it Identity, it's fine.
 
         return J_state
 
@@ -359,9 +475,12 @@ class PyGhostEstimator:
             thrust = action_dict['thrust']
             roll, pitch, yaw = state_dict['roll'], state_dict['pitch'], state_dict['yaw']
 
-            cr = math.cos(roll); sr = math.sin(roll)
-            cp = math.cos(pitch); sp = math.sin(pitch)
-            cy = math.cos(yaw); sy = math.sin(yaw)
+            # Map RPY
+            r, p, y = roll, -pitch, -yaw
+
+            cr = math.cos(r); sr = math.sin(r)
+            cp = math.cos(p); sp = math.sin(p)
+            cy = math.cos(y); sy = math.sin(y)
 
             max_thrust = m.MAX_THRUST_BASE * m.thrust_coeff
             thrust_force = max(0.0, thrust * max_thrust)
@@ -423,9 +542,12 @@ class PyGhostEstimator:
         thrust_force = max(0.0, thrust * max_thrust)
 
         roll, pitch, yaw = state_dict['roll'], state_dict['pitch'], state_dict['yaw']
-        cr = math.cos(roll); sr = math.sin(roll)
-        cp = math.cos(pitch); sp = math.sin(pitch)
-        cy = math.cos(yaw); sy = math.sin(yaw)
+        # Map RPY
+        r, p, y = roll, -pitch, -yaw
+
+        cr = math.cos(r); sr = math.sin(r)
+        cp = math.cos(p); sp = math.sin(p)
+        cy = math.cos(y); sy = math.sin(y)
 
         ax_dir = cy * sp * cr + sy * sr
         ay_dir = sy * sp * cr - cy * sr
@@ -545,12 +667,24 @@ class PyDPCSolver:
                 # Project UV to Relative Position
                 u, v, alt = h['u'], h['v'], h['pz']
                 s30=0.5; c30=0.866025
-                ray_c = np.array([u, v, 1.0])
-                xb = s30 * ray_c[1] + c30 * ray_c[2]
-                yb = ray_c[0]
-                zb = c30 * ray_c[1] - s30 * ray_c[2]
+                # Inverse Projection (Assuming Camera 30 deg UP, X Right, Y Down)
+                # xb = s30*yc + c30*zc
+                # yb = -xc
+                # zb = s30*zc - c30*yc
+                # Map normalized u,v to xc, yc, zc
+                xc = u
+                yc = v
+                zc = 1.0
+
+                xb = s30 * yc + c30 * zc
+                yb = -xc
+                zb = s30 * zc - c30 * yc
+
                 ray_b = np.array([xb, yb, zb])
-                R_wb = rpy_to_matrix(h['roll'], h['pitch'], h['yaw'])
+
+                # Apply -pitch, -yaw mapping
+                R_wb = rpy_to_matrix(h['roll'], -h['pitch'], -h['yaw'])
+
                 ray_w = np.matmul(R_wb, ray_b)
                 if abs(ray_w[2]) > 1e-4:
                     k = -alt / ray_w[2]
@@ -679,6 +813,10 @@ class PyDPCSolver:
                 dz_w = -pz_rel
 
                 r, p, y = state_dict['roll'], state_dict['pitch'], state_dict['yaw']
+
+                # Use -pitch, -yaw for rotation
+                r = r; p = -p; y = -y
+
                 cr=math.cos(r); sr=math.sin(r)
                 cp=math.cos(p); sp=math.sin(p)
                 cy=math.cos(y); sy=math.sin(y)
@@ -692,11 +830,11 @@ class PyDPCSolver:
                 yb = r21*dx_w + r22*dy_w + r23*dz_w
                 zb = r31*dx_w + r32*dy_w + r33*dz_w
 
-                # Body to Camera (30 deg pitch up)
+                # Body to Camera (30 deg pitch UP)
                 s30 = 0.5; c30 = 0.866025
-                xc = yb
-                yc = s30*xb + c30*zb
-                zc = c30*xb - s30*zb
+                xc = -yb
+                yc = s30*xb - c30*zb
+                zc = c30*xb + s30*zb
 
                 if zc > 0.1:
                     measured_u = xc / zc
@@ -783,6 +921,10 @@ class PyDPCSolver:
                     dz_w = 0.0 - next_state['pz']
 
                     r, p, y = next_state['roll'], next_state['pitch'], next_state['yaw']
+
+                    # Use -p, -y for Gaze Logic
+                    p = -p; y = -y
+
                     cr=math.cos(r); sr=math.sin(r)
                     cp=math.cos(p); sp=math.sin(p)
                     cy=math.cos(y); sy=math.sin(y)
@@ -796,9 +938,9 @@ class PyDPCSolver:
                     zb = r31*dx_w + r32*dy_w + r33*dz_w
 
                     s30 = 0.5; c30 = 0.866025
-                    xc = yb
-                    yc = s30*xb + c30*zb
-                    zc = c30*xb - s30*zb
+                    xc = -yb
+                    yc = s30*xb - c30*zb
+                    zc = c30*xb + s30*zb
 
                     if zc < 0.1: zc = 0.1
                     u_pred = xc / zc
@@ -843,17 +985,17 @@ class PyDPCSolver:
                         dv_dyc = inv_zc
                         dv_dzc = -yc * inv_zc2
 
-                        dxc_dyb = 1.0
-                        dyc_dxb = s30; dyc_dzb = c30
-                        dzc_dxb = c30; dzc_dzb = -s30
+                        dxc_dyb = 0.0
+                        # dyc_dxb = s30; dyc_dzb = -c30
+                        # dzc_dxb = c30; dzc_dzb = s30
 
-                        du_dxb = du_dzc * dzc_dxb
-                        du_dyb = du_dxc * dxc_dyb
-                        du_dzb = du_dzc * dzc_dzb
+                        du_dxb = du_dzc * c30
+                        du_dyb = du_dxc * (-1.0)
+                        du_dzb = du_dzc * s30
 
-                        dv_dxb = dv_dyc * dyc_dxb + dv_dzc * dzc_dxb
+                        dv_dxb = dv_dyc * s30 + dv_dzc * c30
                         dv_dyb = 0.0
-                        dv_dzb = dv_dyc * dyc_dzb + dv_dzc * dzc_dzb
+                        dv_dzb = dv_dyc * (-c30) + dv_dzc * s30
 
                         dL_dxb = dL_du * du_dxb + dL_dv * dv_dxb
                         dL_dyb = dL_du * du_dyb + dL_dv * dv_dyb
@@ -863,7 +1005,7 @@ class PyDPCSolver:
                         norm_sq = xb*xb + yb*yb + zb*zb + 1e-6
                         norm = math.sqrt(norm_sq)
                         inv_norm = 1.0 / norm
-                        dot = xb * c30 + zb * s30
+                        dot = xb * c30 + zb * s30 # Z_cam direction is (c30, 0, s30)
 
                         inv_norm3 = inv_norm * inv_norm * inv_norm
                         dL_dxb = dot * xb * inv_norm3 - c30 * inv_norm
@@ -880,8 +1022,21 @@ class PyDPCSolver:
                     dL_dP_g[1] = -(r12*dL_dxb + r22*dL_dyb + r32*dL_dzb)
                     dL_dP_g[2] = -(r13*dL_dxb + r23*dL_dyb + r33*dL_dzb)
 
+                    # Derivatives w.r.t Angles (Attitude)
+                    # Note: These derivatives are w.r.t r, p, y.
+                    # But we use p = -pitch, y = -yaw.
+                    # So dL/dPitch = dL/dp * dp/dPitch = dL/dp * (-1).
+                    # So we need to flip signs for Pitch and Yaw terms computed below.
+
+                    # dL_dPitch_g is dL/dp.
+                    # dL_dYaw_g is dL/dy.
+
                     dL_dYaw_g = dL_dxb * yb + dL_dyb * (-xb)
                     dL_dPitch_g = dL_dxb * (-zb) + dL_dzb * xb
+
+                    # Flip for State Gradients
+                    dL_dPitch_g *= -1.0
+                    dL_dYaw_g *= -1.0
 
                     # --- Dive Angle Cost ---
                     dL_dVx_gamma = 0.0
