@@ -763,8 +763,8 @@ class PyDPCSolver:
 
                     s30 = 0.5; c30 = 0.866025
                     xc = yb
-                    yc = s30*xb - c30*zb
-                    zc = c30*xb + s30*zb
+                    yc = s30*xb + c30*zb
+                    zc = c30*xb - s30*zb
 
                     if zc < 0.1: zc = 0.1
                     u_pred = xc / zc
@@ -810,8 +810,8 @@ class PyDPCSolver:
                         dv_dzc = -yc * inv_zc2
 
                         dxc_dyb = 1.0
-                        dyc_dxb = s30; dyc_dzb = -c30
-                        dzc_dxb = c30; dzc_dzb = s30
+                        dyc_dxb = s30; dyc_dzb = c30
+                        dzc_dxb = c30; dzc_dzb = -s30
 
                         du_dxb = du_dzc * dzc_dxb
                         du_dyb = du_dxc * dxc_dyb
@@ -867,11 +867,17 @@ class PyDPCSolver:
                     dL_dVz_gamma = 0.0
                     dL_dPz_gamma = 0.0
 
-                    # Only apply Dive Cost if we are significantly above the goal altitude
-                    if next_state['pz'] > goal_z + 1.0:
-                        # gamma_ref based on altitude: 20 deg at ground, 70 deg at 100m
-                        gamma_pz_clamped = max(0.0, min(next_state['pz'], 100.0))
-                        gamma_ref_deg = 20.0 + 50.0 * (gamma_pz_clamped / 100.0)
+                    # Only apply Dive Cost if we are above the goal altitude
+                    if next_state['pz'] > goal_z + 0.5:
+                        # gamma_ref based on RELATIVE altitude to goal
+                        # 0 deg at goal_z, 70 deg at goal_z + 100m
+                        rel_alt = next_state['pz'] - goal_z
+                        gamma_ratio = max(0.0, min(rel_alt / 100.0, 1.0))
+
+                        # User requested 20 deg convergence. But we must level off (0 deg) to hover.
+                        # We use 20 deg minimum for the "Approach" phase, but blend to 0 close to target?
+                        # Let's stick to 0 at goal to ensure safety.
+                        gamma_ref_deg = 70.0 * gamma_ratio
                         gamma_ref = gamma_ref_deg * math.pi / 180.0
 
                         vx = next_state['vx']
@@ -880,7 +886,7 @@ class PyDPCSolver:
                         h_speed = math.sqrt(vx*vx + vy*vy + 1e-6)
                         gamma = math.atan2(-vz, h_speed)
 
-                        w_gamma = 50.0
+                        w_gamma = 10.0
                         gamma_diff = gamma - gamma_ref
 
                         dL_dGamma = 2.0 * w_gamma * gamma_diff

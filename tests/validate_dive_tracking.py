@@ -59,8 +59,13 @@ class DiveValidator:
         # Camera Tilt is 30.0 (Up)
         camera_tilt = np.deg2rad(30.0)
 
-        # Body Pitch = Vec Pitch - Camera Tilt
-        pitch = pitch_vec - camera_tilt
+        # PyGhostModel Convention: Positive Pitch = Nose Down.
+        # Standard Math (atan2): Positive Angle = Up.
+        # Target Angle (Std) = Body Angle (Std) + Camera Tilt (Std)
+        # Body Angle (Std) = Target Angle (Std) - Camera Tilt (Std)
+        # Model Pitch = - Body Angle (Std) = Camera Tilt (Std) - Target Angle (Std)
+
+        pitch = camera_tilt - pitch_vec
 
         return pitch, yaw
 
@@ -76,7 +81,8 @@ class DiveValidator:
         ned['vz'] = -sim_state['vz']
 
         ned['roll'] = sim_state['roll']
-        ned['pitch'] = sim_state['pitch']
+        # Sim: Positive Pitch = Nose Down. NED: Positive Pitch = Nose Up.
+        ned['pitch'] = -sim_state['pitch']
         ned['yaw'] = (math.pi / 2.0) - sim_state['yaw']
         ned['yaw'] = (ned['yaw'] + math.pi) % (2 * math.pi) - math.pi
 
@@ -151,7 +157,7 @@ class DiveValidator:
             action_out, _ = self.controller.compute_action(
                 state_obs,
                 dpc_target,
-                raw_target_rel_ned=target_wp_ned,
+                tracking_uv=center,
                 extra_yaw_rate=extra_yaw
             )
 
