@@ -32,8 +32,8 @@ class DPCFlightController:
 
     def compute_action(self, state_obs, target_cmd, tracking_uv=None, extra_yaw_rate=0.0):
         # Unpack State
-        pz = state_obs['pz']
-        vz = state_obs['vz']
+        pz = state_obs.get('pz', 100.0) # Default if missing
+        vz = state_obs.get('vz', 0.0)   # Default if missing
         roll = state_obs['roll']
         pitch = state_obs['pitch']
         # Compatibility if keys missing (though they shouldn't be used)

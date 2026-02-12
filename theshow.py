@@ -272,8 +272,8 @@ class TheShow:
         # 4. Compute Control
         # Construct observed state for controller
         state_obs = {
-            'pz': s['pz'],
-            'vz': s['vz'],
+            # 'pz': s['pz'], # Position Z removed per user request
+            # 'vz': s['vz'], # Velocity Z removed per user request
             'roll': s['roll'],
             'pitch': s['pitch'],
             'yaw': s['yaw'],
