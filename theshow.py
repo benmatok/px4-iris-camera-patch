@@ -183,9 +183,10 @@ class TheShow:
         # Pitch sign: Nose Up is Positive in both.
         # Roll sign: Right Wing Down is Positive in both.
 
-        ned['roll'] = sim_state['roll']
-        ned['pitch'] = sim_state['pitch']
-        ned['yaw'] = (math.pi / 2.0) - sim_state['yaw']
+        ned['roll'] = sim_state.get('roll', 0.0)
+        ned['pitch'] = sim_state.get('pitch', 0.0)
+        sim_yaw = sim_state.get('yaw', 0.0)
+        ned['yaw'] = (math.pi / 2.0) - sim_yaw
 
         # Normalize Yaw
         ned['yaw'] = (ned['yaw'] + math.pi) % (2 * math.pi) - math.pi
