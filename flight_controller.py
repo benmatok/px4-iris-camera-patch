@@ -60,6 +60,32 @@ class DPCFlightController:
         dist_est = math.sqrt(dx*dx + dy*dy)
         alt_est = max(0.1, pz - goal_z)
 
+        # Improved Distance Estimation (Visual Angle)
+        # If tracking, we use the visual angle (measurable) + altitude (measurable)
+        # to estimate ground distance, rather than relying on the potentially perfect
+        # 3D coordinates from the simulation harness (unmeasurable in reality).
+        if tracking_uv:
+             _, v = tracking_uv
+             # Camera Tilt is fixed at 30 deg up
+             tilt_rad = math.radians(30.0)
+
+             # v is normalized tangent (y/z) in camera frame (Y-Down).
+             # Positive v = Down from Camera Axis.
+             angle_from_axis = math.atan(v)
+
+             # Depression Angle relative to Horizon
+             # Camera Axis Elevation = Pitch + Tilt
+             # Ray Elevation = Axis Elevation - Angle From Axis
+             # Depression = -Ray Elevation = Angle From Axis - (Pitch + Tilt)
+             depression = angle_from_axis - (pitch + tilt_rad)
+
+             if depression > 0.1: # Minimum angle to avoid singularity/horizon issues
+                  dist_visual = alt_est / math.tan(depression)
+                  # Blend or overwrite? Overwrite for realism.
+                  dist_est = dist_visual
+             # If depression is small/negative (looking up/level), fallback to state estimate (dist_est)
+             # or max range? Fallback to State Estimate is safer for control stability.
+
         # Guidance Logic: Biased LOS (Flare Strategy)
         # We fly steeper than LOS to approach from below, creating a parabolic flare.
         los = -math.atan2(alt_est, dist_est)
