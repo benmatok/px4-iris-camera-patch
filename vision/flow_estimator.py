@@ -124,7 +124,27 @@ class FlowVelocityEstimator:
         try:
             # Least Squares
             res, residuals, rank, s = np.linalg.lstsq(A, b, rcond=None)
-            return (res[0], res[1])
+            u_foe, v_foe = res[0], res[1]
+
+            # Check for sanity
+            # If coordinates are enormous, clamp them or treat as direction?
+            # User wants "direction on screen".
+            # If the FOE is very far (e.g. lateral motion), we should point to it.
+            # But the projector in theshow.py converts normalized coordinates to pixels:
+            # u_px = u_norm * fx + cx.
+            # If u_norm is 1e12, u_px is 1e15.
+            # The canvas drawing will likely fail or draw nothing.
+            # We should clamp the normalized coordinates to a "far" range that preserves direction.
+            # E.g. max 10.0 (10x FOV).
+
+            limit = 100.0 # Enough to be "off screen" but not numerical garbage
+            norm = np.sqrt(u_foe**2 + v_foe**2)
+            if norm > limit:
+                scale = limit / norm
+                u_foe *= scale
+                v_foe *= scale
+
+            return (u_foe, v_foe)
         except np.linalg.LinAlgError:
             return None
 

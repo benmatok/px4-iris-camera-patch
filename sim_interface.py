@@ -115,6 +115,53 @@ class PyGhostModel:
         ay = ay_thrust + ay_drag
         az = az_thrust + az_drag - self.G
 
+        # Simple Drag: F = -C * v
+        # With Wind: F = -C * (v - w)
+        # Assuming linear drag for now as per original code structure
+        ax_drag = (-self.drag_coeff * (vx - self.wind_x)) / self.mass
+        ay_drag = (-self.drag_coeff * (vy - self.wind_y)) / self.mass
+        az_drag = (-self.drag_coeff * vz) / self.mass
+
+        # Thrust is already force/mass (acceleration) in original code?
+        # Wait, original: ax_thrust = thrust_force * ax_dir / self.mass
+        # Original drag: ax_drag = -self.drag_coeff * (vx - self.wind_x)
+        # It seems original drag was Force (if coeff is large) or Accel?
+        # If drag_coeff is 0.1 and mass 1.0, it's 0.1 * v.
+        # Let's keep original structure but ensure wind is used.
+        # Original:
+        # ax_drag = -self.drag_coeff * (vx - self.wind_x)
+        # ay_drag = -self.drag_coeff * (vy - self.wind_y)
+        # az_drag = -self.drag_coeff * vz
+        # ax = ax_thrust + ax_drag
+        # Wait, if ax_drag is added to ax_thrust (accel), then ax_drag must be accel.
+        # But drag usually depends on mass?
+        # If 'drag_coeff' here is actually 'drag_coeff / mass' (linear drag constant), then it's fine.
+        # Given mass=1.0 default, it's ambiguous.
+        # Let's stick to the code I read:
+        # ax = ax_thrust + ax_drag
+        # ax_thrust is calculated with / self.mass.
+        # ax_drag was calculated WITHOUT / self.mass in the snippet I read?
+        # Let's check the read file again.
+
+        # Original Read:
+        # ax_thrust = thrust_force * ax_dir / self.mass
+        # ax_drag = -self.drag_coeff * (vx - self.wind_x)
+        # ax = ax_thrust + ax_drag
+
+        # So drag_coeff is treated as a force coefficient if we want F=ma, but here it's added directly to accel?
+        # If it is added to accel, then it is a "drag acceleration coefficient" (Kd/m).
+        # OR it's a bug in original code.
+        # But I should not change physics model behavior too much unless asked.
+        # I will just ensure wind is passed through.
+
+        ax_drag = -self.drag_coeff * (vx - self.wind_x)
+        ay_drag = -self.drag_coeff * (vy - self.wind_y)
+        az_drag = -self.drag_coeff * vz
+
+        ax = ax_thrust + ax_drag
+        ay = ay_thrust + ay_drag
+        az = az_thrust + az_drag - self.G
+
         next_vx = vx + ax * dt
         next_vy = vy + ay * dt
         next_vz = vz + az * dt
@@ -138,13 +185,17 @@ class SimDroneInterface:
         self.thrust_coeff = 1.0
         self.tau = 0.1
 
+        # Wind parameters (Default 0, set via reset or init)
+        self.wind_x = 0.0
+        self.wind_y = 0.0
+
         self.model = PyGhostModel(
             mass=self.mass,
             drag=self.drag_coeff,
             thrust_coeff=self.thrust_coeff,
             tau=self.tau,
-            wind_x=0.0,
-            wind_y=0.0
+            wind_x=self.wind_x,
+            wind_y=self.wind_y
         )
 
         self.state = {
@@ -170,7 +221,14 @@ class SimDroneInterface:
             self.state['pitch'] = kwargs.get('pitch', 0.0)
             self.state['yaw'] = kwargs.get('yaw', 0.0)
             self.state['wx'] = 0.0; self.state['wy'] = 0.0; self.state['wz'] = 0.0
-            logger.info(f"Reset to Scenario: {name}")
+
+            # Apply Wind if provided
+            self.wind_x = kwargs.get('wind_x', 0.0)
+            self.wind_y = kwargs.get('wind_y', 0.0)
+            self.model.wind_x = self.wind_x
+            self.model.wind_y = self.wind_y
+
+            logger.info(f"Reset to Scenario: {name} with Wind: ({self.wind_x}, {self.wind_y})")
         else:
             logger.warning(f"Unknown Scenario: {name}")
 
