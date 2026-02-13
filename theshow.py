@@ -20,6 +20,7 @@ try:
     from vision.projection import Projector
     from sim_interface import SimDroneInterface
     from visual_tracker import VisualTracker
+    from vision.flow_estimator import FlowVelocityEstimator
     from flight_controller import DPCFlightController
     from mission_manager import MissionManager
 except ImportError as e:
@@ -48,6 +49,7 @@ class TheShow:
 
             # Perception
             self.tracker = VisualTracker(self.projector)
+            self.flow_estimator = FlowVelocityEstimator(self.projector)
 
             # Logic
             self.mission = MissionManager()
@@ -270,6 +272,19 @@ class TheShow:
 
         mission_state, dpc_target, extra_yaw = self.mission.update(sim_state_rel, (center, target_wp_sim))
 
+        # Update Flow Estimator
+        # dpc_state_ned_abs is current state
+        # body rates needed: s['wx'], s['wy'], s['wz']
+        body_rates = (s['wx'], s['wy'], s['wz'])
+        foe = self.flow_estimator.update(dpc_state_ned_abs, body_rates, DT)
+
+        foe_px = None
+        if foe:
+            u_norm, v_norm = foe
+            u_px = u_norm * self.projector.fx + self.projector.cx
+            v_px = v_norm * self.projector.fy + self.projector.cy
+            foe_px = {'u': u_px, 'v': v_px}
+
         # 4. Compute Control
         # Construct observed state for controller
         state_obs = {
@@ -434,6 +449,7 @@ class TheShow:
             'target': target_viz_ned, # Absolute for Viz (Red)
             'sim_target': sim_target_ned, # Absolute NED (Green)
             'tracker': {'u': center[0] if center else 0, 'v': center[1] if center else 0, 'size': radius},
+            'flight_direction': foe_px,
             'dpc_error': dpc_error,
             'ghosts': ghosts_viz,
             'paused': self.paused

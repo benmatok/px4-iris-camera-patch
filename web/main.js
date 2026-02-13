@@ -381,6 +381,32 @@ function updateState(data) {
         ctx.strokeStyle = 'white';
         ctx.stroke();
     }
+
+    // Draw Flight Direction (Blue Cross)
+    if (data.flight_direction) {
+        const u = data.flight_direction.u;
+        const v = data.flight_direction.v;
+        const scale = 240 / 640;
+
+        const cx = u * scale;
+        const cy = v * scale;
+        const size = 10;
+
+        ctx.strokeStyle = '#00ffff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        // X
+        ctx.moveTo(cx - size, cy - size);
+        ctx.lineTo(cx + size, cy + size);
+        ctx.moveTo(cx + size, cy - size);
+        ctx.lineTo(cx - size, cy + size);
+        ctx.stroke();
+
+        // Label
+        ctx.fillStyle = '#00ffff';
+        ctx.font = '10px Arial';
+        ctx.fillText('FOE', cx + size + 2, cy);
+    }
 }
 
 function animate() {
