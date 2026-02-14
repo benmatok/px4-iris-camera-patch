@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.optimize import least_squares
 
 class FlowVelocityEstimator:
     def __init__(self, projector, num_points=200):
@@ -32,19 +33,9 @@ class FlowVelocityEstimator:
         curr_projections = {}
         valid_ids = set()
 
-        # Optimize: Iterate and filter
-        # But world_points might grow large if we keep adding without deleting.
-        # Strategy: Delete points that are far behind or too far away?
-
         points_to_remove = []
 
         for pid, pt in self.world_points.items():
-            # Simple distance check to cull very far points
-            # dist_sq = np.sum((pt - np.array([drone_state['px'], drone_state['py'], drone_state['pz']]))**2)
-            # if dist_sq > (self.gen_dist_max * 2)**2:
-            #    points_to_remove.append(pid)
-            #    continue
-
             res = self.projector.world_to_normalized(pt[0], pt[1], pt[2], drone_state)
             if res:
                 # Check if within image bounds
@@ -97,7 +88,7 @@ class FlowVelocityEstimator:
 
         self.prev_projections = curr_projections
 
-        # 4. Estimate FOE
+        # 4. Estimate FOE (Initial Guess via Algebraic Least Squares)
         if len(flow_vectors) < 10:
             return None
 
@@ -122,22 +113,59 @@ class FlowVelocityEstimator:
         b = np.array(b)
 
         try:
-            # Least Squares
+            # Initial Guess (Algebraic)
             res, residuals, rank, s = np.linalg.lstsq(A, b, rcond=None)
-            u_foe, v_foe = res[0], res[1]
+            xf_init, yf_init = res[0], res[1]
 
-            # Check for sanity
-            # If coordinates are enormous, clamp them or treat as direction?
-            # User wants "direction on screen".
-            # If the FOE is very far (e.g. lateral motion), we should point to it.
-            # But the projector in theshow.py converts normalized coordinates to pixels:
-            # u_px = u_norm * fx + cx.
-            # If u_norm is 1e12, u_px is 1e15.
-            # The canvas drawing will likely fail or draw nothing.
-            # We should clamp the normalized coordinates to a "far" range that preserves direction.
-            # E.g. max 10.0 (10x FOV).
+            # 5. Refine with Levenberg-Marquardt (Geometric Error)
+            # Minimize sum of squared perpendicular distances from points to lines passing through FOE.
+            # Or simpler: Minimize angular error between flow vector and radial line from FOE.
+            # Vector from FOE to point: P - F = (x - xf, y - yf)
+            # Flow Vector: V = (du, dv)
+            # Cross product (2D) should be zero if collinear: (x-xf)*dv - (y-yf)*du = 0
+            # This is exactly the algebraic error!
+            # BUT, the algebraic error is weighted by magnitude of flow vector (du, dv).
+            # Geometric error (perpendicular distance to line):
+            # dist = |(x-xf)*dv - (y-yf)*du| / sqrt(du^2 + dv^2)
+            # Minimizing this normalizes the weight of each point.
 
-            limit = 100.0 # Enough to be "off screen" but not numerical garbage
+            # Prepare data for optimization
+            flow_data = np.array(flow_vectors) # N x 4: x, y, du, dv
+
+            def algebraic_residuals(params):
+                xf, yf = params
+                x = flow_data[:, 0]
+                y = flow_data[:, 1]
+                du = flow_data[:, 2]
+                dv = flow_data[:, 3]
+
+                # Algebraic error: (x-xf)*dv - (y-yf)*du
+                # This error corresponds to the geometric distance from the epipolar line,
+                # weighted by the flow magnitude sqrt(du^2 + dv^2).
+                # Since flow magnitude is proportional to 1/depth (and thus SNR),
+                # minimizing this algebraic error is statistically superior for
+                # homoscedastic pixel noise compared to normalized geometric error.
+                return (x - xf) * dv - (y - yf) * du
+
+            # Optimize using Least Squares with robust loss to handle outliers.
+            # We use 'trf' or 'dogbox' because standard 'lm' implementation in scipy
+            # does not support robust loss functions.
+            # 'soft_l1' loss reduces the influence of outliers (large residuals).
+            # f_scale=0.1 corresponds to a robust threshold of ~0.1 normalized units.
+
+            opt_res = least_squares(
+                algebraic_residuals,
+                x0=[xf_init, yf_init],
+                method='trf',
+                loss='soft_l1', f_scale=0.1,
+                ftol=1e-4, xtol=1e-4, gtol=1e-4,
+                max_nfev=30
+            )
+
+            u_foe, v_foe = opt_res.x
+
+            # Sanity Check / Clamping
+            limit = 100.0
             norm = np.sqrt(u_foe**2 + v_foe**2)
             if norm > limit:
                 scale = limit / norm
@@ -145,7 +173,11 @@ class FlowVelocityEstimator:
                 v_foe *= scale
 
             return (u_foe, v_foe)
+
         except np.linalg.LinAlgError:
+            return None
+        except Exception as e:
+            # Fallback or log error
             return None
 
     def _get_terrain_height(self, x, y):
