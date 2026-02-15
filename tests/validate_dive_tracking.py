@@ -149,7 +149,11 @@ class DiveValidator:
 
             # 4. Compute Control
             state_obs = {
+                'px': s['px'],
+                'py': s['py'],
                 'pz': s['pz'],
+                'vx': s['vx'],
+                'vy': s['vy'],
                 'vz': s['vz'],
                 'roll': s['roll'],
                 'pitch': s['pitch'],

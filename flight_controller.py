@@ -37,6 +37,8 @@ class DPCFlightController:
         # Blind Mode Estimation
         self.est_pz = 100.0 # Initial assumption
         self.est_vz = 0.0
+        self.est_vx = 0.0
+        self.est_vy = 0.0
 
         # GDPC / Estimator State
         self.estimated_params = {
@@ -54,6 +56,8 @@ class DPCFlightController:
         self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
         self.est_pz = 100.0
         self.est_vz = 0.0
+        self.est_vx = 0.0
+        self.est_vy = 0.0
         self.flight_phase = "DIVE"
         logger.info(f"DPCFlightController reset. Mode: {self.mode}")
 
@@ -130,26 +134,68 @@ class DPCFlightController:
 
         # If Horizontal Velocity is 0 (Blind Mode), estimate from Pitch and VZ
         # Assume coordinated flight: V_xy = V_z / tan(pitch)
-        est_vx = obs_vx
-        est_vy = obs_vy
 
-        if abs(obs_vx) < 0.1 and abs(obs_vy) < 0.1 and abs(pitch) > 0.1:
-             # Estimate V_xy
-             # V_z is negative in dive. Pitch is negative. tan(pitch) is negative. V_xy is positive.
-             v_xy_est = obs_vz / math.tan(pitch)
-             # Clamp to reasonable values
-             v_xy_est = max(0.0, min(30.0, v_xy_est))
+        # If OBSERVED velocity exists (Full Mode), update estimates to truth
+        if abs(obs_vx) > 0.1 or abs(obs_vy) > 0.1:
+             self.est_vx = obs_vx
+             self.est_vy = obs_vy
+        else:
+             # Blind Mode: Estimate or Decay
+             if pitch < -0.1: # Coordinated Dive
+                 # V_z is negative in dive. Pitch is negative. tan(pitch) is negative. V_xy is positive.
+                 # Avoid div by zero (pitch < -0.1 ensures abs(tan) > 0.1)
+                 v_xy_est = obs_vz / math.tan(pitch)
+                 v_xy_est = max(0.0, min(30.0, v_xy_est))
 
-             est_vx = v_xy_est * math.cos(yaw)
-             est_vy = v_xy_est * math.sin(yaw)
+                 # Smooth update to filter noise
+                 alpha = 0.1
+                 vx_new = v_xy_est * math.cos(yaw)
+                 vy_new = v_xy_est * math.sin(yaw)
+                 self.est_vx = (1.0 - alpha) * self.est_vx + alpha * vx_new
+                 self.est_vy = (1.0 - alpha) * self.est_vy + alpha * vy_new
+             else:
+                 # Braking or Level: Decay estimates (drag simulation) + Gravity Decel (Pitch)
+                 # Drag coeff 0.1 means speed decays by exp(-0.1*dt) per step
+                 decay = 0.995
 
-        # Use observed velocity for control logic to avoid regression in behavior
-        # (The controller thresholds are tuned for observed velocity, which might be underestimated in Blind Mode)
-        v_total = math.sqrt(obs_vx**2 + obs_vy**2 + obs_vz**2)
+                 # Gravity Deceleration along horizontal plane: g * sin(pitch)
+                 # If pitch > 0 (Nose Up), we decelerate.
+                 # v_horz_new = v_horz_old * decay - (g * sin(pitch) * dt)
+                 # We apply this scaling to est_vx and est_vy components.
+
+                 v_horz = math.sqrt(self.est_vx**2 + self.est_vy**2)
+                 if v_horz > 0.1:
+                     # Calculate deceleration due to pitch
+                     g = 9.81
+                     decel = g * math.sin(pitch) * self.dt
+
+                     # Apply drag decay first
+                     v_horz_dragged = v_horz * decay
+
+                     # Apply pitch decel (subtract if pitch>0, add if pitch<0 but we are in 'else' so likely pitch>= -0.1)
+                     # Wait, if pitch is positive (brake), sin(pitch)>0. We want to reduce speed.
+                     v_horz_new = v_horz_dragged - decel
+
+                     # Ensure we don't reverse direction or go negative due to over-subtraction
+                     v_horz_new = max(0.0, v_horz_new)
+
+                     scale = v_horz_new / v_horz
+                     self.est_vx *= scale
+                     self.est_vy *= scale
+                 else:
+                     self.est_vx *= decay
+                     self.est_vy *= decay
+
+        est_vx = self.est_vx
+        est_vy = self.est_vy
+
+        # Use ESTIMATED total velocity for control logic in Blind Mode to ensure safety
+        # (If we use 0, we dive dangerously close without braking)
+        v_total = math.sqrt(est_vx**2 + est_vy**2 + obs_vz**2)
 
         # State Transitions
         depression_angle = math.atan2(alt_est, dist_est)
-        brake_dist = max(15.0, v_total * 2.5)
+        brake_dist = max(15.0, v_total * 4.0)
 
         if self.flight_phase == "DESCEND":
             # Exit DESCEND when angle is shallow enough (< 50 deg) - Hysteresis
@@ -174,13 +220,13 @@ class DPCFlightController:
                 logger.info(f"Switching to APPROACH phase (Dist: {dist_est:.1f}, V: {v_total:.1f})")
 
             # Reset to DIVE if distance is large (e.g. false trigger or lost track)
-            if dist_3d > brake_dist + 20.0:
+            if dist_3d > brake_dist + 50.0:
                 self.flight_phase = "DIVE"
                 logger.info(f"Resetting to DIVE phase (Dist3D: {dist_3d:.1f})")
 
         elif self.flight_phase == "APPROACH":
              # Reset to DIVE if distance is large
-            if dist_3d > 30.0:
+            if dist_3d > 60.0:
                 self.flight_phase = "DIVE"
                 logger.info(f"Resetting to DIVE phase (Dist3D: {dist_3d:.1f})")
 
@@ -241,9 +287,9 @@ class DPCFlightController:
 
         # 3. Speed Control (Thrust) - active in DIVE, APPROACH and DESCEND
         # In BRAKE, we override thrust manually above.
-        if self.flight_phase != "BRAKE" and self.flight_phase != "DESCEND" and vz is not None:
+        if self.flight_phase != "BRAKE" and self.flight_phase != "DESCEND":
             vz_cmd = speed_limit * math.sin(gamma_ref)
-            vz_err = vz_cmd - vz
+            vz_err = vz_cmd - obs_vz
             thrust_cmd = self.thrust_hover + self.kp_vz * vz_err
             thrust_cmd = max(0.1, min(1.0, thrust_cmd))
 
