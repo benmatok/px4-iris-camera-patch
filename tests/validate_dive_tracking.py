@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 DT = 0.05
 
 class DiveValidator:
-    def __init__(self, use_ground_truth=True, use_blind_mode=False):
+    def __init__(self, use_ground_truth=True, use_blind_mode=False, init_alt=50.0, init_dist=150.0):
         self.use_ground_truth = use_ground_truth
         self.use_blind_mode = use_blind_mode
 
@@ -31,11 +31,12 @@ class DiveValidator:
 
         # Scenario / Sim
         self.sim = SimDroneInterface(self.projector)
-        # CLOSER TARGET: 150m (User Request)
-        self.target_pos_sim_world = [150.0, 0.0, 0.0]
 
-        # Initial Pos for Blind Dive
-        drone_pos = [0.0, 0.0, 50.0]
+        # Target at X=init_dist, Y=0, Z=0
+        self.target_pos_sim_world = [init_dist, 0.0, 0.0]
+
+        # Initial Pos: X=0, Y=0, Z=init_alt
+        drone_pos = [0.0, 0.0, init_alt]
         pitch, yaw = self.calculate_initial_orientation(drone_pos, self.target_pos_sim_world)
 
         self.sim.reset_to_scenario("Blind Dive", pos_x=drone_pos[0], pos_y=drone_pos[1], pos_z=drone_pos[2], pitch=pitch, yaw=yaw)
@@ -44,7 +45,12 @@ class DiveValidator:
         self.tracker = VisualTracker(self.projector)
 
         # Logic
-        self.mission = MissionManager(target_alt=50.0, enable_staircase=False)
+        # Mission target altitude usually follows init_alt but clamped?
+        # For dive, we usually want to reach ~0-2m.
+        # MissionManager target_alt sets the cruise/hover altitude if not diving?
+        # Let's just pass init_alt as a reference if needed, but MissionManager defaults to 100.
+        # Original code had target_alt=50.0 (same as init_alt).
+        self.mission = MissionManager(target_alt=init_alt, enable_staircase=False)
 
         # Control
         self.controller = DPCFlightController(dt=DT)
@@ -71,7 +77,7 @@ class DiveValidator:
         # Wait, if Sim Pitch is - = Nose Up.
         # Then we need -48.
         # Let's try positive.
-        pitch = -(pitch_vec - camera_tilt)
+        pitch = pitch_vec - camera_tilt
 
         return pitch, yaw
 
@@ -305,15 +311,15 @@ def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_t
 
 if __name__ == "__main__":
     # Run with Ground Truth (Full State)
-    validator_gt = DiveValidator(use_ground_truth=True, use_blind_mode=False)
+    validator_gt = DiveValidator(use_ground_truth=True, use_blind_mode=False, init_alt=50.0, init_dist=150.0)
     hist_gt = validator_gt.run(duration=25.0)
 
     # Run with Vision (Full State)
-    validator_vis = DiveValidator(use_ground_truth=False, use_blind_mode=False)
+    validator_vis = DiveValidator(use_ground_truth=False, use_blind_mode=False, init_alt=50.0, init_dist=150.0)
     hist_vis = validator_vis.run(duration=25.0)
 
     # Run with Blind Mode (Web App Logic)
-    validator_blind = DiveValidator(use_ground_truth=True, use_blind_mode=True) # Use GT tracking for fair comparison of control
+    validator_blind = DiveValidator(use_ground_truth=True, use_blind_mode=True, init_alt=50.0, init_dist=150.0) # Use GT tracking for fair comparison of control
     hist_blind = validator_blind.run(duration=25.0)
 
     plot_results(hist_gt, hist_vis, hist_blind)

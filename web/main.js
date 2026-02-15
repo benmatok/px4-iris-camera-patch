@@ -190,6 +190,19 @@ const tgtYInput = document.getElementById('tgt-y');
 const tgtZInput = document.getElementById('tgt-z');
 const updateTgtBtn = document.getElementById('update-tgt-btn');
 
+document.querySelectorAll('.scen-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const alt = parseFloat(btn.getAttribute('data-alt'));
+        const dist = parseFloat(btn.getAttribute('data-dist'));
+
+        // Update inputs
+        initAltInput.value = alt;
+        initDistInput.value = dist;
+
+        sendMsg('reset', { altitude: alt, distance: dist });
+    });
+});
+
 function sendMsg(type, payload = {}) {
     if (ws.readyState === WebSocket.OPEN) {
         const msg = JSON.stringify({ type, ...payload });

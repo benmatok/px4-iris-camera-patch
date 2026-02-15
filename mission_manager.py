@@ -45,7 +45,7 @@ class MissionManager:
             elif current_alt >= self.target_alt - 5.0:
                 self.state = "SCAN"
 
-        elif self.state == "SCAN":
+        if self.state == "SCAN":
             extra_yaw = math.radians(15.0)
             self.dpc_target = [0.0, 0.0, self.target_alt]
 
@@ -53,7 +53,7 @@ class MissionManager:
                 self.state = "HOMING"
                 extra_yaw = 0.0
 
-        elif self.state == "HOMING":
+        if self.state == "HOMING":
             if target_wp:
                 # Calculate Lateral Distance
                 lat_dist = math.sqrt(target_wp[0]**2 + target_wp[1]**2)
