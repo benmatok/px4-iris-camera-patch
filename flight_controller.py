@@ -192,11 +192,11 @@ class DPCFlightController:
         # 3. Speed Control (Thrust)
         if vz is not None:
             # Closed-Loop Speed Control
-            speed_limit = 10.0
+            speed_limit = 13.5
             vz_cmd = speed_limit * math.sin(gamma_ref)
             vz_err = vz_cmd - vz
             thrust_cmd = self.thrust_hover + self.kp_vz * vz_err
-            thrust_cmd = max(0.0, min(1.0, thrust_cmd))
+            thrust_cmd = max(0.1, min(1.0, thrust_cmd))
         else:
             thrust_cmd = self.thrust_hover
 
