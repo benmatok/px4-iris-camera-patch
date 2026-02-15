@@ -425,11 +425,21 @@ class TheShow:
         if ghost_paths:
             for path in ghost_paths:
                 new_path = []
+                if not path:
+                    continue
+
+                # Calculate offset to anchor trajectory to drone's true position
+                # ghost path uses estimated Z, drone uses true Z
+                # We want trajectory to visually emanate from the drone
+                ghost_start_z = path[0]['pz']
+                true_start_z = s['pz']
+                delta_z = true_start_z - ghost_start_z
+
                 for pt in path:
                     # Construct Sim Absolute
                     sim_abs_x = s['px'] + pt['px']
                     sim_abs_y = s['py'] + pt['py']
-                    sim_abs_z = pt['pz']
+                    sim_abs_z = pt['pz'] + delta_z
 
                     # Convert to NED
                     ned_pos = self.sim_pos_to_ned_pos([sim_abs_x, sim_abs_y, sim_abs_z])
