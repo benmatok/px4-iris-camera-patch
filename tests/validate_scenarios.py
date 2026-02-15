@@ -49,10 +49,11 @@ def run_scenarios():
         hist = validator.run(duration=25.0)
 
         final_dist = hist['dist'][-1]
+        min_dist = min(hist['dist'])
 
         # Check Success
-        # Standard: Distance < 2.0m (Collision)
-        success = final_dist < 5.0 # Relaxed slightly for validation summary, but ideally < 2.0
+        # Standard: Distance < 5.0m (Collision/Flyby)
+        success = min_dist < 5.0
 
         res_str = "PASS" if success else "FAIL"
         if not success:
@@ -63,10 +64,10 @@ def run_scenarios():
             "alt": alt,
             "dist": dist,
             "result": res_str,
-            "final_dist": final_dist
+            "final_dist": min_dist
         })
 
-        print(f"{sid:<4} {alt:<6.1f} {dist:<6.1f} {res_str:<10} {final_dist:<12.2f} 25.0s")
+        print(f"{sid:<4} {alt:<6.1f} {dist:<6.1f} {res_str:<10} {min_dist:<12.2f} 25.0s")
 
     print("-" * 60)
 

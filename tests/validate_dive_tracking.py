@@ -45,11 +45,6 @@ class DiveValidator:
         self.tracker = VisualTracker(self.projector)
 
         # Logic
-        # Mission target altitude usually follows init_alt but clamped?
-        # For dive, we usually want to reach ~0-2m.
-        # MissionManager target_alt sets the cruise/hover altitude if not diving?
-        # Let's just pass init_alt as a reference if needed, but MissionManager defaults to 100.
-        # Original code had target_alt=50.0 (same as init_alt).
         self.mission = MissionManager(target_alt=init_alt, enable_staircase=False)
 
         # Control
@@ -77,7 +72,7 @@ class DiveValidator:
         # Wait, if Sim Pitch is - = Nose Up.
         # Then we need -48.
         # Let's try positive.
-        pitch = pitch_vec - camera_tilt
+        pitch = -(pitch_vec - camera_tilt)
 
         return pitch, yaw
 
