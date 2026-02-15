@@ -13,6 +13,22 @@ class FlowVelocityEstimator:
         self.gen_dist_min = 5.0
         self.gen_dist_max = 150.0 # Extended for DTM raycasting
 
+        # Calculate Body Forward direction in Normalized Camera Coordinates
+        # Body Forward = [1, 0, 0] in Body Frame
+        # P_c = R_c2b.T @ P_b
+        # R_c2b maps Camera to Body. Transpose maps Body to Camera.
+        P_b = np.array([1.0, 0.0, 0.0])
+        P_c = self.projector.R_c2b.T @ P_b
+
+        # Project to Normalized Image Plane (Z is forward)
+        if P_c[2] > 0.001:
+            self.prior_u = P_c[0] / P_c[2]
+            self.prior_v = P_c[1] / P_c[2]
+        else:
+            # Fallback if camera looks backward relative to body (unlikely)
+            self.prior_u = 0.0
+            self.prior_v = 0.0
+
     def update(self, drone_state, body_rates, dt):
         """
         Updates the estimator with new drone state and calculates FOE.
@@ -145,7 +161,24 @@ class FlowVelocityEstimator:
                 # Since flow magnitude is proportional to 1/depth (and thus SNR),
                 # minimizing this algebraic error is statistically superior for
                 # homoscedastic pixel noise compared to normalized geometric error.
-                return (x - xf) * dv - (y - yf) * du
+                base_residuals = (x - xf) * dv - (y - yf) * du
+
+                # Add Regularization Prior towards Body Forward (Yaw/Sideslip = 0)
+                # We assume the drone flies primarily forward relative to its body.
+                # This corresponds to regularizing the horizontal component (x_f) towards the
+                # projected Body Forward direction (self.prior_u).
+                # We do NOT regularize the vertical component (y_f) as Angle of Attack varies significantly.
+
+                prior_weight_yaw = 0.1
+                prior_weight_pitch = 0.0 # Free pitch
+
+                # Residuals for prior
+                prior_x = prior_weight_yaw * (xf - self.prior_u)
+                prior_y = prior_weight_pitch * (yf - self.prior_v)
+
+                priors = np.array([prior_x, prior_y])
+
+                return np.concatenate([base_residuals, priors])
 
             # Optimize using Least Squares with robust loss to handle outliers.
             # We use 'trf' or 'dogbox' because standard 'lm' implementation in scipy
