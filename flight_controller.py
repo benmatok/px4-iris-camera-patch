@@ -4,10 +4,21 @@ import math
 
 logger = logging.getLogger(__name__)
 
+# Try to import step_cpu for GDPC
+try:
+    from drone_env.drone import step_cpu
+    HAS_SIM = True
+except ImportError:
+    step_cpu = None
+    HAS_SIM = False
+    logger.warning("Could not import step_cpu from drone_env.drone. GDPC mode will not work.")
+
 class DPCFlightController:
-    def __init__(self, dt=0.05):
+    def __init__(self, dt=0.05, mode='PID'):
         self.dt = dt
-        # Gains
+        self.mode = mode
+
+        # PID Gains
         self.k_yaw = 2.0
         self.k_roll = 2.0
 
@@ -23,23 +34,50 @@ class DPCFlightController:
         self.kp_pitch_v = 1.0
         self.pitch_bias_max = math.radians(15.0)
 
+        # FOE Bias Gains
+        self.k_foe_yaw = 2.0
+        self.k_foe_pitch = 1.0
+
         # State Variables
         self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
 
+        # GDPC / Estimator State
+        self.estimated_params = {
+            'mass': 1.0,
+            'drag_coeff': 0.1,
+            'thrust_coeff': 1.0
+        }
+
+        # GDPC Simulation Buffer (Allocated on first use)
+        self.gdpc_buffer = None
+        self.num_ghosts = 20 # Number of parallel rollouts
+        self.horizon = 20    # Steps to look ahead
+
     def reset(self):
         self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
-        logger.info("DPCFlightController (Simple) reset")
+        # Reset estimator? Maybe keep learned params.
+        logger.info(f"DPCFlightController reset. Mode: {self.mode}")
 
+    def compute_action(self, state_obs, target_cmd, tracking_uv=None, extra_yaw_rate=0.0, foe_uv=None):
+        """
+        Compute control action based on state and target.
+        """
 
-    def compute_action(self, state_obs, target_cmd, tracking_uv=None, extra_yaw_rate=0.0):
+        if self.mode == 'GDPC' and HAS_SIM:
+            return self.compute_action_gdpc(state_obs, target_cmd, tracking_uv, foe_uv, extra_yaw_rate)
+
+        # Default PID / Heuristic Control
+        return self._compute_heuristic_action(state_obs, target_cmd, tracking_uv, extra_yaw_rate, foe_uv)
+
+    def _compute_heuristic_action(self, state_obs, target_cmd, tracking_uv=None, extra_yaw_rate=0.0, foe_uv=None):
+        """
+        Internal method for PID/Heuristic control.
+        """
         # Unpack State
         pz = state_obs.get('pz', 100.0) # Default if missing
         vz = state_obs.get('vz')        # None if missing (Blind Mode)
         roll = state_obs['roll']
         pitch = state_obs['pitch']
-        # Compatibility if keys missing (though they shouldn't be used)
-        vx = state_obs.get('vx', 0.0)
-        vy = state_obs.get('vy', 0.0)
 
         goal_z = target_cmd[2]
 
@@ -47,52 +85,38 @@ class DPCFlightController:
         yaw_rate_cmd = 0.0
         if tracking_uv:
             u, v = tracking_uv
-            # Inverted Sim Logic: Positive u -> Positive Rate turns Right
-            yaw_rate_cmd = self.k_yaw * u
+            # FOE Bias Logic for Yaw
+            if foe_uv:
+                foe_u, foe_v = foe_uv
+                # We want Target U to align with FOE U (Flight Direction)
+                # Error = u - foe_u
+                yaw_rate_cmd = self.k_foe_yaw * (u - foe_u)
+            else:
+                # Standard centering
+                yaw_rate_cmd = self.k_yaw * u
         else:
             yaw_rate_cmd = extra_yaw_rate
 
         # 2. Estimate Distance and Compute Adaptive Gamma Ref
-        # Use target_cmd (from MissionManager/Tracker) to get relative position
-        # target_cmd is [rel_x, rel_y, abs_z_target] (Sim Frame)
         dx = target_cmd[0]
         dy = target_cmd[1]
         dist_est = math.sqrt(dx*dx + dy*dy)
         alt_est = max(0.1, pz - goal_z)
 
-        # Improved Distance Estimation (Visual Angle)
-        # If tracking, we use the visual angle (measurable) + altitude (measurable)
-        # to estimate ground distance, rather than relying on the potentially perfect
-        # 3D coordinates from the simulation harness (unmeasurable in reality).
         if tracking_uv:
              _, v = tracking_uv
-             # Camera Tilt is fixed at 30 deg up
              tilt_rad = math.radians(30.0)
-
-             # v is normalized tangent (y/z) in camera frame (Y-Down).
-             # Positive v = Down from Camera Axis.
              angle_from_axis = math.atan(v)
-
-             # Depression Angle relative to Horizon
-             # Camera Axis Elevation = Pitch + Tilt
-             # Ray Elevation = Axis Elevation - Angle From Axis
-             # Depression = -Ray Elevation = Angle From Axis - (Pitch + Tilt)
              depression = angle_from_axis - (pitch + tilt_rad)
-
-             if depression > 0.1: # Minimum angle to avoid singularity/horizon issues
+             if depression > 0.1:
                   dist_visual = alt_est / math.tan(depression)
-                  # Blend or overwrite? Overwrite for realism.
                   dist_est = dist_visual
-             # If depression is small/negative (looking up/level), fallback to state estimate (dist_est)
-             # or max range? Fallback to State Estimate is safer for control stability.
 
         # Guidance Logic: Biased LOS (Flare Strategy)
-        # We fly steeper than LOS to approach from below, creating a parabolic flare.
         los = -math.atan2(alt_est, dist_est)
         gamma_ref = los - math.radians(15.0)
         gamma_ref = max(gamma_ref, math.radians(-85.0))
 
-        # Terminal Phase Safety: If close, fly directly at target to ensure hit
         if dist_est < 30.0:
              gamma_ref = los
 
@@ -101,53 +125,32 @@ class DPCFlightController:
             # Closed-Loop Speed Control
             speed_limit = 10.0
             vz_cmd = speed_limit * math.sin(gamma_ref)
-
             vz_err = vz_cmd - vz
-            # Positive Error (Too fast/low) -> Increase Thrust
             thrust_cmd = self.thrust_hover + self.kp_vz * vz_err
             thrust_cmd = max(0.0, min(1.0, thrust_cmd))
         else:
-            # Blind Mode (Open-Loop Thrust)
-            # Default to hover thrust to maintain forward momentum without overspeeding
             thrust_cmd = self.thrust_hover
 
-        # Limit Thrust in Steep Dive to prevent Forward Acceleration
-        # Use Command gamma_ref instead of current pitch to anticipate
         if gamma_ref < math.radians(-45.0) or pitch < math.radians(-45.0):
              thrust_cmd = min(thrust_cmd, 0.35)
 
-        # Debug
-        # if pz < 150.0:
-        #      print(f"Pz={pz:.1f} GoalZ={goal_z:.1f} Vz={vz:.1f} VzCmd={vz_cmd:.1f} ThCmd={thrust_cmd:.2f} Gamma={math.degrees(gamma_ref):.1f} DistEst={d_est:.1f}")
-
         # 4. Pitch Control
-        # If we have visual gamma, we can follow it directly.
-        # But we need to ensure target visibility.
-        # Ideally Gamma Ref points at target.
-        # Pitch = Gamma Ref.
-        # If Pitch = Gamma Ref.
-        # Elevation = Pitch + Tilt - atan(v).
-        # Depression = atan(v) - Pitch - Tilt.
-        # tan(Depression) = z / d.
-        # Gamma = -Depression.
-        # Pitch = -atan(v) - Tilt - Depression ? No.
-
-        # If Pitch = Gamma.
-        # Then Body points along trajectory.
-        # Camera points +30.
-        # Target is at Angle 0 (along trajectory).
-        # So Target should be at -30 deg in Camera (Up).
-        # So v should be negative (Up).
-        # atan(v) = -30 deg.
-        # v = tan(-30) = -0.577.
-        # This is well within FOV.
-
-        # So Pitch = Gamma Ref is safe for visibility (Target at -30 deg).
         pitch_cmd = gamma_ref
+
+        # FOE Bias Logic for Pitch
+        if tracking_uv and foe_uv:
+             # Target V vs FOE V
+             # If Target V > FOE V (Target is "Below" FOE in image)
+             # We need to dive steeper -> Reduce Pitch
+             _, v = tracking_uv
+             _, foe_v = foe_uv
+
+             pitch_bias = -self.k_foe_pitch * (v - foe_v)
+             pitch_bias = max(-0.5, min(0.5, pitch_bias))
+             pitch_cmd += pitch_bias
 
         # Pitch Rate Loop
         k_pitch_ang = 5.0
-        # Inverted logic for PyGhostModel state vs rate
         pitch_rate_cmd = k_pitch_ang * (pitch - pitch_cmd)
 
         # 5. Roll Control
@@ -168,7 +171,6 @@ class DPCFlightController:
         if vz is not None:
             sim_vz = vz
         else:
-            # Blind Mode: Assume nominal dive speed for viz
             sim_vz = 5.0 * math.sin(gamma_ref)
 
         for i in range(20):
@@ -177,3 +179,191 @@ class DPCFlightController:
         ghost_paths.append(path)
 
         return action, ghost_paths
+
+    def _init_gdpc_buffer(self, num_agents):
+        """Allocate buffers for vectorized simulation."""
+        self.gdpc_buffer = {
+            "pos_x": np.zeros(num_agents, dtype=np.float32),
+            "pos_y": np.zeros(num_agents, dtype=np.float32),
+            "pos_z": np.zeros(num_agents, dtype=np.float32),
+            "vel_x": np.zeros(num_agents, dtype=np.float32),
+            "vel_y": np.zeros(num_agents, dtype=np.float32),
+            "vel_z": np.zeros(num_agents, dtype=np.float32),
+            "roll": np.zeros(num_agents, dtype=np.float32),
+            "pitch": np.zeros(num_agents, dtype=np.float32),
+            "yaw": np.zeros(num_agents, dtype=np.float32),
+            "ang_vel_x": np.zeros(num_agents, dtype=np.float32),
+            "ang_vel_y": np.zeros(num_agents, dtype=np.float32),
+            "ang_vel_z": np.zeros(num_agents, dtype=np.float32),
+            "masses": np.ones(num_agents, dtype=np.float32),
+            "drag_coeffs": np.zeros(num_agents, dtype=np.float32),
+            "thrust_coeffs": np.ones(num_agents, dtype=np.float32),
+            "target_vx": np.zeros(num_agents, dtype=np.float32),
+            "target_vy": np.zeros(num_agents, dtype=np.float32),
+            "target_vz": np.zeros(num_agents, dtype=np.float32),
+            "target_yaw_rate": np.zeros(num_agents, dtype=np.float32),
+            "vt_x": np.zeros(num_agents, dtype=np.float32),
+            "vt_y": np.zeros(num_agents, dtype=np.float32),
+            "vt_z": np.zeros(num_agents, dtype=np.float32),
+            "traj_params": np.zeros((10, num_agents), dtype=np.float32),
+            "target_trajectory": np.zeros((101, num_agents, 3), dtype=np.float32),
+            "pos_history": np.zeros((100, num_agents, 3), dtype=np.float32),
+            "observations": np.zeros((num_agents, 302), dtype=np.float32),
+            "rewards": np.zeros(num_agents, dtype=np.float32),
+            "reward_components": np.zeros((num_agents, 8), dtype=np.float32),
+            "done_flags": np.zeros(num_agents, dtype=np.float32),
+            "step_counts": np.zeros(num_agents, dtype=np.int32),
+            "actions": np.zeros(num_agents * 4, dtype=np.float32),
+            "env_ids": np.zeros(num_agents, dtype=np.int32)
+        }
+
+    def compute_action_gdpc(self, state_obs, target_cmd, tracking_uv, foe_uv, extra_yaw_rate=0.0):
+        """
+        Sampling-Based MPC (Gradient-Free GDPC).
+        Generates K random action sequences, simulates them using step_cpu,
+        and picks the first action of the best sequence.
+        """
+        # Call Heuristic first to get baseline action (using internal method to avoid recursion)
+        heuristic_action_dict, _ = self._compute_heuristic_action(state_obs, target_cmd, tracking_uv, extra_yaw_rate, foe_uv)
+
+        h_thrust = heuristic_action_dict['thrust']
+        h_roll = heuristic_action_dict['roll_rate']
+        h_pitch = heuristic_action_dict['pitch_rate']
+        h_yaw = heuristic_action_dict['yaw_rate']
+
+        num_ghosts = self.num_ghosts
+        horizon = self.horizon
+
+        if self.gdpc_buffer is None:
+            self._init_gdpc_buffer(num_ghosts)
+
+        buf = self.gdpc_buffer
+
+        # 1. Initialize State from Observation
+        px0 = 0.0
+        py0 = 0.0
+        pz0 = state_obs.get('pz', 100.0)
+
+        vx0 = state_obs.get('vx', 0.0)
+        vy0 = state_obs.get('vy', 0.0)
+        vz0 = state_obs.get('vz', 0.0)
+
+        roll0 = state_obs.get('roll', 0.0)
+        pitch0 = state_obs.get('pitch', 0.0)
+        yaw0 = state_obs.get('yaw', 0.0)
+
+        wx0 = state_obs.get('wx', 0.0)
+        wy0 = state_obs.get('wy', 0.0)
+        wz0 = state_obs.get('wz', 0.0)
+
+        # Set Buffer Initial State
+        buf['pos_x'][:] = px0
+        buf['pos_y'][:] = py0
+        buf['pos_z'][:] = pz0
+        buf['vel_x'][:] = vx0
+        buf['vel_y'][:] = vy0
+        buf['vel_z'][:] = vz0
+        buf['roll'][:] = roll0
+        buf['pitch'][:] = pitch0
+        buf['yaw'][:] = yaw0
+        buf['ang_vel_x'][:] = wx0
+        buf['ang_vel_y'][:] = wy0
+        buf['ang_vel_z'][:] = wz0
+
+        buf['masses'][:] = self.estimated_params['mass']
+        buf['drag_coeffs'][:] = self.estimated_params['drag_coeff']
+        buf['thrust_coeffs'][:] = self.estimated_params['thrust_coeff']
+
+        buf['step_counts'][:] = 0
+        buf['done_flags'][:] = 0.0
+
+        # Target Position
+        tgt_rel_x = target_cmd[0]
+        tgt_rel_y = target_cmd[1]
+        tgt_abs_z = target_cmd[2]
+
+        target_pos = np.array([tgt_rel_x, tgt_rel_y, tgt_abs_z])
+
+        # 2. Sample Action Sequences
+        noise_thrust = 0.2
+        noise_rate = 1.0
+
+        action_seqs = np.zeros((horizon, num_ghosts, 4), dtype=np.float32)
+
+        # Ghost 0: Heuristic
+        action_seqs[:, 0, 0] = h_thrust
+        action_seqs[:, 0, 1] = h_roll
+        action_seqs[:, 0, 2] = h_pitch
+        action_seqs[:, 0, 3] = h_yaw
+
+        # Ghosts 1..N: Noisy Heuristic
+        action_seqs[:, 1:, 0] = h_thrust + np.random.randn(horizon, num_ghosts-1) * noise_thrust
+        action_seqs[:, 1:, 1] = h_roll + np.random.randn(horizon, num_ghosts-1) * noise_rate
+        action_seqs[:, 1:, 2] = h_pitch + np.random.randn(horizon, num_ghosts-1) * noise_rate
+        action_seqs[:, 1:, 3] = h_yaw + np.random.randn(horizon, num_ghosts-1) * noise_rate
+
+        action_seqs[:, :, 0] = np.clip(action_seqs[:, :, 0], 0.0, 1.0)
+        action_seqs[:, :, 1:] = np.clip(action_seqs[:, :, 1:], -10.0, 10.0)
+
+        # 3. Rollout
+        costs = np.zeros(num_ghosts, dtype=np.float32)
+        ghost_paths_viz = [[] for _ in range(num_ghosts)]
+
+        for t in range(horizon):
+            acts_t = action_seqs[t].reshape(-1)
+
+            step_cpu(
+                buf['pos_x'], buf['pos_y'], buf['pos_z'],
+                buf['vel_x'], buf['vel_y'], buf['vel_z'],
+                buf['roll'], buf['pitch'], buf['yaw'],
+                buf['ang_vel_x'], buf['ang_vel_y'], buf['ang_vel_z'],
+                buf['masses'], buf['drag_coeffs'], buf['thrust_coeffs'],
+                buf['target_vx'], buf['target_vy'], buf['target_vz'], buf['target_yaw_rate'],
+                buf['vt_x'], buf['vt_y'], buf['vt_z'],
+                buf['traj_params'],
+                buf['target_trajectory'],
+                buf['pos_history'],
+                buf['observations'],
+                buf['rewards'],
+                buf['reward_components'],
+                buf['done_flags'],
+                buf['step_counts'],
+                acts_t,
+                num_ghosts,
+                100,
+                buf['env_ids']
+            )
+
+            # Calculate Cost
+            dx = buf['pos_x'] - target_pos[0]
+            dy = buf['pos_y'] - target_pos[1]
+            dz = buf['pos_z'] - target_pos[2]
+            dist = np.sqrt(dx*dx + dy*dy + dz*dz)
+
+            # Penalties
+            ground_pen = np.where(buf['pos_z'] < 0.5, 1000.0, 0.0)
+
+            step_cost = dist + ground_pen
+            if t == horizon - 1:
+                step_cost += dist * 5.0
+
+            costs += step_cost
+
+            # Viz (Ghost 0)
+            p_pt = {'px': float(buf['pos_x'][0]), 'py': float(buf['pos_y'][0]), 'pz': float(buf['pos_z'][0])}
+            ghost_paths_viz[0].append(p_pt)
+
+        # 4. Select Best
+        best_idx = np.argmin(costs)
+        best_action_seq = action_seqs[:, best_idx, :]
+        best_act = best_action_seq[0]
+
+        action = {
+            'thrust': float(best_act[0]),
+            'roll_rate': float(best_act[1]),
+            'pitch_rate': float(best_act[2]),
+            'yaw_rate': float(best_act[3])
+        }
+
+        self.last_action = action
+        return action, [ghost_paths_viz[0]]

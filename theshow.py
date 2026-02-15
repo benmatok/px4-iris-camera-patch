@@ -55,7 +55,9 @@ class TheShow:
             self.mission = MissionManager()
 
             # Control
-            self.controller = DPCFlightController(dt=DT)
+            controller_mode = os.environ.get('CONTROLLER_MODE', 'PID')
+            logger.info(f"Initializing DPCFlightController in {controller_mode} mode")
+            self.controller = DPCFlightController(dt=DT, mode=controller_mode)
 
             self.loops = 0
             self.prediction_history = []
@@ -304,7 +306,8 @@ class TheShow:
             state_obs,
             dpc_target,
             tracking_uv=tracking_norm,
-            extra_yaw_rate=extra_yaw
+            extra_yaw_rate=extra_yaw,
+            foe_uv=foe
         )
 
         # 5. Apply Control to Sim
