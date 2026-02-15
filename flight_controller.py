@@ -243,8 +243,12 @@ class DPCFlightController:
             # Aggressive Dive
             deg_depression = math.degrees(depression_angle)
 
-            # Minimal attack angle should be 5 degrees (steepen dive by 5 deg)
-            dive_bias = 5.0
+            # Calculate Time to Collision
+            ttc = dist_3d / (v_total + 0.1)
+
+            # Attack angle starts steep and reduces to 5 degrees at collision
+            # Scale bias with TTC
+            dive_bias = 5.0 + min(20.0, ttc * 3.0)
 
             gamma_ref = los - math.radians(dive_bias)
             speed_limit = 20.0 # Allow speed
@@ -258,7 +262,8 @@ class DPCFlightController:
 
         elif self.flight_phase == "APPROACH":
             # Precision Tracking (Linear LOS)
-            gamma_ref = los
+            # Maintain 5 degree attack angle in terminal phase
+            gamma_ref = los - math.radians(5.0)
             speed_limit = 8.0 # Slow approach
             thrust_cmd = 0.5
 
