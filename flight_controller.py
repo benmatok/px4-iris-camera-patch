@@ -181,30 +181,40 @@ class DPCFlightController:
                   dist_est = dist_visual
 
         # Guidance Logic: Biased LOS (Flare Strategy)
+        # We use a parabolic pitch strategy: Aggressive dive then Linear approach.
         los = -math.atan2(alt_est, dist_est)
-        gamma_ref = los - math.radians(10.0) # Reduced flare bias from 15 to 10
+
+        # Aggressive Phase: Dive significantly below LOS
+        gamma_ref = los - math.radians(10.0)
         gamma_ref = max(gamma_ref, math.radians(-85.0))
 
-        # Terminal Phase: Switch to pure LOS earlier
+        # Linear Phase: Switch to pure LOS when close to target (e.g. < 50m)
         if dist_est < 50.0:
              gamma_ref = los
 
         # 3. Speed Control (Thrust)
         if vz is not None:
             # Closed-Loop Speed Control
-            speed_limit = 13.5
+            # Adaptive speed limit based on distance to prevent overshoot
+            speed_limit = max(5.0, min(15.0, dist_est * 0.3))
+
             vz_cmd = speed_limit * math.sin(gamma_ref)
             vz_err = vz_cmd - vz
             thrust_cmd = self.thrust_hover + self.kp_vz * vz_err
             thrust_cmd = max(0.1, min(1.0, thrust_cmd))
         else:
             thrust_cmd = self.thrust_hover
-
-        if gamma_ref < math.radians(-45.0) or pitch < math.radians(-45.0):
-             thrust_cmd = min(thrust_cmd, 0.35)
+            vz_err = 0.0
 
         # 4. Pitch Control
         pitch_cmd = gamma_ref
+
+        # Velocity-Based Pitch Bias (Air Brake)
+        # If we are falling too fast (vz_err > 0), pitch up to use drag/lift
+        if vz_err > 0.0:
+             pitch_brake = 0.1 * vz_err # 0.1 rad per m/s error
+             pitch_brake = min(pitch_brake, 0.5) # Cap at ~30 deg correction
+             pitch_cmd += pitch_brake
 
         # FOE Bias Logic for Pitch
         if tracking_uv and foe_uv:
