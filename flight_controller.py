@@ -19,7 +19,7 @@ class DPCFlightController:
         self.mode = mode
 
         # PID Gains
-        self.k_yaw = 2.0
+        self.k_yaw = -2.0 # Inverted for Sim Yaw convention
         self.k_roll = 2.0
 
         # Velocity Control Gains
@@ -27,7 +27,7 @@ class DPCFlightController:
         self.thrust_hover = 0.6
 
         # FOE Bias Gains
-        self.k_foe_yaw = 2.0
+        self.k_foe_yaw = -2.0 # Inverted for Sim Yaw convention
         self.k_foe_pitch = 1.0
 
         # State Variables
@@ -71,8 +71,11 @@ class DPCFlightController:
         pz = state_obs.get('pz')
         vz = state_obs.get('vz')
         roll = state_obs['roll']
-        pitch = state_obs['pitch']
-        yaw = state_obs['yaw']
+        pitch = -state_obs['pitch'] # Invert Sim pitch (Positive=Dive) to NED (Negative=Dive)
+        # Convert Sim Yaw (East=0, North=90) to NED Yaw (North=0, East=90)
+        # NED = pi/2 - Sim
+        yaw = math.pi/2 - state_obs['yaw']
+        yaw = (yaw + math.pi) % (2 * math.pi) - math.pi
 
         # Blind Mode Logic
         if pz is None:
@@ -104,8 +107,11 @@ class DPCFlightController:
                 # No position integration here, pz is known.
 
         goal_z = target_cmd[2]
-        dx = target_cmd[0]
-        dy = target_cmd[1]
+        # Map Sim (ENU) target to NED (X=North, Y=East)
+        # Sim X (East) -> NED Y
+        # Sim Y (North) -> NED X
+        dx = target_cmd[1]
+        dy = target_cmd[0]
         dist_est = math.sqrt(dx*dx + dy*dy)
         alt_est = max(0.1, pz - goal_z)
         dist_3d = math.sqrt(dist_est*dist_est + alt_est*alt_est)
@@ -193,6 +199,13 @@ class DPCFlightController:
         # Brake distance 3.0x velocity (Reduced from 4.0 for closer approach)
         brake_dist = max(15.0, v_total * 3.0)
 
+        # Transition to LAND if very close (e.g. < 20m)
+        # This ensures final 5 seconds are low velocity.
+        # Check pz (altitude) to avoid false trigger at startup (TAKEOFF at altitude)
+        if self.flight_phase != "LAND" and dist_3d < 20.0 and pz is not None and pz < 20.0:
+            self.flight_phase = "LAND"
+            logger.info(f"Switching to LAND phase (Dist3D: {dist_3d:.1f}, Alt: {pz:.1f})")
+
         if self.flight_phase == "DESCEND":
             # Exit DESCEND when angle is shallow enough (< 50 deg) - Hysteresis
             if depression_angle < math.radians(50.0):
@@ -226,6 +239,12 @@ class DPCFlightController:
                 self.flight_phase = "DIVE"
                 logger.info(f"Resetting to DIVE phase (Dist3D: {dist_3d:.1f})")
 
+        elif self.flight_phase == "LAND":
+            # If we somehow drift away, reset?
+            if dist_3d > 30.0:
+                self.flight_phase = "APPROACH"
+                logger.info(f"Resetting to APPROACH phase (Dist3D: {dist_3d:.1f})")
+
         # Control Logic per State
         gamma_ref = 0.0
         thrust_cmd = 0.5
@@ -248,17 +267,18 @@ class DPCFlightController:
 
             # Attack angle starts steep and reduces to 5 degrees at collision
             # Scale bias with TTC
-            dive_bias = 5.0 + min(20.0, ttc * 3.0)
+            # dive_bias = 5.0 + min(20.0, ttc * 3.0)
 
-            gamma_ref = los - math.radians(dive_bias)
+            # Use LOS directly or slightly shallower to extend glide
+            gamma_ref = los # - math.radians(dive_bias)
             speed_limit = 20.0 # Allow speed
             thrust_cmd = 0.6 # Base thrust
 
         elif self.flight_phase == "BRAKE":
-            # Braking Maneuver: Pitch Up + Low Thrust
-            gamma_ref = math.radians(15.0)
+            # Braking Maneuver: Pitch Up + High Thrust if needed
+            gamma_ref = math.radians(45.0) # Aggressive flare
             speed_limit = 0.0 # We want to stop
-            thrust_cmd = 0.6 # Maintain lift (Hover)
+            # thrust_cmd will be computed by speed controller
 
         elif self.flight_phase == "APPROACH":
             # Precision Tracking (Linear LOS)
@@ -266,6 +286,24 @@ class DPCFlightController:
             gamma_ref = los - math.radians(5.0)
             speed_limit = 8.0 # Slow approach
             thrust_cmd = 0.5
+
+            # If we are effectively at the target (e.g. startup or collision), level out
+            if dist_3d < 5.0:
+                 gamma_ref = 0.0
+                 speed_limit = 0.0 # Hover in place
+                 # Let speed controller handle thrust to maintain 0 vertical speed
+
+        elif self.flight_phase == "LAND":
+            # Final 5 seconds low velocity landing
+            # Pitch up to brake/flare.
+            speed_limit = 2.0 # Target low velocity
+            thrust_cmd = 0.55 # Maintain descent
+
+            # Only flare if moving, otherwise level out to avoid backward drift
+            if v_total > 1.0:
+                gamma_ref = math.radians(10.0) # Flare
+            else:
+                gamma_ref = 0.0
 
         gamma_ref = max(gamma_ref, math.radians(-85.0))
 
@@ -283,9 +321,9 @@ class DPCFlightController:
              safety_gamma = -math.atan2(alt_est, lookahead)
              gamma_ref = max(gamma_ref, safety_gamma)
 
-        # 3. Speed Control (Thrust) - active in DIVE, APPROACH and DESCEND
-        # In BRAKE, we override thrust manually above.
-        if self.flight_phase != "BRAKE" and self.flight_phase != "DESCEND":
+        # 3. Speed Control (Thrust) - active in DIVE, APPROACH, BRAKE
+        # In DESCEND and LAND, we override thrust manually above.
+        if self.flight_phase != "DESCEND" and self.flight_phase != "LAND":
             vz_cmd = speed_limit * math.sin(gamma_ref)
             vz_err = vz_cmd - obs_vz
             thrust_cmd = self.thrust_hover + self.kp_vz * vz_err
@@ -313,8 +351,8 @@ class DPCFlightController:
                 yaw_rate_cmd = self.k_foe_yaw * (u - foe_u)
             else:
                 yaw_rate_cmd = self.k_yaw * u
-        elif abs(extra_yaw_rate) > 0.001:
-            yaw_rate_cmd = extra_yaw_rate
+        # elif abs(extra_yaw_rate) > 0.001:
+        #    yaw_rate_cmd = extra_yaw_rate
         else:
             # Blind Homing: Face the target
             target_yaw = math.atan2(dy, dx)
