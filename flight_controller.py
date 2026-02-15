@@ -43,6 +43,10 @@ class DPCFlightController:
         self.last_pz_obs = None # For discrete differentiation
         self.last_dist_3d = None # For calculating closing rate
 
+        # Visual RER State
+        self.last_radius = None
+        self.rer_smooth = 0.0
+
         # GDPC / Estimator State
         self.estimated_params = {
             'mass': 1.0,
@@ -63,15 +67,17 @@ class DPCFlightController:
         self.est_vy = 0.0
         self.last_pz_obs = None
         self.last_dist_3d = None
+        self.last_radius = None
+        self.rer_smooth = 0.0
         self.flight_phase = "DIVE"
         logger.info(f"DPCFlightController reset. Mode: {self.mode}")
 
-    def compute_action(self, state_obs, target_cmd, tracking_uv=None, extra_yaw_rate=0.0, foe_uv=None):
+    def compute_action(self, state_obs, target_cmd, tracking_uv=None, extra_yaw_rate=0.0, foe_uv=None, tracking_radius=None):
         if self.mode == 'GDPC' and HAS_SIM:
             return self.compute_action_gdpc(state_obs, target_cmd, tracking_uv, foe_uv, extra_yaw_rate)
-        return self._compute_heuristic_action(state_obs, target_cmd, tracking_uv, extra_yaw_rate, foe_uv)
+        return self._compute_heuristic_action(state_obs, target_cmd, tracking_uv, extra_yaw_rate, foe_uv, tracking_radius)
 
-    def _compute_heuristic_action(self, state_obs, target_cmd, tracking_uv=None, extra_yaw_rate=0.0, foe_uv=None):
+    def _compute_heuristic_action(self, state_obs, target_cmd, tracking_uv=None, extra_yaw_rate=0.0, foe_uv=None, tracking_radius=None):
         # Unpack State
         # Convert Z/Vz to ENU (Up+) for internal logic to match control expectations (Thrust increases Z).
         # Input 'pz' and 'vz' are NED (Down+).
@@ -159,10 +165,41 @@ class DPCFlightController:
 
         dist_3d = math.sqrt(dist_est*dist_est + alt_est*alt_est)
 
-        # RER (Looming) Estimation
-        # RER ~ Velocity / Distance
-        # Expansion Rate = v / d
-        rer = v_total / max(1.0, dist_3d)
+        # --- RER (Looming) Estimation ---
+        # Primary: Visual Expansion (Observable)
+        # Secondary: Velocity / Distance (Estimator Fallback)
+
+        rer_visual = 0.0
+        if tracking_radius is not None and self.last_radius is not None:
+             # RER = (r_t - r_prev) / (r_prev * dt)
+             # Avoid div by zero
+             if self.last_radius > 0.001:
+                 raw_rer = (tracking_radius - self.last_radius) / (self.last_radius * self.dt)
+                 # Constrain logical RER (0 to 10.0)
+                 raw_rer = max(0.0, min(10.0, raw_rer))
+
+                 # Smooth it
+                 alpha_rer = 0.2
+                 self.rer_smooth = (1.0 - alpha_rer) * self.rer_smooth + alpha_rer * raw_rer
+                 rer_visual = self.rer_smooth
+
+        if tracking_radius is not None:
+             self.last_radius = tracking_radius
+        else:
+             # Decay radius if tracking lost
+             if self.last_radius:
+                 self.last_radius *= 0.95
+
+        # Estimator Fallback
+        rer_est = v_total / max(1.0, dist_3d)
+
+        # Select RER source
+        # Use visual if available and sensible (> 0.05), else fallback
+        # If we are very close, visual might blow up or be erratic, but usually it's the gold standard for "Time to Contact"
+        if tracking_radius is not None:
+             rer = rer_visual
+        else:
+             rer = rer_est
 
         # Visual Distance Refinement
         if tracking_uv:
@@ -174,7 +211,9 @@ class DPCFlightController:
                   dist_visual = alt_est / math.tan(depression)
                   dist_est = dist_visual
                   dist_3d = math.sqrt(dist_est*dist_est + alt_est*alt_est)
-                  rer = v_total / max(1.0, dist_3d) # Recalculate RER with better dist
+                  # If using estimate fallback, update it
+                  if tracking_radius is None:
+                      rer = v_total / max(1.0, dist_3d)
 
         # --- STATE MACHINE ---
         depression_angle = math.atan2(alt_est, dist_est)
@@ -268,7 +307,7 @@ class DPCFlightController:
         if self.flight_phase == "LAND":
             # Terminal: HARD BANK
             roll_cmd_rad = max_bank
-            thrust_cmd = 0.75 # High thrust to maintain lift in bank
+            thrust_cmd = 0.8 # High thrust to maintain lift in bank
         else:
             # Proportional Spiral
             # Add time factor? No, RER is dynamic.

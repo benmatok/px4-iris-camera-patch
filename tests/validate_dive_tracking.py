@@ -244,11 +244,19 @@ class DiveValidator:
             if center:
                 tracking_norm = self.projector.pixel_to_normalized(center[0], center[1])
 
+            # Normalize Radius (screen width fraction?)
+            # Projector width=640. Radius is in pixels.
+            # Normalize by width/2 (center to edge)
+            tracking_rad_norm = None
+            if radius:
+                tracking_rad_norm = radius / (self.projector.width / 2.0)
+
             action_out, _ = self.controller.compute_action(
                 state_obs,
                 dpc_target,
                 tracking_uv=tracking_norm,
-                extra_yaw_rate=extra_yaw
+                extra_yaw_rate=extra_yaw,
+                tracking_radius=tracking_rad_norm
             )
 
             # 5. Apply Control to Sim
