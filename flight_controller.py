@@ -190,7 +190,8 @@ class DPCFlightController:
 
         # State Transitions
         depression_angle = math.atan2(alt_est, dist_est)
-        brake_dist = max(15.0, v_total * 4.0)
+        # Brake distance 3.0x velocity (Reduced from 4.0 for closer approach)
+        brake_dist = max(15.0, v_total * 3.0)
 
         if self.flight_phase == "DESCEND":
             # Exit DESCEND when angle is shallow enough (< 50 deg) - Hysteresis
@@ -199,8 +200,8 @@ class DPCFlightController:
                 logger.info(f"Switching to DIVE phase (Angle: {math.degrees(depression_angle):.1f})")
 
         elif self.flight_phase == "DIVE":
-            # Check for steep angle entry
-            if depression_angle > math.radians(65.0):
+            # Check for steep angle entry (Threshold 60.0 deg)
+            if depression_angle > math.radians(60.0):
                 self.flight_phase = "DESCEND"
                 logger.info(f"Switching to DESCEND phase (Angle: {math.degrees(depression_angle):.1f})")
 
@@ -240,14 +241,10 @@ class DPCFlightController:
 
         elif self.flight_phase == "DIVE":
             # Aggressive Dive
-            # Bias dive angle to gain speed, but fade out near ground/shallow angles
-            # Use depression angle to scale bias (prevent diving into ground on long approaches)
             deg_depression = math.degrees(depression_angle)
-            dive_bias = min(12.0, deg_depression * 0.7)
 
-            # Also fade by altitude (double safety)
-            if alt_est < 30.0:
-                 dive_bias *= (alt_est / 30.0)
+            # Minimal attack angle should be 5 degrees (steepen dive by 5 deg)
+            dive_bias = 5.0
 
             gamma_ref = los - math.radians(dive_bias)
             speed_limit = 20.0 # Allow speed
@@ -270,9 +267,10 @@ class DPCFlightController:
         # Ground Safety Clamping for Gamma
         # Don't command a dive that intersects the ground closer than 10m ahead
         if alt_est < 40.0:
-             # If shallow approach, flare early (25m lookahead) to avoid sagging
+             # For shallow approaches, use current distance as lookahead
+             # to avoid aiming short of the target (which causes premature ground impact).
              if depression_angle < math.radians(40.0):
-                 lookahead = 25.0
+                 lookahead = max(dist_est, 25.0)
              else:
                  # If steep approach, aim closer (allow steeper dive)
                  lookahead = max(15.0, dist_est)
@@ -289,7 +287,13 @@ class DPCFlightController:
             thrust_cmd = max(0.1, min(1.0, thrust_cmd))
 
         # 4. Pitch Control
-        pitch_cmd = gamma_ref
+        # Pitch down slightly more than gamma_ref to maintain forward speed against drag
+        # especially in shallow approaches.
+        pitch_bias = 0.0
+        if self.flight_phase == "APPROACH" and dist_est > 2.0:
+            pitch_bias = math.radians(5.0) # ~0.087 rad
+
+        pitch_cmd = gamma_ref - pitch_bias
 
         # Pitch Rate Loop
         k_pitch_ang = 5.0
@@ -304,8 +308,14 @@ class DPCFlightController:
                 yaw_rate_cmd = self.k_foe_yaw * (u - foe_u)
             else:
                 yaw_rate_cmd = self.k_yaw * u
-        else:
+        elif abs(extra_yaw_rate) > 0.001:
             yaw_rate_cmd = extra_yaw_rate
+        else:
+            # Blind Homing: Face the target
+            target_yaw = math.atan2(dy, dx)
+            yaw_err = target_yaw - yaw
+            yaw_err = (yaw_err + math.pi) % (2 * math.pi) - math.pi
+            yaw_rate_cmd = self.k_yaw * yaw_err
 
         # 5. Roll Control
         roll_rate_cmd = self.k_roll * (0.0 - roll)
