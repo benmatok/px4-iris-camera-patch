@@ -6,7 +6,7 @@ import numpy as np
 # Add parent directory to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from tests.validate_dive_tracking import DiveValidator
+from tests.validate_dive_tracking import DiveValidator, plot_results
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
@@ -47,6 +47,10 @@ def run_scenarios():
         # Shallow dive might take longer.
         # 25s should be plenty.
         hist = validator.run(duration=25.0)
+
+        # Save Plot
+        plot_filename = f"validation_scenario_{sid}.png"
+        plot_results(hist, hist, hist_blind=hist, filename=plot_filename) # Use same hist for visual/gt to verify control
 
         final_dist = hist['dist'][-1]
         min_dist = min(hist['dist'])
