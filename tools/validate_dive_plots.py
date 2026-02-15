@@ -81,6 +81,7 @@ def main():
 
         # Controller
         state_obs = {
+            'pz': s['pz'],
             'roll': s['roll'],
             'pitch': s['pitch'],
             'yaw': s['yaw'],
