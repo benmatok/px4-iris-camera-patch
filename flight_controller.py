@@ -19,7 +19,7 @@ class DPCFlightController:
         self.mode = mode
 
         # PID Gains
-        self.k_yaw = -2.0 # Inverted for Sim Yaw convention
+        self.k_yaw = -2.0 # Inverted due to Sim Yaw Frame
         self.k_roll = 2.0
 
         # Velocity Control Gains
@@ -27,7 +27,7 @@ class DPCFlightController:
         self.thrust_hover = 0.6
 
         # FOE Bias Gains
-        self.k_foe_yaw = -2.0 # Inverted for Sim Yaw convention
+        self.k_foe_yaw = -2.0 # Inverted due to Sim Yaw Frame
         self.k_foe_pitch = 1.0
 
         # State Variables
@@ -71,9 +71,8 @@ class DPCFlightController:
         pz = state_obs.get('pz')
         vz = state_obs.get('vz')
         roll = state_obs['roll']
-        pitch = -state_obs['pitch'] # Invert Sim pitch (Positive=Dive) to NED (Negative=Dive)
-        # Convert Sim Yaw (East=0, North=90) to NED Yaw (North=0, East=90)
-        # NED = pi/2 - Sim
+        pitch = -state_obs['pitch'] # Invert Sim Pitch (Pos=Down) to NED (Pos=Up/Neg=Down)
+        # Convert Sim Yaw (East=0) to NED (North=0)
         yaw = math.pi/2 - state_obs['yaw']
         yaw = (yaw + math.pi) % (2 * math.pi) - math.pi
 
@@ -108,8 +107,6 @@ class DPCFlightController:
 
         goal_z = target_cmd[2]
         # Map Sim (ENU) target to NED (X=North, Y=East)
-        # Sim X (East) -> NED Y
-        # Sim Y (North) -> NED X
         dx = target_cmd[1]
         dy = target_cmd[0]
         dist_est = math.sqrt(dx*dx + dy*dy)
@@ -206,6 +203,9 @@ class DPCFlightController:
             self.flight_phase = "LAND"
             logger.info(f"Switching to LAND phase (Dist3D: {dist_3d:.1f}, Alt: {pz:.1f})")
 
+        # If in APPROACH and close enough, don't reset to DIVE just because we are far in 3D (drift)
+        # unless we are really far.
+
         if self.flight_phase == "DESCEND":
             # Exit DESCEND when angle is shallow enough (< 50 deg) - Hysteresis
             if depression_angle < math.radians(50.0):
@@ -235,15 +235,17 @@ class DPCFlightController:
 
         elif self.flight_phase == "APPROACH":
              # Reset to DIVE if distance is large
-            if dist_3d > 60.0:
-                self.flight_phase = "DIVE"
-                logger.info(f"Resetting to DIVE phase (Dist3D: {dist_3d:.1f})")
+            # if dist_3d > 60.0:
+            #    self.flight_phase = "DIVE"
+            #    logger.info(f"Resetting to DIVE phase (Dist3D: {dist_3d:.1f})")
+            pass
 
         elif self.flight_phase == "LAND":
             # If we somehow drift away, reset?
-            if dist_3d > 30.0:
-                self.flight_phase = "APPROACH"
-                logger.info(f"Resetting to APPROACH phase (Dist3D: {dist_3d:.1f})")
+            # if dist_3d > 30.0:
+            #    self.flight_phase = "APPROACH"
+            #    logger.info(f"Resetting to APPROACH phase (Dist3D: {dist_3d:.1f})")
+            pass
 
         # Control Logic per State
         gamma_ref = 0.0
@@ -270,7 +272,8 @@ class DPCFlightController:
             # dive_bias = 5.0 + min(20.0, ttc * 3.0)
 
             # Use LOS directly or slightly shallower to extend glide
-            gamma_ref = los # - math.radians(dive_bias)
+            # Bias +5 deg to fight sag
+            gamma_ref = los + math.radians(5.0)
             speed_limit = 20.0 # Allow speed
             thrust_cmd = 0.6 # Base thrust
 
@@ -283,7 +286,8 @@ class DPCFlightController:
         elif self.flight_phase == "APPROACH":
             # Precision Tracking (Linear LOS)
             # Maintain 5 degree attack angle in terminal phase
-            gamma_ref = los - math.radians(5.0)
+            # Bias +5 deg (Pitch Up) to fight sag.
+            gamma_ref = los + math.radians(5.0)
             speed_limit = 8.0 # Slow approach
             thrust_cmd = 0.5
 
@@ -297,15 +301,28 @@ class DPCFlightController:
             # Final 5 seconds low velocity landing
             # Pitch up to brake/flare.
             speed_limit = 2.0 # Target low velocity
-            thrust_cmd = 0.55 # Maintain descent
+
+            # Thrust: Just enough to descend slowly
+            thrust_cmd = 0.55
 
             # Only flare if moving, otherwise level out to avoid backward drift
+            # Note: In standard Sim convention, Positive Pitch is Nose Down?
+            # No, we established Negative State is Nose Down.
+            # So Positive Pitch is Nose Up.
+            # So gamma_ref = +10.0 deg is Nose Up. Correct.
             if v_total > 1.0:
                 gamma_ref = math.radians(10.0) # Flare
             else:
                 gamma_ref = 0.0
 
-        gamma_ref = max(gamma_ref, math.radians(-85.0))
+        # Bias gamma up to extend glide (fight gravity sag)
+        gamma_ref = los + math.radians(5.0)
+
+        # Safety: Limit initial dive angle until speed is built
+        if v_total < 10.0:
+             gamma_ref = max(gamma_ref, math.radians(-10.0))
+
+        gamma_ref = max(gamma_ref, math.radians(-60.0))
 
         # Ground Safety Clamping for Gamma
         # Don't command a dive that intersects the ground closer than 10m ahead
@@ -321,13 +338,24 @@ class DPCFlightController:
              safety_gamma = -math.atan2(alt_est, lookahead)
              gamma_ref = max(gamma_ref, safety_gamma)
 
+        # For LAND phase, override safety gamma if needed (we want to land)
+        if self.flight_phase == "LAND":
+            # Just ignore safety clamp if we are trying to flare
+            pass
+
         # 3. Speed Control (Thrust) - active in DIVE, APPROACH, BRAKE
         # In DESCEND and LAND, we override thrust manually above.
         if self.flight_phase != "DESCEND" and self.flight_phase != "LAND":
             vz_cmd = speed_limit * math.sin(gamma_ref)
             vz_err = vz_cmd - obs_vz
             thrust_cmd = self.thrust_hover + self.kp_vz * vz_err
-            thrust_cmd = max(0.1, min(1.0, thrust_cmd))
+
+            # Launch Assist: Prevent sag during initial acceleration
+            min_th = 0.1
+            if v_total < 5.0:
+                min_th = 0.85
+
+            thrust_cmd = max(min_th, min(1.0, thrust_cmd))
 
         # 4. Pitch Control
         # Pitch down slightly more than gamma_ref to maintain forward speed against drag
@@ -340,6 +368,13 @@ class DPCFlightController:
 
         # Pitch Rate Loop
         k_pitch_ang = 5.0
+        # Since pitch is inverted (-Sim), Pos Rate (Sim Nose Down) -> Neg Change in Pitch(NED).
+        # pitch(NED) > cmd. (-40 > -45). Err +5.
+        # Need Neg Rate (Nose Down).
+        # Sim Rate Pos = Nose Down.
+        # So we need Positive Rate.
+        # k * (pitch - cmd) -> (+5). Positive.
+        # So (pitch - cmd) is correct.
         pitch_rate_cmd = k_pitch_ang * (pitch - pitch_cmd)
 
         # 1. Yaw Control
