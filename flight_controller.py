@@ -68,6 +68,7 @@ class DPCFlightController:
         vz = state_obs.get('vz')
         roll = state_obs['roll']
         pitch = state_obs['pitch']
+        yaw = state_obs['yaw']
 
         # Blind Mode Logic
         if pz is None:
@@ -85,7 +86,18 @@ class DPCFlightController:
             vz = self.est_vz
         else:
             self.est_pz = pz
-            self.est_vz = vz if vz is not None else 0.0
+            if vz is not None:
+                self.est_vz = vz
+            else:
+                # Blind Mode with Baro (theshow.py case)
+                # Keep integrating est_vz but correct est_pz
+                th = self.last_action['thrust']
+                g = 9.81
+                T_max_accel = 20.0
+                accel_z = (th * T_max_accel) * (math.cos(roll) * math.cos(pitch)) - g
+                accel_z -= 0.1 * self.est_vz
+                self.est_vz += accel_z * self.dt
+                # No position integration here, pz is known.
 
         goal_z = target_cmd[2]
         dx = target_cmd[0]
@@ -107,7 +119,33 @@ class DPCFlightController:
                   dist_3d = math.sqrt(dist_est*dist_est + alt_est*alt_est)
 
         # --- STATE MACHINE ---
-        v_total = math.sqrt(state_obs.get('vx', 0.0)**2 + state_obs.get('vy', 0.0)**2 + state_obs.get('vz', 0.0)**2)
+        # Estimate horizontal speed if not available
+        obs_vx = state_obs.get('vx', 0.0)
+        obs_vy = state_obs.get('vy', 0.0)
+        obs_vz = state_obs.get('vz', 0.0)
+
+        # If Blind Mode (no VZ), rely on est_vz
+        if vz is None:
+            obs_vz = self.est_vz
+
+        # If Horizontal Velocity is 0 (Blind Mode), estimate from Pitch and VZ
+        # Assume coordinated flight: V_xy = V_z / tan(pitch)
+        est_vx = obs_vx
+        est_vy = obs_vy
+
+        if abs(obs_vx) < 0.1 and abs(obs_vy) < 0.1 and abs(pitch) > 0.1:
+             # Estimate V_xy
+             # V_z is negative in dive. Pitch is negative. tan(pitch) is negative. V_xy is positive.
+             v_xy_est = obs_vz / math.tan(pitch)
+             # Clamp to reasonable values
+             v_xy_est = max(0.0, min(30.0, v_xy_est))
+
+             est_vx = v_xy_est * math.cos(yaw)
+             est_vy = v_xy_est * math.sin(yaw)
+
+        # Use observed velocity for control logic to avoid regression in behavior
+        # (The controller thresholds are tuned for observed velocity, which might be underestimated in Blind Mode)
+        v_total = math.sqrt(obs_vx**2 + obs_vy**2 + obs_vz**2)
 
         # State Transitions
         depression_angle = math.atan2(alt_est, dist_est)
@@ -242,15 +280,30 @@ class DPCFlightController:
         # Ghost Paths (Viz)
         ghost_paths = []
         path = []
-        sim_z = pz
-        if vz is not None:
-            sim_vz = vz
-        else:
-            sim_vz = 5.0 * math.sin(gamma_ref)
+        sim_x = 0.0 # Relative
+        sim_y = 0.0 # Relative
+        sim_z = pz  # Absolute Z
+
+        sim_vz = obs_vz
+        sim_vx = est_vx
+        sim_vy = est_vy
+
+        # If vz was None, we used est_vz above.
+        # If we had to rely on gamma_ref fallback (legacy), update it
+        if vz is None and abs(sim_vz) < 0.1 and abs(gamma_ref) > 0.1:
+             # Fallback if est_vz is still settling
+             sim_vz = 5.0 * math.sin(gamma_ref)
+             # Re-estimate horizontal
+             v_xy_est = sim_vz / math.tan(pitch) if abs(pitch) > 0.1 else 0.0
+             v_xy_est = max(0.0, min(30.0, v_xy_est))
+             sim_vx = v_xy_est * math.cos(yaw)
+             sim_vy = v_xy_est * math.sin(yaw)
 
         for i in range(20):
+             sim_x += sim_vx * self.dt
+             sim_y += sim_vy * self.dt
              sim_z += sim_vz * self.dt
-             path.append({'px': 0.0, 'py': 0.0, 'pz': sim_z})
+             path.append({'px': sim_x, 'py': sim_y, 'pz': sim_z})
         ghost_paths.append(path)
 
         return action, ghost_paths
