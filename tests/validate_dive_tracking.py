@@ -72,7 +72,7 @@ class DiveValidator:
         # Wait, if Sim Pitch is - = Nose Up.
         # Then we need -48.
         # Let's try positive.
-        pitch = (pitch_vec - camera_tilt)
+        pitch = -(pitch_vec - camera_tilt)
 
         return pitch, yaw
 
