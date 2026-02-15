@@ -145,7 +145,7 @@ class DPCFlightController:
                  # V_z is negative in dive. Pitch is negative. tan(pitch) is negative. V_xy is positive.
                  # Avoid div by zero (pitch < -0.1 ensures abs(tan) > 0.1)
                  v_xy_est = obs_vz / math.tan(pitch)
-                 v_xy_est = max(0.0, min(30.0, v_xy_est))
+                 v_xy_est = max(0.0, min(22.0, v_xy_est))
 
                  # Smooth update to filter noise
                  alpha = 0.1
@@ -155,8 +155,8 @@ class DPCFlightController:
                  self.est_vy = (1.0 - alpha) * self.est_vy + alpha * vy_new
              else:
                  # Braking or Level: Decay estimates (drag simulation) + Gravity Decel (Pitch)
-                 # Drag coeff 0.1 means speed decays by exp(-0.1*dt) per step
-                 decay = 0.995
+                 # During pull-up/braking, drag is higher (induced drag).
+                 decay = 0.95
 
                  # Gravity Deceleration along horizontal plane: g * sin(pitch)
                  # If pitch > 0 (Nose Up), we decelerate.
