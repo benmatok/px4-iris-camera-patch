@@ -135,56 +135,51 @@ class DPCFlightController:
         # If Horizontal Velocity is 0 (Blind Mode), estimate from Pitch and VZ
         # Assume coordinated flight: V_xy = V_z / tan(pitch)
 
-        # If OBSERVED velocity exists (Full Mode), update estimates to truth
-        if abs(obs_vx) > 0.1 or abs(obs_vy) > 0.1:
-             self.est_vx = obs_vx
-             self.est_vy = obs_vy
+        # ALWAYS Estimate or Decay (Ignore obs_vx/vy as per request)
+        if pitch < -0.1: # Coordinated Dive
+             # V_z is negative in dive. Pitch is negative. tan(pitch) is negative. V_xy is positive.
+             # Avoid div by zero (pitch < -0.1 ensures abs(tan) > 0.1)
+             v_xy_est = obs_vz / math.tan(pitch)
+             v_xy_est = max(0.0, min(22.0, v_xy_est))
+
+             # Smooth update to filter noise
+             alpha = 0.1
+             vx_new = v_xy_est * math.cos(yaw)
+             vy_new = v_xy_est * math.sin(yaw)
+             self.est_vx = (1.0 - alpha) * self.est_vx + alpha * vx_new
+             self.est_vy = (1.0 - alpha) * self.est_vy + alpha * vy_new
         else:
-             # Blind Mode: Estimate or Decay
-             if pitch < -0.1: # Coordinated Dive
-                 # V_z is negative in dive. Pitch is negative. tan(pitch) is negative. V_xy is positive.
-                 # Avoid div by zero (pitch < -0.1 ensures abs(tan) > 0.1)
-                 v_xy_est = obs_vz / math.tan(pitch)
-                 v_xy_est = max(0.0, min(22.0, v_xy_est))
+             # Braking or Level: Decay estimates (drag simulation) + Gravity Decel (Pitch)
+             # During pull-up/braking, drag is higher (induced drag).
+             decay = 0.95
 
-                 # Smooth update to filter noise
-                 alpha = 0.1
-                 vx_new = v_xy_est * math.cos(yaw)
-                 vy_new = v_xy_est * math.sin(yaw)
-                 self.est_vx = (1.0 - alpha) * self.est_vx + alpha * vx_new
-                 self.est_vy = (1.0 - alpha) * self.est_vy + alpha * vy_new
+             # Gravity Deceleration along horizontal plane: g * sin(pitch)
+             # If pitch > 0 (Nose Up), we decelerate.
+             # v_horz_new = v_horz_old * decay - (g * sin(pitch) * dt)
+             # We apply this scaling to est_vx and est_vy components.
+
+             v_horz = math.sqrt(self.est_vx**2 + self.est_vy**2)
+             if v_horz > 0.1:
+                 # Calculate deceleration due to pitch
+                 g = 9.81
+                 decel = g * math.sin(pitch) * self.dt
+
+                 # Apply drag decay first
+                 v_horz_dragged = v_horz * decay
+
+                 # Apply pitch decel (subtract if pitch>0, add if pitch<0 but we are in 'else' so likely pitch>= -0.1)
+                 # Wait, if pitch is positive (brake), sin(pitch)>0. We want to reduce speed.
+                 v_horz_new = v_horz_dragged - decel
+
+                 # Ensure we don't reverse direction or go negative due to over-subtraction
+                 v_horz_new = max(0.0, v_horz_new)
+
+                 scale = v_horz_new / v_horz
+                 self.est_vx *= scale
+                 self.est_vy *= scale
              else:
-                 # Braking or Level: Decay estimates (drag simulation) + Gravity Decel (Pitch)
-                 # During pull-up/braking, drag is higher (induced drag).
-                 decay = 0.95
-
-                 # Gravity Deceleration along horizontal plane: g * sin(pitch)
-                 # If pitch > 0 (Nose Up), we decelerate.
-                 # v_horz_new = v_horz_old * decay - (g * sin(pitch) * dt)
-                 # We apply this scaling to est_vx and est_vy components.
-
-                 v_horz = math.sqrt(self.est_vx**2 + self.est_vy**2)
-                 if v_horz > 0.1:
-                     # Calculate deceleration due to pitch
-                     g = 9.81
-                     decel = g * math.sin(pitch) * self.dt
-
-                     # Apply drag decay first
-                     v_horz_dragged = v_horz * decay
-
-                     # Apply pitch decel (subtract if pitch>0, add if pitch<0 but we are in 'else' so likely pitch>= -0.1)
-                     # Wait, if pitch is positive (brake), sin(pitch)>0. We want to reduce speed.
-                     v_horz_new = v_horz_dragged - decel
-
-                     # Ensure we don't reverse direction or go negative due to over-subtraction
-                     v_horz_new = max(0.0, v_horz_new)
-
-                     scale = v_horz_new / v_horz
-                     self.est_vx *= scale
-                     self.est_vy *= scale
-                 else:
-                     self.est_vx *= decay
-                     self.est_vy *= decay
+                 self.est_vx *= decay
+                 self.est_vy *= decay
 
         est_vx = self.est_vx
         est_vy = self.est_vy
@@ -251,8 +246,8 @@ class DPCFlightController:
             dive_bias = min(12.0, deg_depression * 0.7)
 
             # Also fade by altitude (double safety)
-            if alt_est < 20.0:
-                 dive_bias *= (alt_est / 20.0)
+            if alt_est < 30.0:
+                 dive_bias *= (alt_est / 30.0)
 
             gamma_ref = los - math.radians(dive_bias)
             speed_limit = 20.0 # Allow speed
@@ -274,13 +269,13 @@ class DPCFlightController:
 
         # Ground Safety Clamping for Gamma
         # Don't command a dive that intersects the ground closer than 10m ahead
-        if alt_est < 20.0:
-             # If shallow approach, flare early (20m lookahead) to avoid sagging
-             if depression_angle < math.radians(30.0):
-                 lookahead = 20.0
+        if alt_est < 40.0:
+             # If shallow approach, flare early (25m lookahead) to avoid sagging
+             if depression_angle < math.radians(40.0):
+                 lookahead = 25.0
              else:
                  # If steep approach, aim closer (allow steeper dive)
-                 lookahead = max(5.0, dist_est)
+                 lookahead = max(15.0, dist_est)
 
              safety_gamma = -math.atan2(alt_est, lookahead)
              gamma_ref = max(gamma_ref, safety_gamma)
