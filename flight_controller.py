@@ -165,23 +165,29 @@ class DPCFlightController:
 
         dist_3d = math.sqrt(dist_est*dist_est + alt_est*alt_est)
 
-        # --- RER (Looming) Estimation ---
-        # Primary: Visual Expansion (Observable)
-        # Secondary: Velocity / Distance (Estimator Fallback)
+        # --- TTC (Time-To-Collision) Estimation ---
+        # Primary: Visual TTC (Observable)
+        # Secondary: Distance / Velocity (Estimator Fallback)
 
-        rer_visual = 0.0
+        ttc_visual = 100.0 # Default large value
+
         if tracking_radius is not None and self.last_radius is not None:
-             # RER = (r_t - r_prev) / (r_prev * dt)
-             # Avoid div by zero
-             if self.last_radius > 0.001:
-                 raw_rer = (tracking_radius - self.last_radius) / (self.last_radius * self.dt)
-                 # Constrain logical RER (0 to 10.0)
-                 raw_rer = max(0.0, min(10.0, raw_rer))
+             # radius_rate = (r_t - r_prev) / dt
+             radius_rate = (tracking_radius - self.last_radius) / self.dt
 
-                 # Smooth it
-                 alpha_rer = 0.2
-                 self.rer_smooth = (1.0 - alpha_rer) * self.rer_smooth + alpha_rer * raw_rer
-                 rer_visual = self.rer_smooth
+             # Smooth rate
+             alpha_rr = 0.2
+             if self.rer_smooth == 0.0:
+                 self.rer_smooth = radius_rate # misuse var for rate
+             else:
+                 self.rer_smooth = (1.0 - alpha_rr) * self.rer_smooth + alpha_rr * radius_rate
+
+             # Calculate TTC = r / r_dot
+             if self.rer_smooth > 0.1: # Expanding
+                 ttc_visual = tracking_radius / self.rer_smooth
+                 ttc_visual = max(0.0, min(100.0, ttc_visual))
+             else:
+                 ttc_visual = 100.0 # Not expanding (hovering or retreating)
 
         if tracking_radius is not None:
              self.last_radius = tracking_radius
@@ -191,15 +197,13 @@ class DPCFlightController:
                  self.last_radius *= 0.95
 
         # Estimator Fallback
-        rer_est = v_total / max(1.0, dist_3d)
+        ttc_est = dist_3d / max(0.1, v_total)
 
-        # Select RER source
-        # Use visual if available and sensible (> 0.05), else fallback
-        # If we are very close, visual might blow up or be erratic, but usually it's the gold standard for "Time to Contact"
-        if tracking_radius is not None:
-             rer = rer_visual
+        # Select TTC source
+        if tracking_radius is not None and ttc_visual < 20.0:
+             ttc = ttc_visual
         else:
-             rer = rer_est
+             ttc = ttc_est
 
         # Visual Distance Refinement
         if tracking_uv:
@@ -223,10 +227,10 @@ class DPCFlightController:
 
         # Check for LAND transition (Critical Proximity)
         # pz is ENU (Altitude).
-        # Trigger earlier to allow spiral to develop
-        if self.flight_phase != "LAND" and dist_3d < 25.0:
+        # Trigger based on TTC or Distance
+        if self.flight_phase != "LAND" and (dist_3d < 20.0 or ttc < 1.5):
             self.flight_phase = "LAND"
-            logger.info(f"Switching to LAND phase (Dist3D: {dist_3d:.1f}, RER: {rer:.2f})")
+            logger.info(f"Switching to LAND phase (Dist3D: {dist_3d:.1f}, TTC: {ttc:.2f})")
 
         # --- Control Logic (CRAB SPIRAL) ---
         gamma_ref = 0.0
@@ -301,23 +305,27 @@ class DPCFlightController:
         roll_cmd_rad = 0.0
 
         # Override safety during spiral entry to allow descent
-        if self.flight_phase == "DIVE" and rer > rer_start:
+        if self.flight_phase == "DIVE" and ttc < 5.0:
              gamma_ref = los # Ignore safety clamp to spiral down
 
         if self.flight_phase == "LAND":
             # Terminal: HARD BANK
             roll_cmd_rad = max_bank
-            thrust_cmd = 0.8 # High thrust to maintain lift in bank
+            thrust_cmd = 0.85 # High thrust to maintain lift in bank
         else:
-            # Proportional Spiral
-            # Add time factor? No, RER is dynamic.
-            if rer > rer_start:
-                # Scale from 0 to max_bank
-                ratio = min(1.0, (rer - rer_start) / (rer_max - rer_start))
+            # Proportional Spiral based on TTC
+            # Start spiraling when TTC < 5.0s
+            # Max spiral when TTC < 2.0s
+            ttc_start = 5.0
+            ttc_crit = 1.5
+
+            if ttc < ttc_start:
+                # Scale from 0 to max_bank as TTC decreases
+                # 1.0 at ttc_crit, 0.0 at ttc_start
+                ratio = (ttc_start - ttc) / (ttc_start - ttc_crit)
+                ratio = max(0.0, min(1.0, ratio))
                 roll_cmd_rad = ratio * max_bank
 
-            # Reduce thrust slightly during spiral entry to drop altitude if needed?
-            # Or keep it up to maintain speed for RER?
             thrust_cmd = 0.6
 
         # 4. Thrust Logic (Maintain Speed / Altitude)
