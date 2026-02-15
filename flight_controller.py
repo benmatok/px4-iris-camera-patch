@@ -92,6 +92,7 @@ class DPCFlightController:
         dy = target_cmd[1]
         dist_est = math.sqrt(dx*dx + dy*dy)
         alt_est = max(0.1, pz - goal_z)
+        dist_3d = math.sqrt(dist_est*dist_est + alt_est*alt_est)
 
         # Visual Distance Refinement
         if tracking_uv:
@@ -102,19 +103,34 @@ class DPCFlightController:
              if depression > 0.1:
                   dist_visual = alt_est / math.tan(depression)
                   dist_est = dist_visual
+                  # Update 3D distance estimate roughly
+                  dist_3d = math.sqrt(dist_est*dist_est + alt_est*alt_est)
 
         # --- STATE MACHINE ---
         v_total = math.sqrt(state_obs.get('vx', 0.0)**2 + state_obs.get('vy', 0.0)**2 + state_obs.get('vz', 0.0)**2)
 
         # State Transitions
-        if self.flight_phase == "DIVE":
+        depression_angle = math.atan2(alt_est, dist_est)
+
+        if self.flight_phase == "DESCEND":
+            # Exit DESCEND when angle is shallow enough (< 50 deg) - Hysteresis
+            if depression_angle < math.radians(50.0):
+                self.flight_phase = "DIVE"
+                logger.info(f"Switching to DIVE phase (Angle: {math.degrees(depression_angle):.1f})")
+
+        elif self.flight_phase == "DIVE":
+            # Check for steep angle entry
+            if depression_angle > math.radians(65.0):
+                self.flight_phase = "DESCEND"
+                logger.info(f"Switching to DESCEND phase (Angle: {math.degrees(depression_angle):.1f})")
+
             # Transition to BRAKE if close or too fast
             # Adaptive braking distance: time-to-impact logic.
             brake_dist = max(15.0, v_total * 2.5)
 
-            if dist_est < brake_dist or v_total > 20.0:
+            if dist_3d < brake_dist or v_total > 20.0:
                 self.flight_phase = "BRAKE"
-                logger.info(f"Switching to BRAKE phase (Dist: {dist_est:.1f}, V: {v_total:.1f})")
+                logger.info(f"Switching to BRAKE phase (Dist3D: {dist_3d:.1f}, V: {v_total:.1f})")
         elif self.flight_phase == "BRAKE":
             # Transition to APPROACH when slow enough
             if v_total < 5.0:
@@ -128,7 +144,13 @@ class DPCFlightController:
 
         los = -math.atan2(alt_est, dist_est)
 
-        if self.flight_phase == "DIVE":
+        if self.flight_phase == "DESCEND":
+            # Slow Vertical Descent to reduce angle
+            # Pitch 0 to minimize horizontal drift, Low Thrust to drop
+            gamma_ref = math.radians(0.0)
+            thrust_cmd = 0.45
+
+        elif self.flight_phase == "DIVE":
             # Aggressive Dive
             dive_bias = 12.0
             if alt_est < 20.0:
@@ -142,7 +164,7 @@ class DPCFlightController:
             # Braking Maneuver: Pitch Up + Low Thrust
             gamma_ref = math.radians(15.0)
             speed_limit = 0.0 # We want to stop
-            thrust_cmd = 0.55 # Maintain lift
+            thrust_cmd = 0.6 # Maintain lift (Hover)
 
         elif self.flight_phase == "APPROACH":
             # Precision Tracking (Linear LOS)
@@ -155,12 +177,19 @@ class DPCFlightController:
         # Ground Safety Clamping for Gamma
         # Don't command a dive that intersects the ground closer than 10m ahead
         if alt_est < 20.0:
-             safety_gamma = -math.atan2(alt_est, 20.0)
+             # If shallow approach, flare early (20m lookahead) to avoid sagging
+             if depression_angle < math.radians(30.0):
+                 lookahead = 20.0
+             else:
+                 # If steep approach, aim closer (allow steeper dive)
+                 lookahead = max(5.0, dist_est)
+
+             safety_gamma = -math.atan2(alt_est, lookahead)
              gamma_ref = max(gamma_ref, safety_gamma)
 
-        # 3. Speed Control (Thrust) - active in DIVE and APPROACH
+        # 3. Speed Control (Thrust) - active in DIVE, APPROACH and DESCEND
         # In BRAKE, we override thrust manually above.
-        if self.flight_phase != "BRAKE" and vz is not None:
+        if self.flight_phase != "BRAKE" and self.flight_phase != "DESCEND" and vz is not None:
             vz_cmd = speed_limit * math.sin(gamma_ref)
             vz_err = vz_cmd - vz
             thrust_cmd = self.thrust_hover + self.kp_vz * vz_err
