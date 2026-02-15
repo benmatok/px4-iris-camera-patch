@@ -41,6 +41,10 @@ class DPCFlightController:
         # State Variables
         self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
 
+        # Blind Mode Estimation
+        self.est_pz = 100.0 # Initial assumption
+        self.est_vz = 0.0
+
         # GDPC / Estimator State
         self.estimated_params = {
             'mass': 1.0,
@@ -55,6 +59,8 @@ class DPCFlightController:
 
     def reset(self):
         self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
+        self.est_pz = 100.0
+        self.est_vz = 0.0
         # Reset estimator? Maybe keep learned params.
         logger.info(f"DPCFlightController reset. Mode: {self.mode}")
 
@@ -74,10 +80,72 @@ class DPCFlightController:
         Internal method for PID/Heuristic control.
         """
         # Unpack State
-        pz = state_obs.get('pz', 100.0) # Default if missing
-        vz = state_obs.get('vz')        # None if missing (Blind Mode)
+        pz = state_obs.get('pz')
+        vz = state_obs.get('vz')
         roll = state_obs['roll']
         pitch = state_obs['pitch']
+
+        # Blind Mode Altitude Estimation
+        if pz is None:
+            # Estimate Vz based on last action or simple kinematics
+            # Vz ~ Speed * sin(Pitch) ?
+            # Better: Integrate thrust and gravity? Too complex without mass.
+            # Simple heuristic: Vz ~ (Thrust - Hover) * Gain?
+            # Or assume we follow velocity commands perfectly?
+            # Let's use the commanded vz from previous step if available, or current kinematic projection.
+
+            # Current Kinematic Projection:
+            # Assume constant forward speed approx 10m/s if diving? Or hover?
+            # If thrust is high, we accelerate.
+
+            # Let's update est_pz based on a simple model.
+            # If we don't have vz, we use est_vz.
+
+            # Simple Gravity/Thrust Model for Vz
+            # az = (Thrust / Mass) * cos(roll) * cos(pitch) - g
+            # This is Z-Up.
+            # Thrust 0.5 ~ Hover (1g).
+            # Thrust 0.0 ~ -1g (Freefall).
+            # Thrust 1.0 ~ +1g (Climb).
+            # Normalised Thrust [0,1].
+
+            th = self.last_action['thrust']
+            # Assume T=0.6 is Hover (approx).
+            # Accel = (th - 0.6) * k_accel.
+            # If Pitch is -90 (Nose Down), Thrust accelerates X, not Z?
+            # Z-accel depends on Pitch.
+            # az_body = Thrust.
+            # az_world = Thrust * sin(pitch)? No.
+            # Z is Up.
+            # Body Z points Up (relative to body).
+            # If Pitch=0, Body Z = World Z.
+            # If Pitch=-90, Body Z = World X. Body X = World -Z.
+            # Thrust is along Body Z? Usually Body Z is up in quadcopter frame.
+            # So Thrust vector is R * [0,0,T].
+            # az_world = T * (cos(phi)cos(theta)) - g.
+
+            # We need to integrate this.
+            g = 9.81
+            T_max_accel = 20.0 # From drone.py (20 * thrust_coeff)
+            accel_z = (th * T_max_accel) * (math.cos(roll) * math.cos(pitch)) - g
+
+            # Damping/Drag
+            accel_z -= 0.1 * self.est_vz
+
+            self.est_vz += accel_z * self.dt
+            self.est_pz += self.est_vz * self.dt
+
+            # Floor
+            if self.est_pz < 0.0:
+                self.est_pz = 0.0
+                self.est_vz = 0.0
+
+            pz = self.est_pz
+            vz = self.est_vz
+        else:
+            # Sync estimator
+            self.est_pz = pz
+            self.est_vz = vz if vz is not None else 0.0
 
         goal_z = target_cmd[2]
 
@@ -114,10 +182,11 @@ class DPCFlightController:
 
         # Guidance Logic: Biased LOS (Flare Strategy)
         los = -math.atan2(alt_est, dist_est)
-        gamma_ref = los - math.radians(15.0)
+        gamma_ref = los - math.radians(10.0) # Reduced flare bias from 15 to 10
         gamma_ref = max(gamma_ref, math.radians(-85.0))
 
-        if dist_est < 30.0:
+        # Terminal Phase: Switch to pure LOS earlier
+        if dist_est < 50.0:
              gamma_ref = los
 
         # 3. Speed Control (Thrust)
@@ -242,11 +311,18 @@ class DPCFlightController:
         # 1. Initialize State from Observation
         px0 = 0.0
         py0 = 0.0
-        pz0 = state_obs.get('pz', 100.0)
+        pz0 = state_obs.get('pz')
+
+        # In GDPC mode, we might need estimating PZ too if missing?
+        # state_obs is dict. If 'pz' is missing, it returns None.
+        if pz0 is None:
+             pz0 = self.est_pz
 
         vx0 = state_obs.get('vx', 0.0)
         vy0 = state_obs.get('vy', 0.0)
-        vz0 = state_obs.get('vz', 0.0)
+        vz0 = state_obs.get('vz')
+        if vz0 is None:
+             vz0 = self.est_vz
 
         roll0 = state_obs.get('roll', 0.0)
         pitch0 = state_obs.get('pitch', 0.0)
