@@ -6,7 +6,7 @@ import numpy as np
 # Add parent directory to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from tests.validate_dive_tracking import DiveValidator
+from tests.validate_dive_tracking import DiveValidator, plot_results
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
@@ -66,6 +66,11 @@ def run_scenarios():
             "result": res_str,
             "final_dist": min_dist
         })
+
+        # Generate Plot
+        plot_filename = f"scenario_{sid}.png"
+        plot_results(hist, hist, None, filename=plot_filename)
+        print(f"Generated plot: {plot_filename}")
 
         print(f"{sid:<4} {alt:<6.1f} {dist:<6.1f} {res_str:<10} {min_dist:<12.2f} 25.0s")
 
