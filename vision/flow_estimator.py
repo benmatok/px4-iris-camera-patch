@@ -2,9 +2,11 @@ import numpy as np
 from scipy.optimize import least_squares
 
 class FlowVelocityEstimator:
-    def __init__(self, projector, num_points=200):
+    def __init__(self, projector, num_points=300):
         self.projector = projector
         self.num_points = num_points
+        self.filtered_foe_u = None
+        self.filtered_foe_v = None
         self.world_points = {}  # id -> np.array([x, y, z])
         self.next_id = 0
         self.prev_projections = {}  # id -> (u_norm, v_norm)
@@ -205,7 +207,16 @@ class FlowVelocityEstimator:
                 u_foe *= scale
                 v_foe *= scale
 
-            return (u_foe, v_foe)
+            # Filtering
+            alpha = 0.2
+            if self.filtered_foe_u is None:
+                 self.filtered_foe_u = u_foe
+                 self.filtered_foe_v = v_foe
+            else:
+                 self.filtered_foe_u = alpha * u_foe + (1 - alpha) * self.filtered_foe_u
+                 self.filtered_foe_v = alpha * v_foe + (1 - alpha) * self.filtered_foe_v
+
+            return (self.filtered_foe_u, self.filtered_foe_v)
 
         except np.linalg.LinAlgError:
             return None
