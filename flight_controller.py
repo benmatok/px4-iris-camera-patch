@@ -22,17 +22,9 @@ class DPCFlightController:
         self.k_yaw = 2.0
         self.k_roll = 2.0
 
-        # Trajectory Parameters
-        self.dive_angle_start = -60.0
-        self.dive_angle_end = -15.0
-
         # Velocity Control Gains
         self.kp_vz = 2.0
         self.thrust_hover = 0.6
-
-        # Pitch Control Gains
-        self.kp_pitch_v = 1.0
-        self.pitch_bias_max = math.radians(15.0)
 
         # FOE Bias Gains
         self.k_foe_yaw = 2.0
@@ -40,6 +32,7 @@ class DPCFlightController:
 
         # State Variables
         self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
+        self.flight_phase = "DIVE" # DIVE, BRAKE, APPROACH
 
         # Blind Mode Estimation
         self.est_pz = 100.0 # Initial assumption
@@ -54,123 +47,53 @@ class DPCFlightController:
 
         # GDPC Simulation Buffer (Allocated on first use)
         self.gdpc_buffer = None
-        self.num_ghosts = 20 # Number of parallel rollouts
-        self.horizon = 20    # Steps to look ahead
+        self.num_ghosts = 20
+        self.horizon = 20
 
     def reset(self):
         self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
         self.est_pz = 100.0
         self.est_vz = 0.0
-        # Reset estimator? Maybe keep learned params.
+        self.flight_phase = "DIVE"
         logger.info(f"DPCFlightController reset. Mode: {self.mode}")
 
     def compute_action(self, state_obs, target_cmd, tracking_uv=None, extra_yaw_rate=0.0, foe_uv=None):
-        """
-        Compute control action based on state and target.
-        """
-
         if self.mode == 'GDPC' and HAS_SIM:
             return self.compute_action_gdpc(state_obs, target_cmd, tracking_uv, foe_uv, extra_yaw_rate)
-
-        # Default PID / Heuristic Control
         return self._compute_heuristic_action(state_obs, target_cmd, tracking_uv, extra_yaw_rate, foe_uv)
 
     def _compute_heuristic_action(self, state_obs, target_cmd, tracking_uv=None, extra_yaw_rate=0.0, foe_uv=None):
-        """
-        Internal method for PID/Heuristic control.
-        """
         # Unpack State
         pz = state_obs.get('pz')
         vz = state_obs.get('vz')
         roll = state_obs['roll']
         pitch = state_obs['pitch']
 
-        # Blind Mode Altitude Estimation
+        # Blind Mode Logic
         if pz is None:
-            # Estimate Vz based on last action or simple kinematics
-            # Vz ~ Speed * sin(Pitch) ?
-            # Better: Integrate thrust and gravity? Too complex without mass.
-            # Simple heuristic: Vz ~ (Thrust - Hover) * Gain?
-            # Or assume we follow velocity commands perfectly?
-            # Let's use the commanded vz from previous step if available, or current kinematic projection.
-
-            # Current Kinematic Projection:
-            # Assume constant forward speed approx 10m/s if diving? Or hover?
-            # If thrust is high, we accelerate.
-
-            # Let's update est_pz based on a simple model.
-            # If we don't have vz, we use est_vz.
-
-            # Simple Gravity/Thrust Model for Vz
-            # az = (Thrust / Mass) * cos(roll) * cos(pitch) - g
-            # This is Z-Up.
-            # Thrust 0.5 ~ Hover (1g).
-            # Thrust 0.0 ~ -1g (Freefall).
-            # Thrust 1.0 ~ +1g (Climb).
-            # Normalised Thrust [0,1].
-
             th = self.last_action['thrust']
-            # Assume T=0.6 is Hover (approx).
-            # Accel = (th - 0.6) * k_accel.
-            # If Pitch is -90 (Nose Down), Thrust accelerates X, not Z?
-            # Z-accel depends on Pitch.
-            # az_body = Thrust.
-            # az_world = Thrust * sin(pitch)? No.
-            # Z is Up.
-            # Body Z points Up (relative to body).
-            # If Pitch=0, Body Z = World Z.
-            # If Pitch=-90, Body Z = World X. Body X = World -Z.
-            # Thrust is along Body Z? Usually Body Z is up in quadcopter frame.
-            # So Thrust vector is R * [0,0,T].
-            # az_world = T * (cos(phi)cos(theta)) - g.
-
-            # We need to integrate this.
             g = 9.81
-            T_max_accel = 20.0 # From drone.py (20 * thrust_coeff)
+            T_max_accel = 20.0
             accel_z = (th * T_max_accel) * (math.cos(roll) * math.cos(pitch)) - g
-
-            # Damping/Drag
             accel_z -= 0.1 * self.est_vz
-
             self.est_vz += accel_z * self.dt
             self.est_pz += self.est_vz * self.dt
-
-            # Floor
             if self.est_pz < 0.0:
                 self.est_pz = 0.0
                 self.est_vz = 0.0
-
             pz = self.est_pz
             vz = self.est_vz
         else:
-            # Sync estimator
             self.est_pz = pz
             self.est_vz = vz if vz is not None else 0.0
 
         goal_z = target_cmd[2]
-
-        # 1. Yaw Control
-        yaw_rate_cmd = 0.0
-        if tracking_uv:
-            u, v = tracking_uv
-            # FOE Bias Logic for Yaw
-            if foe_uv:
-                foe_u, foe_v = foe_uv
-                # We want Target U to align with FOE U (Flight Direction)
-                # Error = u - foe_u
-                yaw_rate_cmd = self.k_foe_yaw * (u - foe_u)
-            else:
-                # Standard centering
-                yaw_rate_cmd = self.k_yaw * u
-        else:
-            yaw_rate_cmd = extra_yaw_rate
-
-        # 2. Estimate Distance and Compute Adaptive Gamma Ref
         dx = target_cmd[0]
         dy = target_cmd[1]
         dist_est = math.sqrt(dx*dx + dy*dy)
         alt_est = max(0.1, pz - goal_z)
 
+        # Visual Distance Refinement
         if tracking_uv:
              _, v = tracking_uv
              tilt_rad = math.radians(30.0)
@@ -180,57 +103,87 @@ class DPCFlightController:
                   dist_visual = alt_est / math.tan(depression)
                   dist_est = dist_visual
 
-        # Guidance Logic: Biased LOS (Flare Strategy)
-        # We use a parabolic pitch strategy: Aggressive dive then Linear approach.
+        # --- STATE MACHINE ---
+        v_total = math.sqrt(state_obs.get('vx', 0.0)**2 + state_obs.get('vy', 0.0)**2 + state_obs.get('vz', 0.0)**2)
+
+        # State Transitions
+        if self.flight_phase == "DIVE":
+            # Transition to BRAKE if close or too fast
+            # Adaptive braking distance: time-to-impact logic.
+            brake_dist = max(15.0, v_total * 2.5)
+
+            if dist_est < brake_dist or v_total > 20.0:
+                self.flight_phase = "BRAKE"
+                logger.info(f"Switching to BRAKE phase (Dist: {dist_est:.1f}, V: {v_total:.1f})")
+        elif self.flight_phase == "BRAKE":
+            # Transition to APPROACH when slow enough
+            if v_total < 5.0:
+                self.flight_phase = "APPROACH"
+                logger.info(f"Switching to APPROACH phase (Dist: {dist_est:.1f}, V: {v_total:.1f})")
+
+        # Control Logic per State
+        gamma_ref = 0.0
+        thrust_cmd = 0.5
+        speed_limit = 10.0
+
         los = -math.atan2(alt_est, dist_est)
 
-        # Aggressive Phase: Dive significantly below LOS
-        gamma_ref = los - math.radians(10.0)
+        if self.flight_phase == "DIVE":
+            # Aggressive Dive
+            dive_bias = 12.0
+            if alt_est < 20.0:
+                dive_bias = 12.0 * (alt_est / 20.0)
+
+            gamma_ref = los - math.radians(dive_bias)
+            speed_limit = 20.0 # Allow speed
+            thrust_cmd = 0.6 # Base thrust
+
+        elif self.flight_phase == "BRAKE":
+            # Braking Maneuver: Pitch Up + Low Thrust
+            gamma_ref = math.radians(15.0)
+            speed_limit = 0.0 # We want to stop
+            thrust_cmd = 0.55 # Maintain lift
+
+        elif self.flight_phase == "APPROACH":
+            # Precision Tracking (Linear LOS)
+            gamma_ref = los
+            speed_limit = 8.0 # Slow approach
+            thrust_cmd = 0.5
+
         gamma_ref = max(gamma_ref, math.radians(-85.0))
 
-        # Linear Phase: Switch to pure LOS when close to target (e.g. < 50m)
-        if dist_est < 50.0:
-             gamma_ref = los
+        # Ground Safety Clamping for Gamma
+        # Don't command a dive that intersects the ground closer than 10m ahead
+        if alt_est < 20.0:
+             safety_gamma = -math.atan2(alt_est, 20.0)
+             gamma_ref = max(gamma_ref, safety_gamma)
 
-        # 3. Speed Control (Thrust)
-        if vz is not None:
-            # Closed-Loop Speed Control
-            # Adaptive speed limit based on distance to prevent overshoot
-            speed_limit = max(5.0, min(15.0, dist_est * 0.3))
-
+        # 3. Speed Control (Thrust) - active in DIVE and APPROACH
+        # In BRAKE, we override thrust manually above.
+        if self.flight_phase != "BRAKE" and vz is not None:
             vz_cmd = speed_limit * math.sin(gamma_ref)
             vz_err = vz_cmd - vz
             thrust_cmd = self.thrust_hover + self.kp_vz * vz_err
             thrust_cmd = max(0.1, min(1.0, thrust_cmd))
-        else:
-            thrust_cmd = self.thrust_hover
-            vz_err = 0.0
 
         # 4. Pitch Control
         pitch_cmd = gamma_ref
 
-        # Velocity-Based Pitch Bias (Air Brake)
-        # If we are falling too fast (vz_err > 0), pitch up to use drag/lift
-        if vz_err > 0.0:
-             pitch_brake = 0.1 * vz_err # 0.1 rad per m/s error
-             pitch_brake = min(pitch_brake, 0.5) # Cap at ~30 deg correction
-             pitch_cmd += pitch_brake
-
-        # FOE Bias Logic for Pitch
-        if tracking_uv and foe_uv:
-             # Target V vs FOE V
-             # If Target V > FOE V (Target is "Below" FOE in image)
-             # We need to dive steeper -> Reduce Pitch
-             _, v = tracking_uv
-             _, foe_v = foe_uv
-
-             pitch_bias = -self.k_foe_pitch * (v - foe_v)
-             pitch_bias = max(-0.5, min(0.5, pitch_bias))
-             pitch_cmd += pitch_bias
-
         # Pitch Rate Loop
         k_pitch_ang = 5.0
         pitch_rate_cmd = k_pitch_ang * (pitch - pitch_cmd)
+
+        # 1. Yaw Control
+        yaw_rate_cmd = 0.0
+        if tracking_uv:
+            u, v = tracking_uv
+            if foe_uv:
+                foe_u, foe_v = foe_uv
+                yaw_rate_cmd = self.k_foe_yaw * (u - foe_u)
+            else:
+                yaw_rate_cmd = self.k_yaw * u
+        else:
+            yaw_rate_cmd = extra_yaw_rate
 
         # 5. Roll Control
         roll_rate_cmd = self.k_roll * (0.0 - roll)

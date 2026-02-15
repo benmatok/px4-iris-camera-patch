@@ -138,11 +138,9 @@ class TestShallowDive(unittest.TestCase):
             (30, 100),   # Shallow/Short (-16 deg) - PASSED
             (20, 60),    # Very Shallow (-18 deg) - PASSED
 
-            # The following scenarios are currently failing due to controller limitations
-            # in handling steep/high-energy dives (overshoot).
-            # (100, 300),  # High/Long (-18 deg) - Fail (MinDist ~9m)
-            # (40, 80),    # Steeper (-26 deg) - Fail (MinDist ~4.5m)
-            # (60, 100)    # Steep (-30 deg) - Fail (MinDist ~12m)
+            (100, 300),  # High/Long (-18 deg)
+            (40, 80),    # Steeper (-26 deg)
+            (60, 100)    # Steep (-30 deg)
         ]
 
         results = []
