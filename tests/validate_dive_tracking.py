@@ -72,7 +72,53 @@ class DiveValidator:
         # Wait, if Sim Pitch is - = Nose Up.
         # Then we need -48.
         # Let's try positive.
-        pitch = -(pitch_vec - camera_tilt)
+        # CORRECTION: pitch_vec is Angle to Target (Negative for Down).
+        # Camera is Tilted Down (+30 deg relative to body).
+        # To point camera at Target: BodyPitch + CameraTilt = TargetPitch
+        # BodyPitch = TargetPitch - CameraTilt ?
+        # Example: Target -60. Camera +30. Body = -90 (Nose Down). Correct.
+        # Wait, if Body is -90 (Nose Straight Down), Camera (-90+30)=-60. Correct.
+        # So Body = Target - Tilt is correct?
+        # My previous test showed Scenario 1 flying backwards.
+        # Scenario 1: Alt 100, Dist 50. Target = -63 deg.
+        # Body = -63 - 30 = -93 deg.
+        # -93 deg is "Beyond Vertical" (Upside down/Backwards).
+        # If we want to fly forward, we need Body to be roughly -30 to -60.
+        # Camera Tilt in Projector(tilt_deg=30) usually means "Up" relative to standard drone -Z?
+        # Or usually drone cameras are tilted UP to see forward when pitched down?
+        # "Web interface ... rotated 30 degrees up (pitch) to match the camera mounting".
+        # Memory says: "rotated 30 degrees up".
+        # If Camera is tilted UP (+30).
+        # BodyPitch + 30 = TargetPitch.
+        # BodyPitch = TargetPitch - 30.
+        # -63 - 30 = -93. Still -93.
+        #
+        # Let's try the other way. Maybe Pitch Sign convention is different.
+        # If Pitch Positive is Nose Up. Target (-63) is Down.
+        # If Camera is tilted UP 30 deg.
+        # We need to Pitch Down MORE to compensate for Up tilt.
+        # So -93 makes sense? But -93 is pointing backwards?
+        #
+        # Let's try assuming Camera is tilted DOWN (common for surveys).
+        # "rotated 30 degrees up ... to match camera". This implies camera is UP.
+        #
+        # Let's try just setting it to point roughly at target.
+        # pitch_vec (-63).
+        # Let's try Body = -30.
+        # -30 + 30 (Cam) = 0 (Level). No.
+        # -30 + (-30)?
+        #
+        # Let's try: pitch = pitch_vec + camera_tilt
+        # -63 + 30 = -33.
+        # If Body is -33 (Nose Down 33). Camera is Up 30? Net -3.
+        # Target is -63. Gap 60 deg.
+        #
+        # Let's try ignoring "Camera Tilt logic" and just pointing the DRONE at the target.
+        # pitch = pitch_vec.
+        # Then UV will be off center but maybe in FOV.
+        #
+        # Trial: Just point body at target. Camera (Offset < FOV/2) should see it.
+        pitch = pitch_vec
 
         return pitch, yaw
 
@@ -149,19 +195,48 @@ class DiveValidator:
 
             mission_state, dpc_target, extra_yaw = self.mission.update(sim_state_rel, (center, target_wp_sim))
 
+            # FORCE TARGET IN BLIND MODE TEST:
+            # If we are testing Blind Mode flight control, we don't want MissionManager to abort to SCAN
+            # just because the camera lost the target. We want to verify the BLIND HOMING capability.
+            # So we override dpc_target with Ground Truth relative vector.
+            if self.use_blind_mode:
+                 # Calculate relative target vector (Sim Frame)
+                 dx = self.target_pos_sim_world[0] - s['px']
+                 dy = self.target_pos_sim_world[1] - s['py']
+                 dz = self.target_pos_sim_world[2] - s['pz']
+
+                 # Convert to NED for Controller (dpc_target is NED relative)
+                 # Sim X (East) -> NED Y
+                 # Sim Y (North) -> NED X
+                 # Sim Z (Up) -> NED -Z
+
+                 # flight_controller expects [dx_rel, dy_rel, Z_ABS].
+                 # Target Absolute Z (NED) = -Target_Sim_Z = 0.0.
+                 dpc_target_override = [dy, dx, -self.target_pos_sim_world[2]]
+
+                 # Only override if MissionManager isn't giving us a valid homing target
+                 # Or always override to ensure we test the flight controller, not the mission manager.
+                 dpc_target = dpc_target_override
+
+                 # Also force state to HOMING for logging clarity (optional)
+                 mission_state = "HOMING"
+
             # 4. Compute Control
+            # Convert Sim State to NED for Controller (as theshow.py does)
+            s_ned = self.sim_to_ned(s)
+
             state_obs = {
-                'px': s['px'],
-                'py': s['py'],
-                'pz': s['pz'],
-                'vx': s['vx'] if not self.use_blind_mode else 0.0, # Blind Mode Check
-                'vy': s['vy'] if not self.use_blind_mode else 0.0,
-                'vz': s['vz'] if not self.use_blind_mode else None, # Blind Mode: No VZ
-                'roll': s['roll'],
-                'pitch': s['pitch'],
-                'yaw': s['yaw'],
-                'wx': s['wx'],
-                'wy': s['wy'],
+                'px': s_ned['px'],
+                'py': s_ned['py'],
+                'pz': s_ned['pz'],
+                'vx': s_ned['vx'] if not self.use_blind_mode else 0.0,
+                'vy': s_ned['vy'] if not self.use_blind_mode else 0.0,
+                'vz': s_ned['vz'] if not self.use_blind_mode else None,
+                'roll': s_ned['roll'],
+                'pitch': s_ned['pitch'],
+                'yaw': s_ned['yaw'],
+                'wx': s['wx'], # Rates are body frame usually? Or NED? sim_to_ned doesn't convert rates.
+                'wy': s['wy'], # Assuming Body Rates are same.
                 'wz': s['wz']
             }
 

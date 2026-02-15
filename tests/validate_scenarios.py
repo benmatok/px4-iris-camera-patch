@@ -34,10 +34,10 @@ def run_scenarios():
 
         # Instantiate Validator matching TheShow configuration
         # use_ground_truth=True (Perfect Tracking)
-        # use_blind_mode=False (Full VZ sensor - Sighted)
+        # use_blind_mode=True (No VZ sensor - Blind Sensor Mode)
         validator = DiveValidator(
             use_ground_truth=True,
-            use_blind_mode=False,
+            use_blind_mode=True,
             init_alt=alt,
             init_dist=dist
         )

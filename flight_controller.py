@@ -19,8 +19,9 @@ class DPCFlightController:
         self.mode = mode
 
         # PID Gains
-        self.k_yaw = 2.0
-        self.k_roll = 2.0
+        self.k_yaw = 3.0 # Stronger Yaw for precise tracking
+        self.k_roll = 4.0 # Stronger Roll response for crab
+        self.k_pitch = 4.0
 
         # Velocity Control Gains
         self.kp_vz = 2.0
@@ -32,13 +33,15 @@ class DPCFlightController:
 
         # State Variables
         self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
-        self.flight_phase = "DIVE" # DIVE, BRAKE, APPROACH
+        self.flight_phase = "DIVE" # DIVE, BRAKE, APPROACH, LAND
 
         # Blind Mode Estimation
-        self.est_pz = 100.0 # Initial assumption
+        self.est_pz = -100.0 # Initial assumption (NED Z, Altitude 100 = -100)
         self.est_vz = 0.0
         self.est_vx = 0.0
         self.est_vy = 0.0
+        self.last_pz_obs = None # For discrete differentiation
+        self.last_dist_3d = None # For calculating closing rate
 
         # GDPC / Estimator State
         self.estimated_params = {
@@ -54,10 +57,12 @@ class DPCFlightController:
 
     def reset(self):
         self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
-        self.est_pz = 100.0
+        self.est_pz = -100.0
         self.est_vz = 0.0
         self.est_vx = 0.0
         self.est_vy = 0.0
+        self.last_pz_obs = None
+        self.last_dist_3d = None
         self.flight_phase = "DIVE"
         logger.info(f"DPCFlightController reset. Mode: {self.mode}")
 
@@ -68,47 +73,96 @@ class DPCFlightController:
 
     def _compute_heuristic_action(self, state_obs, target_cmd, tracking_uv=None, extra_yaw_rate=0.0, foe_uv=None):
         # Unpack State
-        pz = state_obs.get('pz')
-        vz = state_obs.get('vz')
+        # Convert Z/Vz to ENU (Up+) for internal logic to match control expectations (Thrust increases Z).
+        # Input 'pz' and 'vz' are NED (Down+).
+        pz_ned = state_obs.get('pz')
+        vz_ned = state_obs.get('vz')
+
+        pz = -pz_ned if pz_ned is not None else None
+        vz = -vz_ned if vz_ned is not None else None
+
         roll = state_obs['roll']
         pitch = state_obs['pitch']
         yaw = state_obs['yaw']
 
-        # Blind Mode Logic
-        if pz is None:
-            th = self.last_action['thrust']
-            g = 9.81
-            T_max_accel = 20.0
-            accel_z = (th * T_max_accel) * (math.cos(roll) * math.cos(pitch)) - g
-            accel_z -= 0.1 * self.est_vz
-            self.est_vz += accel_z * self.dt
-            self.est_pz += self.est_vz * self.dt
-            if self.est_pz < 0.0:
-                self.est_pz = 0.0
-                self.est_vz = 0.0
-            pz = self.est_pz
-            vz = self.est_vz
-        else:
-            self.est_pz = pz
-            if vz is not None:
-                self.est_vz = vz
-            else:
-                # Blind Mode with Baro (theshow.py case)
-                # Keep integrating est_vz but correct est_pz
-                th = self.last_action['thrust']
-                g = 9.81
-                T_max_accel = 20.0
-                accel_z = (th * T_max_accel) * (math.cos(roll) * math.cos(pitch)) - g
-                accel_z -= 0.1 * self.est_vz
-                self.est_vz += accel_z * self.dt
-                # No position integration here, pz is known.
+        # --- Blind Mode Velocity Estimation (NO SENSORS PERMITTED) ---
+        if vz is None:
+            if pz is not None and self.last_pz_obs is not None:
+                # pz is ENU here
+                raw_vz = (pz - self.last_pz_obs) / self.dt
+                alpha_vz = 0.5
+                self.est_vz = (1.0 - alpha_vz) * self.est_vz + alpha_vz * raw_vz
+            elif pz is not None:
+                 self.est_vz = 0.0
 
-        goal_z = target_cmd[2]
+            self.last_pz_obs = pz
+            obs_vz = self.est_vz
+        else:
+            obs_vz = vz
+            self.est_vz = vz
+            self.last_pz_obs = pz
+
+        obs_vx = state_obs.get('vx', 0.0)
+        obs_vy = state_obs.get('vy', 0.0)
+
+        # We assume X/Y are standard (ENU or NED doesn't matter if we just use magnitude,
+        # but Yaw direction matters. Yaw is NED. X/Y are NED. This is fine.)
+
+        # We need to use obs_vz (ENU) to estimate horizontal speed.
+        # Dive: Pitch < -0.1 (Nose Down).
+        # ENU Vz is Negative.
+        # tan(pitch) is Negative.
+        # V_xy = V_z / tan(pitch) = (- / -) = +. Correct.
+
+        is_blind_xy = (abs(obs_vx) < 0.001 and abs(obs_vy) < 0.001 and abs(obs_vz) > 0.1)
+
+        if is_blind_xy:
+            if pitch < -0.1: # Coordinated Dive (Nose Down)
+                 v_xy_est = obs_vz / math.tan(pitch)
+                 v_xy_est = max(0.0, min(30.0, v_xy_est))
+
+                 alpha = 0.1
+                 vx_new = v_xy_est * math.cos(yaw)
+                 vy_new = v_xy_est * math.sin(yaw)
+                 self.est_vx = (1.0 - alpha) * self.est_vx + alpha * vx_new
+                 self.est_vy = (1.0 - alpha) * self.est_vy + alpha * vy_new
+            else:
+                 decay = 0.98
+                 self.est_vx *= decay
+                 self.est_vy *= decay
+
+            est_vx = self.est_vx
+            est_vy = self.est_vy
+        else:
+            est_vx = obs_vx
+            est_vy = obs_vy
+            self.est_vx = obs_vx
+            self.est_vy = obs_vy
+
+        v_total = math.sqrt(est_vx**2 + est_vy**2 + obs_vz**2)
+
+        # --- Target Logic ---
+        # No more "Side Offset" virtual targets.
+        # We target the TRUE target (0,0 relative) and inject ROLL bias for spiral.
         dx = target_cmd[0]
         dy = target_cmd[1]
+        goal_z = target_cmd[2]
+
         dist_est = math.sqrt(dx*dx + dy*dy)
-        alt_est = max(0.1, pz - goal_z)
+
+        # pz is ENU (Altitude). goal_z is NED (Relative or Absolute).
+        # target_cmd[2] is Absolute NED Z (0.0).
+        # We want Altitude above target.
+        # Target Z (ENU) = -target_cmd[2] = 0.0.
+        # alt_est = pz - Target_Z_ENU = pz.
+        alt_est = max(0.1, pz - (-goal_z))
+
         dist_3d = math.sqrt(dist_est*dist_est + alt_est*alt_est)
+
+        # RER (Looming) Estimation
+        # RER ~ Velocity / Distance
+        # Expansion Rate = v / d
+        rer = v_total / max(1.0, dist_3d)
 
         # Visual Distance Refinement
         if tracking_uv:
@@ -119,236 +173,139 @@ class DPCFlightController:
              if depression > 0.1:
                   dist_visual = alt_est / math.tan(depression)
                   dist_est = dist_visual
-                  # Update 3D distance estimate roughly
                   dist_3d = math.sqrt(dist_est*dist_est + alt_est*alt_est)
+                  rer = v_total / max(1.0, dist_3d) # Recalculate RER with better dist
 
         # --- STATE MACHINE ---
-        # Estimate horizontal speed if not available
-        obs_vx = state_obs.get('vx', 0.0)
-        obs_vy = state_obs.get('vy', 0.0)
-        obs_vz = state_obs.get('vz', 0.0)
-
-        # If Blind Mode (no VZ), rely on est_vz
-        if vz is None:
-            obs_vz = self.est_vz
-
-        # If Horizontal Velocity is 0 (Blind Mode), estimate from Pitch and VZ
-        # Assume coordinated flight: V_xy = V_z / tan(pitch)
-
-        # ALWAYS Estimate or Decay (Ignore obs_vx/vy as per request)
-        if pitch < -0.1: # Coordinated Dive
-             # V_z is negative in dive. Pitch is negative. tan(pitch) is negative. V_xy is positive.
-             # Avoid div by zero (pitch < -0.1 ensures abs(tan) > 0.1)
-             v_xy_est = obs_vz / math.tan(pitch)
-             v_xy_est = max(0.0, min(22.0, v_xy_est))
-
-             # Smooth update to filter noise
-             alpha = 0.1
-             vx_new = v_xy_est * math.cos(yaw)
-             vy_new = v_xy_est * math.sin(yaw)
-             self.est_vx = (1.0 - alpha) * self.est_vx + alpha * vx_new
-             self.est_vy = (1.0 - alpha) * self.est_vy + alpha * vy_new
-        else:
-             # Braking or Level: Decay estimates (drag simulation) + Gravity Decel (Pitch)
-             # During pull-up/braking, drag is higher (induced drag).
-             decay = 0.95
-
-             # Gravity Deceleration along horizontal plane: g * sin(pitch)
-             # If pitch > 0 (Nose Up), we decelerate.
-             # v_horz_new = v_horz_old * decay - (g * sin(pitch) * dt)
-             # We apply this scaling to est_vx and est_vy components.
-
-             v_horz = math.sqrt(self.est_vx**2 + self.est_vy**2)
-             if v_horz > 0.1:
-                 # Calculate deceleration due to pitch
-                 g = 9.81
-                 decel = g * math.sin(pitch) * self.dt
-
-                 # Apply drag decay first
-                 v_horz_dragged = v_horz * decay
-
-                 # Apply pitch decel (subtract if pitch>0, add if pitch<0 but we are in 'else' so likely pitch>= -0.1)
-                 # Wait, if pitch is positive (brake), sin(pitch)>0. We want to reduce speed.
-                 v_horz_new = v_horz_dragged - decel
-
-                 # Ensure we don't reverse direction or go negative due to over-subtraction
-                 v_horz_new = max(0.0, v_horz_new)
-
-                 scale = v_horz_new / v_horz
-                 self.est_vx *= scale
-                 self.est_vy *= scale
-             else:
-                 self.est_vx *= decay
-                 self.est_vy *= decay
-
-        est_vx = self.est_vx
-        est_vy = self.est_vy
-
-        # Use ESTIMATED total velocity for control logic in Blind Mode to ensure safety
-        # (If we use 0, we dive dangerously close without braking)
-        v_total = math.sqrt(est_vx**2 + est_vy**2 + obs_vz**2)
-
-        # State Transitions
         depression_angle = math.atan2(alt_est, dist_est)
-        # Brake distance 3.0x velocity (Reduced from 4.0 for closer approach)
-        brake_dist = max(15.0, v_total * 3.0)
 
-        # Transition to LAND if very close (e.g. < 20m)
-        # This ensures final 5 seconds are low velocity.
-        # Check pz (altitude) to avoid false trigger at startup (TAKEOFF at altitude)
-        if self.flight_phase != "LAND" and dist_3d < 20.0 and pz is not None and pz < 20.0:
+        # Simple Logic: Only DIVE and LAND (Spiral/Brake)
+        # We use RER to determine "intensity" of spiral.
+
+        # Check for LAND transition (Critical Proximity)
+        # pz is ENU (Altitude).
+        # Trigger earlier to allow spiral to develop
+        if self.flight_phase != "LAND" and dist_3d < 25.0:
             self.flight_phase = "LAND"
-            logger.info(f"Switching to LAND phase (Dist3D: {dist_3d:.1f}, Alt: {pz:.1f})")
+            logger.info(f"Switching to LAND phase (Dist3D: {dist_3d:.1f}, RER: {rer:.2f})")
 
-        if self.flight_phase == "DESCEND":
-            # Exit DESCEND when angle is shallow enough (< 50 deg) - Hysteresis
-            if depression_angle < math.radians(50.0):
-                self.flight_phase = "DIVE"
-                logger.info(f"Switching to DIVE phase (Angle: {math.degrees(depression_angle):.1f})")
-
-        elif self.flight_phase == "DIVE":
-            # Check for steep angle entry (Threshold 60.0 deg)
-            if depression_angle > math.radians(60.0):
-                self.flight_phase = "DESCEND"
-                logger.info(f"Switching to DESCEND phase (Angle: {math.degrees(depression_angle):.1f})")
-
-            # Transition to BRAKE if close or too fast
-            if dist_3d < brake_dist or v_total > 20.0:
-                self.flight_phase = "BRAKE"
-                logger.info(f"Switching to BRAKE phase (Dist3D: {dist_3d:.1f}, V: {v_total:.1f})")
-        elif self.flight_phase == "BRAKE":
-            # Transition to APPROACH when slow enough
-            if v_total < 5.0:
-                self.flight_phase = "APPROACH"
-                logger.info(f"Switching to APPROACH phase (Dist: {dist_est:.1f}, V: {v_total:.1f})")
-
-            # Reset to DIVE if distance is large (e.g. false trigger or lost track)
-            if dist_3d > brake_dist + 50.0:
-                self.flight_phase = "DIVE"
-                logger.info(f"Resetting to DIVE phase (Dist3D: {dist_3d:.1f})")
-
-        elif self.flight_phase == "APPROACH":
-             # Reset to DIVE if distance is large
-            if dist_3d > 60.0:
-                self.flight_phase = "DIVE"
-                logger.info(f"Resetting to DIVE phase (Dist3D: {dist_3d:.1f})")
-
-        elif self.flight_phase == "LAND":
-            pass
-
-        # Control Logic per State
+        # --- Control Logic (CRAB SPIRAL) ---
         gamma_ref = 0.0
         thrust_cmd = 0.5
-        speed_limit = 10.0
+        speed_limit = 15.0 # Max speed
 
         los = -math.atan2(alt_est, dist_est)
 
-        if self.flight_phase == "DESCEND":
-            # Slow Vertical Descent to reduce angle
-            # Pitch 0 to minimize horizontal drift, Low Thrust to drop
-            gamma_ref = math.radians(0.0)
-            thrust_cmd = 0.45
-
-        elif self.flight_phase == "DIVE":
-            # Aggressive Dive
-            deg_depression = math.degrees(depression_angle)
-
-            # Calculate Time to Collision
-            ttc = dist_3d / (v_total + 0.1)
-
-            # Attack angle starts steep and reduces to 5 degrees at collision
-            # Scale bias with TTC
-            dive_bias = 5.0 + min(20.0, ttc * 3.0)
-
-            gamma_ref = los - math.radians(dive_bias)
-            speed_limit = 20.0 # Allow speed
-            thrust_cmd = 0.6 # Base thrust
-
-        elif self.flight_phase == "BRAKE":
-            # Braking Maneuver: Pitch Up + Low Thrust
-            gamma_ref = math.radians(15.0)
-            speed_limit = 0.0 # We want to stop
-            thrust_cmd = 0.6 # Maintain lift (Hover)
-
-        elif self.flight_phase == "APPROACH":
-            # Precision Tracking (Linear LOS)
-            # Maintain 5 degree attack angle in terminal phase
-            gamma_ref = los - math.radians(5.0)
-            speed_limit = 8.0 # Slow approach
-            thrust_cmd = 0.5
-
-        elif self.flight_phase == "LAND":
-            # Soft Landing
-            speed_limit = 2.0
-            # Pitch Up (Flare) - Assuming Controller expects Angle of Attack or Path Angle
-            # In NED, Pitch Down is negative. Gamma Ref is path angle.
-            # To flare, we want gamma_ref to be shallow (close to 0) or even positive (climb).
-            # Let's set it to 0.0 (Level off) or slight climb (+5 deg)
-            gamma_ref = math.radians(10.0)
-            thrust_cmd = 0.55
-
-        gamma_ref = max(gamma_ref, math.radians(-85.0))
-
-        # Ground Safety Clamping for Gamma
-        # Don't command a dive that intersects the ground closer than 10m ahead
-        if alt_est < 40.0:
-             # For shallow approaches, use current distance as lookahead
-             # to avoid aiming short of the target (which causes premature ground impact).
-             if depression_angle < math.radians(40.0):
-                 lookahead = max(dist_est, 25.0)
-             else:
-                 # If steep approach, aim closer (allow steeper dive)
-                 lookahead = max(15.0, dist_est)
-
-             safety_gamma = -math.atan2(alt_est, lookahead)
-             gamma_ref = max(gamma_ref, safety_gamma)
-
-        # Override safety for LAND (we want to land)
-        if self.flight_phase == "LAND":
-             # Ignore safety clamp if it prevents landing, but 10 deg flare is > safety usually
-             pass
-
-        # 3. Speed Control (Thrust) - active in DIVE, APPROACH and DESCEND
-        # In BRAKE, we override thrust manually above.
-        if self.flight_phase != "BRAKE" and self.flight_phase != "DESCEND" and self.flight_phase != "LAND":
-            vz_cmd = speed_limit * math.sin(gamma_ref)
-            vz_err = vz_cmd - obs_vz
-            thrust_cmd = self.thrust_hover + self.kp_vz * vz_err
-            thrust_cmd = max(0.1, min(1.0, thrust_cmd))
-
-        # 4. Pitch Control
-        # Pitch down slightly more than gamma_ref to maintain forward speed against drag
-        # especially in shallow approaches.
-        pitch_bias = 0.0
-        if self.flight_phase == "APPROACH" and dist_est > 2.0:
-            pitch_bias = math.radians(5.0) # ~0.087 rad
-
-        pitch_cmd = gamma_ref - pitch_bias
-
-        # Pitch Rate Loop
-        k_pitch_ang = 5.0
-        pitch_rate_cmd = k_pitch_ang * (pitch - pitch_cmd)
-
-        # 1. Yaw Control
+        # 1. YAW Control (The Eye)
+        # Pure Pursuit: Keep target centered horizontally.
         yaw_rate_cmd = 0.0
         if tracking_uv:
             u, v = tracking_uv
-            if foe_uv:
-                foe_u, foe_v = foe_uv
-                yaw_rate_cmd = self.k_foe_yaw * (u - foe_u)
-            else:
-                yaw_rate_cmd = self.k_yaw * u
-        elif abs(extra_yaw_rate) > 0.001:
-            yaw_rate_cmd = extra_yaw_rate
+            # u is normalized horizontal error (-1 to 1?)
+            # Usually u is tangent(angle).
+            # Simple PID on u
+            yaw_rate_cmd = self.k_yaw * u
         else:
-            # Blind Homing: Face the target
+            # Blind Mode: Point at estimated target
             target_yaw = math.atan2(dy, dx)
             yaw_err = target_yaw - yaw
             yaw_err = (yaw_err + math.pi) % (2 * math.pi) - math.pi
             yaw_rate_cmd = self.k_yaw * yaw_err
 
-        # 5. Roll Control
-        roll_rate_cmd = self.k_roll * (0.0 - roll)
+        # 2. PITCH Control (The Engine)
+        # Pitch Forward to close distance.
+        # Constant pitch or scaled by distance?
+        # Let's use Gamma Ref logic but separated.
+
+        # Base Gamma: Aim at target
+        gamma_base = los
+
+        # If LANDING, we stop pitching forward (Pitch 0 or Flare)
+        if self.flight_phase == "LAND":
+            # Terminal Braking
+            # Pitch 0 (Stop pushing) or Pitch Up (Flare)
+            # Roll Max (Hard side slip) logic below.
+
+            # Reduce speed target
+            speed_limit = 2.0
+
+            # Flare Pitch:
+            # We want to arrest descent.
+            # Gamma Ref = +5 deg (Climb/Level)
+            gamma_ref = math.radians(5.0)
+
+        else:
+            # DIVE / APPROACH
+            # Pitch down to target
+            # Add bias for speed?
+            # Standard LOS guidance for pitch
+            gamma_ref = los - math.radians(5.0) # 5 deg attack angle
+
+        # Safety Clamp (Don't hit ground early)
+        if alt_est < 30.0 and self.flight_phase != "LAND":
+             safety_gamma = -math.atan2(alt_est, 30.0) # Lookahead 30m
+             gamma_ref = max(gamma_ref, safety_gamma)
+
+        # 3. ROLL Control (The Brake / Looming Spiral)
+        # Inject Roll based on RER (Looming)
+        # If RER is high (close), Roll Right (positive?) to spiral.
+        # Normalized RER:
+        # Far: 15m/s / 100m = 0.15
+        # Close: 15m/s / 20m = 0.75
+        # Very Close: 15m/s / 10m = 1.5
+
+        # Tuning Thresholds
+        rer_start = 0.2
+        rer_max = 0.8 # Reach max bank sooner
+        max_bank = math.radians(50.0) # Increase max bank
+
+        roll_cmd_rad = 0.0
+
+        # Override safety during spiral entry to allow descent
+        if self.flight_phase == "DIVE" and rer > rer_start:
+             gamma_ref = los # Ignore safety clamp to spiral down
+
+        if self.flight_phase == "LAND":
+            # Terminal: HARD BANK
+            roll_cmd_rad = max_bank
+            thrust_cmd = 0.75 # High thrust to maintain lift in bank
+        else:
+            # Proportional Spiral
+            # Add time factor? No, RER is dynamic.
+            if rer > rer_start:
+                # Scale from 0 to max_bank
+                ratio = min(1.0, (rer - rer_start) / (rer_max - rer_start))
+                roll_cmd_rad = ratio * max_bank
+
+            # Reduce thrust slightly during spiral entry to drop altitude if needed?
+            # Or keep it up to maintain speed for RER?
+            thrust_cmd = 0.6
+
+        # 4. Thrust Logic (Maintain Speed / Altitude)
+        # Vertical speed control via Gamma Ref
+        vz_cmd = speed_limit * math.sin(gamma_ref)
+        vz_err = vz_cmd - obs_vz
+        thrust_base = self.thrust_hover + self.kp_vz * vz_err
+
+        # Mix thrust:
+        # If banking hard, we need more total thrust to maintain vertical component
+        # T_total * cos(phi) = T_vertical
+        # T_total = T_vertical / cos(phi)
+
+        if self.flight_phase == "LAND":
+             thrust_cmd = 0.7 # Fixed high thrust for landing flare/bank
+        else:
+             thrust_cmd = thrust_base / max(0.5, math.cos(roll_cmd_rad))
+             thrust_cmd = max(0.1, min(1.0, thrust_cmd))
+
+        # Pitch Loop
+        # Pitch Command from Gamma Ref
+        pitch_cmd = gamma_ref
+        pitch_rate_cmd = self.k_pitch * (pitch - pitch_cmd)
+
+        # Roll Loop
+        # Command Roll Angle
+        roll_rate_cmd = self.k_roll * (roll_cmd_rad - roll)
 
         action = {
             'thrust': thrust_cmd,
@@ -361,20 +318,16 @@ class DPCFlightController:
         # Ghost Paths (Viz)
         ghost_paths = []
         path = []
-        sim_x = 0.0 # Relative
-        sim_y = 0.0 # Relative
-        sim_z = pz  # Absolute Z
+        sim_x = 0.0
+        sim_y = 0.0
+        sim_z = pz
 
         sim_vz = obs_vz
         sim_vx = est_vx
         sim_vy = est_vy
 
-        # If vz was None, we used est_vz above.
-        # If we had to rely on gamma_ref fallback (legacy), update it
         if vz is None and abs(sim_vz) < 0.1 and abs(gamma_ref) > 0.1:
-             # Fallback if est_vz is still settling
              sim_vz = 5.0 * math.sin(gamma_ref)
-             # Re-estimate horizontal
              v_xy_est = sim_vz / math.tan(pitch) if abs(pitch) > 0.1 else 0.0
              v_xy_est = max(0.0, min(30.0, v_xy_est))
              sim_vx = v_xy_est * math.cos(yaw)
@@ -390,7 +343,6 @@ class DPCFlightController:
         return action, ghost_paths
 
     def _init_gdpc_buffer(self, num_agents):
-        """Allocate buffers for vectorized simulation."""
         self.gdpc_buffer = {
             "pos_x": np.zeros(num_agents, dtype=np.float32),
             "pos_y": np.zeros(num_agents, dtype=np.float32),
@@ -427,12 +379,6 @@ class DPCFlightController:
         }
 
     def compute_action_gdpc(self, state_obs, target_cmd, tracking_uv, foe_uv, extra_yaw_rate=0.0):
-        """
-        Sampling-Based MPC (Gradient-Free GDPC).
-        Generates K random action sequences, simulates them using step_cpu,
-        and picks the first action of the best sequence.
-        """
-        # Call Heuristic first to get baseline action (using internal method to avoid recursion)
         heuristic_action_dict, _ = self._compute_heuristic_action(state_obs, target_cmd, tracking_uv, extra_yaw_rate, foe_uv)
 
         h_thrust = heuristic_action_dict['thrust']
@@ -448,13 +394,10 @@ class DPCFlightController:
 
         buf = self.gdpc_buffer
 
-        # 1. Initialize State from Observation
         px0 = 0.0
         py0 = 0.0
         pz0 = state_obs.get('pz')
 
-        # In GDPC mode, we might need estimating PZ too if missing?
-        # state_obs is dict. If 'pz' is missing, it returns None.
         if pz0 is None:
              pz0 = self.est_pz
 
@@ -472,7 +415,6 @@ class DPCFlightController:
         wy0 = state_obs.get('wy', 0.0)
         wz0 = state_obs.get('wz', 0.0)
 
-        # Set Buffer Initial State
         buf['pos_x'][:] = px0
         buf['pos_y'][:] = py0
         buf['pos_z'][:] = pz0
@@ -493,26 +435,22 @@ class DPCFlightController:
         buf['step_counts'][:] = 0
         buf['done_flags'][:] = 0.0
 
-        # Target Position
         tgt_rel_x = target_cmd[0]
         tgt_rel_y = target_cmd[1]
         tgt_abs_z = target_cmd[2]
 
         target_pos = np.array([tgt_rel_x, tgt_rel_y, tgt_abs_z])
 
-        # 2. Sample Action Sequences
         noise_thrust = 0.2
         noise_rate = 1.0
 
         action_seqs = np.zeros((horizon, num_ghosts, 4), dtype=np.float32)
 
-        # Ghost 0: Heuristic
         action_seqs[:, 0, 0] = h_thrust
         action_seqs[:, 0, 1] = h_roll
         action_seqs[:, 0, 2] = h_pitch
         action_seqs[:, 0, 3] = h_yaw
 
-        # Ghosts 1..N: Noisy Heuristic
         action_seqs[:, 1:, 0] = h_thrust + np.random.randn(horizon, num_ghosts-1) * noise_thrust
         action_seqs[:, 1:, 1] = h_roll + np.random.randn(horizon, num_ghosts-1) * noise_rate
         action_seqs[:, 1:, 2] = h_pitch + np.random.randn(horizon, num_ghosts-1) * noise_rate
@@ -521,7 +459,6 @@ class DPCFlightController:
         action_seqs[:, :, 0] = np.clip(action_seqs[:, :, 0], 0.0, 1.0)
         action_seqs[:, :, 1:] = np.clip(action_seqs[:, :, 1:], -10.0, 10.0)
 
-        # 3. Rollout
         costs = np.zeros(num_ghosts, dtype=np.float32)
         ghost_paths_viz = [[] for _ in range(num_ghosts)]
 
@@ -550,13 +487,11 @@ class DPCFlightController:
                 buf['env_ids']
             )
 
-            # Calculate Cost
             dx = buf['pos_x'] - target_pos[0]
             dy = buf['pos_y'] - target_pos[1]
             dz = buf['pos_z'] - target_pos[2]
             dist = np.sqrt(dx*dx + dy*dy + dz*dz)
 
-            # Penalties
             ground_pen = np.where(buf['pos_z'] < 0.5, 1000.0, 0.0)
 
             step_cost = dist + ground_pen
@@ -565,11 +500,9 @@ class DPCFlightController:
 
             costs += step_cost
 
-            # Viz (Ghost 0)
             p_pt = {'px': float(buf['pos_x'][0]), 'py': float(buf['pos_y'][0]), 'pz': float(buf['pos_z'][0])}
             ghost_paths_viz[0].append(p_pt)
 
-        # 4. Select Best
         best_idx = np.argmin(costs)
         best_action_seq = action_seqs[:, best_idx, :]
         best_act = best_action_seq[0]
