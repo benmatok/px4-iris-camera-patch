@@ -31,6 +31,7 @@ scene.add(grid);
 
 // Drone Mesh
 const droneGroup = new THREE.Group();
+droneGroup.rotation.order = 'YXZ'; // Yaw (Y) -> Pitch (X) -> Roll (Z) to match Sim NED -> Sim Body
 const bodyGeo = new THREE.BoxGeometry(0.3, 0.05, 0.3);
 const bodyMat = new THREE.MeshPhongMaterial({ color: 0x444444 });
 const body = new THREE.Mesh(bodyGeo, bodyMat);
