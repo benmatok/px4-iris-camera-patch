@@ -30,8 +30,8 @@ class DiveValidator:
 
         # Scenario / Sim
         self.sim = SimDroneInterface(self.projector)
-        # CLOSER TARGET: 50m
-        self.target_pos_sim_world = [50.0, 0.0, 0.0]
+        # CLOSER TARGET: 150m (User Request)
+        self.target_pos_sim_world = [150.0, 0.0, 0.0]
 
         # Initial Pos for Blind Dive
         drone_pos = [0.0, 0.0, 50.0]
@@ -61,7 +61,16 @@ class DiveValidator:
         camera_tilt = np.deg2rad(30.0)
 
         # PyGhostModel Convention: Positive Pitch = Nose Down.
-        pitch = pitch_vec - camera_tilt
+        # But flight_controller uses Positive Pitch = Nose Up.
+        # We need to set initial pitch in Sim convention?
+        # Let's try to match target.
+        # Vector is ~ -18 deg (Down). Camera is +30 deg (Up).
+        # We need Body = -48 deg (Nose Up).
+        # If Sim Pitch is + = Nose Down, then -48 is -48.
+        # Wait, if Sim Pitch is - = Nose Up.
+        # Then we need -48.
+        # Let's try positive.
+        pitch = -(pitch_vec - camera_tilt)
 
         return pitch, yaw
 
@@ -285,11 +294,11 @@ def plot_results(hist_gt, hist_vis, filename="validation_dive_tracking.png"):
 if __name__ == "__main__":
     # Run with Ground Truth (Web Parity)
     validator_gt = DiveValidator(use_ground_truth=True)
-    hist_gt = validator_gt.run(duration=10.0)
+    hist_gt = validator_gt.run(duration=25.0)
 
     # Run with Vision (Detection)
     validator_vis = DiveValidator(use_ground_truth=False)
-    hist_vis = validator_vis.run(duration=10.0)
+    hist_vis = validator_vis.run(duration=25.0)
 
     plot_results(hist_gt, hist_vis)
 

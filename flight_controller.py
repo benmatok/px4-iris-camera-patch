@@ -111,6 +111,7 @@ class DPCFlightController:
 
         # State Transitions
         depression_angle = math.atan2(alt_est, dist_est)
+        brake_dist = max(15.0, v_total * 2.5)
 
         if self.flight_phase == "DESCEND":
             # Exit DESCEND when angle is shallow enough (< 50 deg) - Hysteresis
@@ -125,9 +126,6 @@ class DPCFlightController:
                 logger.info(f"Switching to DESCEND phase (Angle: {math.degrees(depression_angle):.1f})")
 
             # Transition to BRAKE if close or too fast
-            # Adaptive braking distance: time-to-impact logic.
-            brake_dist = max(15.0, v_total * 2.5)
-
             if dist_3d < brake_dist or v_total > 20.0:
                 self.flight_phase = "BRAKE"
                 logger.info(f"Switching to BRAKE phase (Dist3D: {dist_3d:.1f}, V: {v_total:.1f})")
@@ -136,6 +134,17 @@ class DPCFlightController:
             if v_total < 5.0:
                 self.flight_phase = "APPROACH"
                 logger.info(f"Switching to APPROACH phase (Dist: {dist_est:.1f}, V: {v_total:.1f})")
+
+            # Reset to DIVE if distance is large (e.g. false trigger or lost track)
+            if dist_3d > brake_dist + 20.0:
+                self.flight_phase = "DIVE"
+                logger.info(f"Resetting to DIVE phase (Dist3D: {dist_3d:.1f})")
+
+        elif self.flight_phase == "APPROACH":
+             # Reset to DIVE if distance is large
+            if dist_3d > 30.0:
+                self.flight_phase = "DIVE"
+                logger.info(f"Resetting to DIVE phase (Dist3D: {dist_3d:.1f})")
 
         # Control Logic per State
         gamma_ref = 0.0
@@ -152,9 +161,14 @@ class DPCFlightController:
 
         elif self.flight_phase == "DIVE":
             # Aggressive Dive
-            dive_bias = 12.0
+            # Bias dive angle to gain speed, but fade out near ground/shallow angles
+            # Use depression angle to scale bias (prevent diving into ground on long approaches)
+            deg_depression = math.degrees(depression_angle)
+            dive_bias = min(12.0, deg_depression * 0.7)
+
+            # Also fade by altitude (double safety)
             if alt_est < 20.0:
-                dive_bias = 12.0 * (alt_est / 20.0)
+                 dive_bias *= (alt_est / 20.0)
 
             gamma_ref = los - math.radians(dive_bias)
             speed_limit = 20.0 # Allow speed
