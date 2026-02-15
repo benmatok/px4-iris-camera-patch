@@ -22,8 +22,9 @@ logger = logging.getLogger(__name__)
 DT = 0.05
 
 class DiveValidator:
-    def __init__(self, use_ground_truth=True):
+    def __init__(self, use_ground_truth=True, use_blind_mode=False):
         self.use_ground_truth = use_ground_truth
+        self.use_blind_mode = use_blind_mode
 
         # Tilt 30.0 (Up) as in theshow.py
         self.projector = Projector(width=640, height=480, fov_deg=120.0, tilt_deg=30.0)
@@ -109,7 +110,7 @@ class DiveValidator:
             'state': []
         }
 
-        logger.info(f"Running Validation (Ground Truth: {self.use_ground_truth}) for {duration}s...")
+        logger.info(f"Running Validation (Ground Truth: {self.use_ground_truth}, Blind Mode: {self.use_blind_mode}) for {duration}s...")
 
         for i in range(steps):
             t = i * DT
@@ -152,9 +153,9 @@ class DiveValidator:
                 'px': s['px'],
                 'py': s['py'],
                 'pz': s['pz'],
-                'vx': s['vx'],
-                'vy': s['vy'],
-                'vz': s['vz'],
+                'vx': s['vx'] if not self.use_blind_mode else 0.0, # Blind Mode Check
+                'vy': s['vy'] if not self.use_blind_mode else 0.0,
+                'vz': s['vz'] if not self.use_blind_mode else None, # Blind Mode: No VZ
                 'roll': s['roll'],
                 'pitch': s['pitch'],
                 'yaw': s['yaw'],
@@ -220,7 +221,7 @@ class DiveValidator:
 
         return history
 
-def plot_results(hist_gt, hist_vis, filename="validation_dive_tracking.png"):
+def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_tracking.png"):
     fig, axs = plt.subplots(2, 2, figsize=(15, 10))
 
     # 1. Trajectory Side View (X-Z)
@@ -228,14 +229,19 @@ def plot_results(hist_gt, hist_vis, filename="validation_dive_tracking.png"):
 
     # Ground Truth Run
     pos_gt = np.array(hist_gt['drone_pos'])
-    axs[0, 0].plot(pos_gt[:, 0], pos_gt[:, 2], 'b-', label='GT Tracking')
+    axs[0, 0].plot(pos_gt[:, 0], pos_gt[:, 2], 'b-', label='Full State (GT Tracking)')
 
     # Vision Run
     pos_vis = np.array(hist_vis['drone_pos'])
-    axs[0, 0].plot(pos_vis[:, 0], pos_vis[:, 2], 'g--', label='Vision Tracking')
+    axs[0, 0].plot(pos_vis[:, 0], pos_vis[:, 2], 'g--', label='Full State (Vision Tracking)')
+
+    # Blind Run (Web App)
+    if hist_blind:
+        pos_blind = np.array(hist_blind['drone_pos'])
+        axs[0, 0].plot(pos_blind[:, 0], pos_blind[:, 2], 'r:', linewidth=2, label='Blind Mode (Web App)')
 
     # Target
-    axs[0, 0].plot(20.0, 0.0, 'rx', markersize=10, label='Target')
+    axs[0, 0].plot(150.0, 0.0, 'rx', markersize=10, label='Target') # 150m target
 
     axs[0, 0].set_xlabel("X (m)")
     axs[0, 0].set_ylabel("Z (m)")
@@ -244,8 +250,10 @@ def plot_results(hist_gt, hist_vis, filename="validation_dive_tracking.png"):
 
     # 2. Distance to Target
     axs[0, 1].set_title("Distance to Target")
-    axs[0, 1].plot(hist_gt['t'], hist_gt['dist'], 'b-', label='GT Tracking')
-    axs[0, 1].plot(hist_vis['t'], hist_vis['dist'], 'g--', label='Vision Tracking')
+    axs[0, 1].plot(hist_gt['t'], hist_gt['dist'], 'b-', label='Full GT')
+    axs[0, 1].plot(hist_vis['t'], hist_vis['dist'], 'g--', label='Full Vision')
+    if hist_blind:
+        axs[0, 1].plot(hist_blind['t'], hist_blind['dist'], 'r:', label='Blind Web')
     axs[0, 1].set_xlabel("Time (s)")
     axs[0, 1].set_ylabel("Distance (m)")
     axs[0, 1].legend()
@@ -258,7 +266,7 @@ def plot_results(hist_gt, hist_vis, filename="validation_dive_tracking.png"):
     errs = []
     valid_t = []
 
-    target_true = np.array([20.0, 0.0, 0.0])
+    target_true = np.array([150.0, 0.0, 0.0]) # 150m target
 
     for i, p in enumerate(est):
         if p[0] is not None:
@@ -296,30 +304,58 @@ def plot_results(hist_gt, hist_vis, filename="validation_dive_tracking.png"):
         pass
 
 if __name__ == "__main__":
-    # Run with Ground Truth (Web Parity)
-    validator_gt = DiveValidator(use_ground_truth=True)
+    # Run with Ground Truth (Full State)
+    validator_gt = DiveValidator(use_ground_truth=True, use_blind_mode=False)
     hist_gt = validator_gt.run(duration=25.0)
 
-    # Run with Vision (Detection)
-    validator_vis = DiveValidator(use_ground_truth=False)
+    # Run with Vision (Full State)
+    validator_vis = DiveValidator(use_ground_truth=False, use_blind_mode=False)
     hist_vis = validator_vis.run(duration=25.0)
 
-    plot_results(hist_gt, hist_vis)
+    # Run with Blind Mode (Web App Logic)
+    validator_blind = DiveValidator(use_ground_truth=True, use_blind_mode=True) # Use GT tracking for fair comparison of control
+    hist_blind = validator_blind.run(duration=25.0)
+
+    plot_results(hist_gt, hist_vis, hist_blind)
 
     # Validation Checks
     final_dist_gt = hist_gt['dist'][-1]
     final_dist_vis = hist_vis['dist'][-1]
+    final_dist_blind = hist_blind['dist'][-1]
 
-    print(f"Final Distance (GT Tracking): {final_dist_gt:.2f}m")
-    print(f"Final Distance (Vision Tracking): {final_dist_vis:.2f}m")
+    print(f"Final Distance (Full GT): {final_dist_gt:.2f}m")
+    print(f"Final Distance (Full Vision): {final_dist_vis:.2f}m")
+    print(f"Final Distance (Blind Web): {final_dist_blind:.2f}m")
 
     # STRICT CRITERIA: Must be close to 0 (Collision)
     if final_dist_gt < 2.0:
-        print("SUCCESS: GT Tracking Dive Successful")
+        print("SUCCESS: Full GT Dive Successful")
     else:
-        print("FAILURE: GT Tracking Dive Failed")
+        print("FAILURE: Full GT Dive Failed")
 
     if final_dist_vis < 2.0:
-        print("SUCCESS: Vision Tracking Dive Successful")
+        print("SUCCESS: Full Vision Dive Successful")
     else:
-        print("FAILURE: Vision Tracking Dive Failed")
+        print("FAILURE: Full Vision Dive Failed")
+
+    if final_dist_blind < 2.0:
+        print("SUCCESS: Blind Web Dive Successful")
+    else:
+        print("FAILURE: Blind Web Dive Failed")
+
+    # Similarity Check (Full GT vs Blind Web)
+    # This is to check if the control logic is reasonably consistent
+    pos_gt = np.array(hist_gt['drone_pos'])
+    pos_blind = np.array(hist_blind['drone_pos'])
+
+    # Calculate Max Deviation over overlapping time
+    min_len = min(len(pos_gt), len(pos_blind))
+    diffs = []
+    for i in range(min_len):
+        d = np.linalg.norm(pos_gt[i] - pos_blind[i])
+        diffs.append(d)
+
+    max_dev = max(diffs)
+    mean_dev = np.mean(diffs)
+    print(f"Max Deviation (Full vs Blind): {max_dev:.2f}m")
+    print(f"Mean Deviation (Full vs Blind): {mean_dev:.2f}m")
