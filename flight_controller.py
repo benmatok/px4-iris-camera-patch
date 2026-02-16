@@ -125,12 +125,12 @@ class DPCFlightController:
             # Aggressive Adaptive Pitch Bias
             # Steep (-1.2) -> Bias 0.0 (Aim Straight)
             # Shallow (-0.6) -> Bias 0.2 (Aim High)
-            pitch_bias = 0.4 + 0.33 * pitch
+            pitch_bias = 0.45 + 0.33 * pitch # Increased intercept 0.4 -> 0.45
             # Clamp limits reasonable for bias
             pitch_bias = max(-0.1, min(0.3, pitch_bias))
 
             # --- Camera Tilt Compensation ---
-            v_target = 0.25
+            v_target = 0.24 # Compromise 0.24
 
             pitch_track = -self.k_pitch * (v - v_target) + pitch_bias
             pitch_track = max(-2.5, min(2.5, pitch_track))
