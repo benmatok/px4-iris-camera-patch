@@ -83,7 +83,12 @@ class TheShow:
         camera_tilt = np.deg2rad(30.0)
 
         # Body Pitch = Vec Pitch - Camera Tilt
-        pitch = pitch_vec - camera_tilt
+        # Sim Pitch is Negative = Nose Down.
+        pitch = (pitch_vec - camera_tilt)
+
+        # Clamp to avoid inversion
+        if pitch < -1.48:
+            pitch = -1.48
 
         return pitch, yaw
 
@@ -188,6 +193,7 @@ class TheShow:
         # Roll sign: Right Wing Down is Positive in both.
 
         ned['roll'] = sim_state.get('roll', 0.0)
+        # Sim Pitch (Nose Down -) -> NED Pitch (Nose Down -). Match signs.
         ned['pitch'] = sim_state.get('pitch', 0.0)
         sim_yaw = sim_state.get('yaw', 0.0)
         ned['yaw'] = (math.pi / 2.0) - sim_yaw
@@ -263,8 +269,11 @@ class TheShow:
 
         # Normalize Tracking UV for Controller
         tracking_norm = None
+        tracking_size_norm = None
         if center:
             tracking_norm = self.projector.pixel_to_normalized(center[0], center[1])
+            # Normalize radius by image height (480)
+            tracking_size_norm = radius / 480.0
 
         # 3. Update Mission Logic
         # Pass sanitized relative state to mission (px=0, py=0)
@@ -306,6 +315,7 @@ class TheShow:
             state_obs,
             dpc_target,
             tracking_uv=tracking_norm,
+            tracking_size=tracking_size_norm,
             extra_yaw_rate=extra_yaw,
             foe_uv=foe
         )
