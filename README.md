@@ -49,11 +49,25 @@ The simulation is built on a pure Python implementation of a 6-DOF Quadrotor mod
 - **Sensors**: Synthetic camera feed generation for the visual tracker.
 
 ### 2. Flight Controller (`flight_controller.py`)
-The `DPCFlightController` implements a heuristic-based control logic designed for robustness:
-- **Visual Servoing**: Uses a PID-based approach with Adaptive Pitch Biasing to keep the target centered and maintain an optimal glide slope.
-- **Blind Mode**: When velocity sensors (`vz`, `vx`, `vy`) are unavailable, the controller estimates state by integrating acceleration commands, allowing it to function without GPS or flow sensors.
-- **Ghost Paths**: Generates forward-predicted trajectories based on the current estimated state. These "ghosts" are visualized in the web app to show where the drone "thinks" it is going.
-- **Final Mode**: specialized logic triggered when close to the target to ensure precise docking or collision avoidance.
+The `DPCFlightController` implements a robust, multi-stage control strategy for visual homing:
+
+1. **Basic Tracking (Visual Servoing)**:
+   Uses PID control on the target's image coordinates `(u, v)` to steer the drone. It incorporates an **Adaptive Pitch Bias** ("Tent Function") that adjusts the glide slope target based on current pitch, preventing overshoot in steep dives while maintaining altitude in shallow approaches.
+
+2. **RER (Rapid Exponential Rendezvous)**:
+   Regulates closure speed using the **Relative Expansion Rate** (time-to-contact estimate) of the target's bounding box.
+   - **Thrust Modulation**: Reduces thrust (brakes) if the target expands too quickly, ensuring a controlled collision.
+   - **Flare Logic**: Triggers a pitch-up maneuver if the expansion rate exceeds safety thresholds to prevent high-speed impact.
+
+3. **Spiral Search**:
+   If the target is lost or not yet acquired (Blind Mode), the controller executes a yaw spin command (driven by `MissionManager`) to scan the horizon and reacquire the target visually.
+
+4. **Final Mode (Docking)**:
+   Activated when the target is in close proximity (large vertical error in frame).
+   - **Recovery**: If undershooting (target high), the drone levels off and boosts thrust.
+   - **Sink**: If overshooting (target low), the drone pitches down and reduces thrust to sink onto the target.
+
+Additionally, the controller features a **Blind Mode Estimator** that integrates acceleration commands to estimate velocity when sensors are unavailable, and a **Ghost Path** generator for visualizing predicted trajectories.
 
 ### 3. Vision System
 - **Visual Tracker** (`visual_tracker.py`): Detects the target (red blob) in the synthetic camera image and provides `(u, v)` coordinates and size.

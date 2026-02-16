@@ -179,8 +179,8 @@ class DPCFlightController:
                 pitch_track += flare_pitch
 
         else:
-            # Blind / Lost Tracking
-            yaw_rate_cmd = 0.0
+            # Blind / Lost Tracking / Spiral Search
+            yaw_rate_cmd = extra_yaw_rate
             pitch_track = 0.0
             thrust_track = 0.55
 
