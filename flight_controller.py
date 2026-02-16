@@ -138,13 +138,13 @@ class DPCFlightController:
 
             # --- Camera Tilt Compensation ---
             # Adaptive v_target based on pitch ("Tent" function).
-            # Peak at pitch = -1.2 (Medium dive) -> v_target = 0.26 (Aim higher to extend range)
+            # Peak at pitch = -1.2 (Medium dive) -> v_target = 0.27 (Aim higher to extend range)
             # Steep (< -1.2) -> Reduce v_target to aim down (0.17 at -1.5)
             # Shallow (> -1.2) -> Reduce v_target to prevent float (0.19 at -0.5)
             if pitch < -1.2:
-                 v_target = 0.26 + 0.30 * (pitch + 1.2)
+                 v_target = 0.27 + 0.33 * (pitch + 1.2)
             else:
-                 v_target = 0.26 - 0.11 * (pitch + 1.2)
+                 v_target = 0.27 - 0.11 * (pitch + 1.2)
 
             v_target = max(0.1, v_target)
 
@@ -191,7 +191,7 @@ class DPCFlightController:
 
         # --- Stage 3: Finale (Docking) Logic ---
         # Trigger: Target moves high in frame (v < -0.1).
-        # Removed RER trigger to prevent premature engagement during good glide slopes.
+        # Removed RER/Overshoot triggers to prevent premature engagement.
         # Only enter if tracking is valid.
         if tracking_uv and not self.final_mode:
             u, v = tracking_uv
@@ -205,7 +205,7 @@ class DPCFlightController:
 
             # Pitch: Locks Level (0 deg)
             target_pitch_final = 0.0
-            pitch_rate_cmd = -4.0 * (target_pitch_final - pitch) # Simple P-controller to Level
+            pitch_rate_cmd = 4.0 * (target_pitch_final - pitch) # Corrected Sign: P-controller to Level
 
             # Yaw: Slides to center X (Dampened)
             yaw_rate_cmd = -self.k_yaw * u * 0.2
