@@ -28,7 +28,7 @@ class DPCFlightController:
 
         # Gains
         self.k_yaw = 2.5
-        self.k_pitch = 4.0 # Increased for tighter tracking
+        self.k_pitch = 4.0
         self.k_rer = 1.0
 
         # State Variables
@@ -41,6 +41,7 @@ class DPCFlightController:
         self.est_vy = 0.0
 
         self.last_tracking_size = None
+        self.rer_smoothed = 0.0
 
     def reset(self):
         self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
@@ -49,6 +50,7 @@ class DPCFlightController:
         self.est_vx = 0.0
         self.est_vy = 0.0
         self.last_tracking_size = None
+        self.rer_smoothed = 0.0
         logger.info(f"DPCFlightController reset.")
 
     def compute_action(self, state_obs, target_cmd, tracking_uv=None, tracking_size=None, extra_yaw_rate=0.0, foe_uv=None):
@@ -89,13 +91,15 @@ class DPCFlightController:
             vz = self.est_vz
 
         # --- Visual RER / TTC Calculation ---
-        ttc_visual = 100.0
-        rer = 0.0
-
+        raw_rer = 0.0
         if tracking_size is not None and self.last_tracking_size is not None and self.last_tracking_size > 0.001:
-            rer = (tracking_size - self.last_tracking_size) / (self.last_tracking_size * self.dt)
-            if rer > 0.01:
-                 ttc_visual = 1.0 / rer
+            # Calculate raw RER (Relative Expansion Rate)
+            # RER = size_dot / size
+            raw_rer = (tracking_size - self.last_tracking_size) / (self.last_tracking_size * self.dt)
+
+        # Exponential Moving Average for RER smoothing
+        alpha_rer = 0.2
+        self.rer_smoothed = (1.0 - alpha_rer) * self.rer_smoothed + alpha_rer * raw_rer
 
         self.last_tracking_size = tracking_size
 
@@ -108,12 +112,7 @@ class DPCFlightController:
         # 2. Tracking Control (Visual Servoing)
         pitch_track = 0.0
         yaw_rate_cmd = 0.0
-        thrust_track = 0.6 # Base Cruise Thrust
-
-        # Visual Braking
-        visual_brake_active = False
-        if ttc_visual < 2.5:
-             visual_brake_active = True
+        thrust_track = 0.6 # Base Trim Thrust
 
         if tracking_uv:
             u, v = tracking_uv
@@ -123,39 +122,45 @@ class DPCFlightController:
             yaw_rate_cmd = max(-1.5, min(1.5, yaw_rate_cmd))
 
             # Pitch Logic (ENU: +Pitch is Nose Up)
-            # Add bias to aim above target (compensate gravity)
-            # Adaptive Bias: Steep dives (Scen 1) need less bias to stay on target.
-            # Shallow glides (Scen 2) need more bias to prevent undershoot.
-            pitch_bias = 0.15
-            if pitch < -0.8:
-                # Ramp down bias from 0.15 at -0.8 to 0.05 at -1.2
-                factor = max(0.0, min(1.0, (pitch - (-1.2)) / 0.4))
-                pitch_bias = 0.05 + 0.1 * factor
+            # Aggressive Adaptive Pitch Bias
+            # Steep (-1.2) -> Bias 0.0 (Aim Straight)
+            # Shallow (-0.6) -> Bias 0.2 (Aim High)
+            pitch_bias = 0.4 + 0.33 * pitch
+            # Clamp limits reasonable for bias
+            pitch_bias = max(-0.1, min(0.3, pitch_bias))
 
-            pitch_track = -self.k_pitch * v + pitch_bias
+            # --- Camera Tilt Compensation ---
+            v_target = 0.25
+
+            pitch_track = -self.k_pitch * (v - v_target) + pitch_bias
             pitch_track = max(-2.5, min(2.5, pitch_track))
 
-            # Thrust Modulation
+            # --- Constant RER Thrust Strategy ---
+            rer_target = 0.35 # Target RER (TTC ~ 2.8s)
 
-            # Case 1: Target High (v < 0). Need to Pull Up. Boost Thrust significantly.
-            if v < 0:
-                thrust_track += -v * 2.0 # Strong boost (Increased from 1.2)
+            # Pitch-Dependent Base Thrust
+            # Steep Dive (-1.5) -> Low Thrust (0.15) to maintain steep glide slope.
+            # Level/Shallow (0.0) -> High Thrust (0.6) to maintain lift/speed.
+            thrust_base = 0.6 + 0.3 * pitch
+            thrust_base = max(0.15, min(0.5, thrust_base))
 
-            # Case 2: Steep Dive (Pitch < -0.5) and Target Low (v > 0). Reduce Thrust to Drop.
-            # But don't reduce too much to avoid stalling/losing authority.
-            if pitch < -0.5 and v >= 0:
-                scale = min(1.0, max(0.0, (-0.5 - pitch) / 1.0))
-                thrust_track -= scale * 0.3 # Reduced reduction (was 0.45) to keep speed
+            # One-Sided RER Feedback (Brake Only)
+            k_rer = 2.0
+            thrust_correction = max(0.0, k_rer * (self.rer_smoothed - rer_target))
 
-            # Visual Braking Boost
-            if visual_brake_active:
-                brake_factor = min(1.0, max(0.0, (2.5 - ttc_visual) / 2.0))
-                thrust_track = max(thrust_track, 0.6 + 0.3 * brake_factor)
+            thrust_track = thrust_base + thrust_correction
 
-                if ttc_visual < 1.0:
-                     pitch_track = max(pitch_track, 0.5)
+            # Additional Heuristic: If we need to pull up significantly (Target High), Boost Thrust
+            if v < v_target - 0.2:
+                thrust_track += -(v - v_target) * 2.0
 
-            thrust_track = max(0.15, min(0.95, thrust_track))
+            thrust_track = max(0.1, min(0.95, thrust_track))
+
+            # Flare Logic: Pitch Up if Collision Imminent (RER High)
+            # Delayed Flare (Threshold +0.25)
+            if self.rer_smoothed > rer_target + 0.25:
+                flare_pitch = 1.2 * (self.rer_smoothed - (rer_target + 0.25))
+                pitch_track += flare_pitch
 
         else:
             # Blind / Lost Tracking
@@ -166,16 +171,14 @@ class DPCFlightController:
         # 3. Safety Control (Flare)
         target_pitch_safety = math.radians(5.0)
         pitch_safety = 3.0 * (target_pitch_safety - pitch)
-
         thrust_safety = 0.75
 
         # 4. Blending
         if tracking_uv:
-            # If tracking, use visual inputs heavily until very close
-            # w_safety modulates based on altitude (starts at 5m)
             pitch_rate_cmd = (1.0 - w_safety) * pitch_track + w_safety * pitch_safety
             thrust_cmd = (1.0 - w_safety) * thrust_track + w_safety * thrust_safety
         else:
+            # If blind and low, flare
             if pz < 5.0:
                  pitch_rate_cmd = 0.5
                  thrust_cmd = 0.6
@@ -194,10 +197,6 @@ class DPCFlightController:
         roll_rate_cmd = 4.0 * (0.0 - roll)
 
         # NOTE: The Sim Interface (PyGhostModel) uses Inverted Pitch/Yaw logic internally.
-        # (+Rate -> -Angle change).
-        # We computed rates for Standard ENU (+Rate -> +Angle).
-        # So we must negate Pitch and Yaw rates here.
-
         action = {
             'thrust': thrust_cmd,
             'roll_rate': roll_rate_cmd,
@@ -211,7 +210,6 @@ class DPCFlightController:
         sim_vy = self.est_vy
         sim_vz = vz
 
-        # Simple drag/lift model for estimation
         if abs(pitch) > 0.1:
              v_xy_est = abs(sim_vz / math.tan(pitch))
              v_xy_est = min(20.0, v_xy_est)
