@@ -46,21 +46,13 @@ def run_scenarios():
         hist = validator.run(duration=25.0)
 
         # GENERATE PLOTS
-        # Reuse plot_results from DiveValidator instance's context or just call the module level one if accessible?
-        # DiveValidator in validate_dive_tracking.py has a module level function plot_results.
-        # But we imported DiveValidator class. We need to import the function too or access it.
-        # Let's import plot_results from the module.
         from tests.validate_dive_tracking import plot_results
 
-        # We need hist_gt, hist_vis, hist_blind structure for plot_results.
-        # Here we only have one run 'hist'.
-        # We can just pass it as all three to visualize it, or modify plot_results.
-        # To keep it simple, let's treat this 'hist' as the 'Blind Web' run since that's what we are testing.
-        # And pass None for others or same data.
-        # Ideally we want to see the trajectory.
+        # Pass the correct target position for the plot
+        target_pos = [dist, 0.0, 0.0]
 
         plot_filename = f"scenario_{sid}.png"
-        plot_results(hist, hist, hist, filename=plot_filename)
+        plot_results(hist, hist, hist, filename=plot_filename, target_pos=target_pos)
         logger.info(f"Generated plot: {plot_filename}")
 
         final_dist = hist['dist'][-1]

@@ -235,7 +235,7 @@ class DiveValidator:
 
         return history
 
-def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_tracking.png"):
+def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_tracking.png", target_pos=None):
     fig, axs = plt.subplots(2, 2, figsize=(15, 10))
 
     # 1. Trajectory Side View (X-Z)
@@ -246,8 +246,9 @@ def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_t
     axs[0, 0].plot(pos_gt[:, 0], pos_gt[:, 2], 'b-', label='Full State (GT Tracking)')
 
     # Vision Run
-    pos_vis = np.array(hist_vis['drone_pos'])
-    axs[0, 0].plot(pos_vis[:, 0], pos_vis[:, 2], 'g--', label='Full State (Vision Tracking)')
+    if hist_vis:
+        pos_vis = np.array(hist_vis['drone_pos'])
+        axs[0, 0].plot(pos_vis[:, 0], pos_vis[:, 2], 'g--', label='Full State (Vision Tracking)')
 
     # Blind Run (Web App)
     if hist_blind:
@@ -255,7 +256,10 @@ def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_t
         axs[0, 0].plot(pos_blind[:, 0], pos_blind[:, 2], 'r:', linewidth=2, label='Blind Mode (Web App)')
 
     # Target
-    axs[0, 0].plot(150.0, 0.0, 'rx', markersize=10, label='Target') # 150m target
+    if target_pos is not None:
+        axs[0, 0].plot(target_pos[0], target_pos[2], 'rx', markersize=10, label='Target')
+    else:
+        axs[0, 0].plot(150.0, 0.0, 'rx', markersize=10, label='Target (Default)')
 
     axs[0, 0].set_xlabel("X (m)")
     axs[0, 0].set_ylabel("Z (m)")
@@ -265,7 +269,8 @@ def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_t
     # 2. Distance to Target
     axs[0, 1].set_title("Distance to Target")
     axs[0, 1].plot(hist_gt['t'], hist_gt['dist'], 'b-', label='Full GT')
-    axs[0, 1].plot(hist_vis['t'], hist_vis['dist'], 'g--', label='Full Vision')
+    if hist_vis:
+        axs[0, 1].plot(hist_vis['t'], hist_vis['dist'], 'g--', label='Full Vision')
     if hist_blind:
         axs[0, 1].plot(hist_blind['t'], hist_blind['dist'], 'r:', label='Blind Web')
     axs[0, 1].set_xlabel("Time (s)")
@@ -275,16 +280,20 @@ def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_t
 
     # 3. Target Estimation Error (Vision Run Only)
     axs[1, 0].set_title("Target Estimation Error (Vision Run)")
-    t = np.array(hist_vis['t'])
-    est = hist_vis['target_est']
+
+    # Use hist_vis if available, else hist_gt just to show something (or None)
+    ref_hist = hist_vis if hist_vis else hist_gt
+
+    t = np.array(ref_hist['t'])
+    est = ref_hist['target_est']
     errs = []
     valid_t = []
 
-    target_true = np.array([150.0, 0.0, 0.0]) # 150m target
+    target_true_vec = np.array(target_pos) if target_pos else np.array([150.0, 0.0, 0.0])
 
     for i, p in enumerate(est):
         if p[0] is not None:
-            e = np.linalg.norm(np.array(p) - target_true)
+            e = np.linalg.norm(np.array(p) - target_true_vec)
             errs.append(e)
             valid_t.append(t[i])
 
@@ -299,12 +308,12 @@ def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_t
     axs[1, 0].grid(True)
 
     # 4. Mission State
-    axs[1, 1].set_title("Mission State (Vision Run)")
-    states = hist_vis['state']
+    axs[1, 1].set_title("Mission State")
+    states = ref_hist['state']
     # Map states to ints
     state_map = {"TAKEOFF": 0, "SCAN": 1, "HOMING": 2, "STAIRCASE_DESCEND": 3, "STAIRCASE_STABILIZE": 4}
     y_vals = [state_map.get(s, -1) for s in states]
-    axs[1, 1].plot(hist_vis['t'], y_vals, 'k-')
+    axs[1, 1].plot(ref_hist['t'], y_vals, 'k-')
     axs[1, 1].set_yticks([0, 1, 2, 3, 4])
     axs[1, 1].set_yticklabels(["TAKEOFF", "SCAN", "HOMING", "DESCEND", "STABILIZE"])
     axs[1, 1].set_xlabel("Time (s)")
@@ -330,7 +339,7 @@ if __name__ == "__main__":
     validator_blind = DiveValidator(use_ground_truth=True, use_blind_mode=True, init_alt=50.0, init_dist=150.0) # Use GT tracking for fair comparison of control
     hist_blind = validator_blind.run(duration=25.0)
 
-    plot_results(hist_gt, hist_vis, hist_blind)
+    plot_results(hist_gt, hist_vis, hist_blind, target_pos=[150.0, 0.0, 0.0])
 
     # Validation Checks
     final_dist_gt = hist_gt['dist'][-1]
