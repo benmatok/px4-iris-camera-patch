@@ -71,8 +71,12 @@ class DiveValidator:
         # If Sim Pitch is + = Nose Down, then -48 is -48.
         # Wait, if Sim Pitch is - = Nose Up.
         # Then we need -48.
-        # Let's try positive.
-        pitch = -(pitch_vec - camera_tilt)
+        # Sim Pitch Negative = Nose Down.
+        pitch = (pitch_vec - camera_tilt)
+
+        # Clamp pitch
+        if pitch < -1.48:
+            pitch = -1.48
 
         return pitch, yaw
 
@@ -88,7 +92,7 @@ class DiveValidator:
         ned['vz'] = -sim_state['vz']
 
         ned['roll'] = sim_state['roll']
-        # Sim: Positive Pitch = Nose Down. NED: Positive Pitch = Nose Up.
+        # Sim Pitch (Nose Down -) -> NED Pitch (Nose Down -). Match signs.
         ned['pitch'] = sim_state['pitch']
         ned['yaw'] = (math.pi / 2.0) - sim_state['yaw']
         ned['yaw'] = (ned['yaw'] + math.pi) % (2 * math.pi) - math.pi
@@ -137,6 +141,12 @@ class DiveValidator:
                 ground_truth_target_pos=ground_truth
             )
 
+            if i < 5:
+                print(f"DEBUG: T={t:.2f}")
+                print(f"  Drone NED: px={dpc_state_ned_abs['px']:.1f}, py={dpc_state_ned_abs['py']:.1f}, pz={dpc_state_ned_abs['pz']:.1f}, pitch={math.degrees(dpc_state_ned_abs['pitch']):.1f}, yaw={math.degrees(dpc_state_ned_abs['yaw']):.1f}")
+                print(f"  Target NED: {target_pos_ned_abs}")
+                print(f"  Center UV: {center}")
+
             # Convert Result (target_wp_ned) back to Sim Relative Frame
             target_wp_sim = None
             if target_wp_ned:
@@ -166,13 +176,16 @@ class DiveValidator:
             }
 
             tracking_norm = None
+            tracking_size_norm = None
             if center:
                 tracking_norm = self.projector.pixel_to_normalized(center[0], center[1])
+                tracking_size_norm = radius / 480.0
 
             action_out, _ = self.controller.compute_action(
                 state_obs,
                 dpc_target,
                 tracking_uv=tracking_norm,
+                tracking_size=tracking_size_norm,
                 extra_yaw_rate=extra_yaw
             )
 
