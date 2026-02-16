@@ -43,6 +43,10 @@ class DPCFlightController:
         self.last_tracking_size = None
         self.rer_smoothed = 0.0
 
+        # Final Mode State
+        self.final_mode = False
+        self.locked_pitch = 0.0
+
     def reset(self):
         self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
         self.est_pz = 100.0
@@ -51,6 +55,9 @@ class DPCFlightController:
         self.est_vy = 0.0
         self.last_tracking_size = None
         self.rer_smoothed = 0.0
+
+        self.final_mode = False
+        self.locked_pitch = 0.0
         logger.info(f"DPCFlightController reset.")
 
     def compute_action(self, state_obs, target_cmd, tracking_uv=None, tracking_size=None, extra_yaw_rate=0.0, foe_uv=None):
@@ -125,12 +132,21 @@ class DPCFlightController:
             # Aggressive Adaptive Pitch Bias
             # Steep (-1.2) -> Bias 0.0 (Aim Straight)
             # Shallow (-0.6) -> Bias 0.2 (Aim High)
-            pitch_bias = 0.45 + 0.33 * pitch # Increased intercept 0.4 -> 0.45
+            pitch_bias = 0.40 + 0.33 * pitch # Decreased intercept 0.42 -> 0.40
             # Clamp limits reasonable for bias
             pitch_bias = max(-0.1, min(0.3, pitch_bias))
 
             # --- Camera Tilt Compensation ---
-            v_target = 0.24 # Compromise 0.24
+            # Adaptive v_target based on pitch ("Tent" function).
+            # Peak at pitch = -1.2 (Medium dive) -> v_target = 0.26 (Aim higher to extend range)
+            # Steep (< -1.2) -> Reduce v_target to aim down (0.17 at -1.5)
+            # Shallow (> -1.2) -> Reduce v_target to prevent float (0.19 at -0.5)
+            if pitch < -1.2:
+                 v_target = 0.26 + 0.30 * (pitch + 1.2)
+            else:
+                 v_target = 0.26 - 0.11 * (pitch + 1.2)
+
+            v_target = max(0.1, v_target)
 
             pitch_track = -self.k_pitch * (v - v_target) + pitch_bias
             pitch_track = max(-2.5, min(2.5, pitch_track))
@@ -173,8 +189,37 @@ class DPCFlightController:
         pitch_safety = 3.0 * (target_pitch_safety - pitch)
         thrust_safety = 0.75
 
-        # 4. Blending
-        if tracking_uv:
+        # --- Stage 3: Finale (Docking) Logic ---
+        # Trigger: Target moves high in frame (v < -0.1).
+        # Removed RER trigger to prevent premature engagement during good glide slopes.
+        # Only enter if tracking is valid.
+        if tracking_uv and not self.final_mode:
+            u, v = tracking_uv
+            if v < -0.1:
+                logger.info(f"Entering Final Mode! v={v:.2f}, RER={self.rer_smoothed:.2f}")
+                self.final_mode = True
+
+        # 4. Blending / Final Mode Execution
+        if self.final_mode and tracking_uv:
+            u, v = tracking_uv
+
+            # Pitch: Locks Level (0 deg)
+            target_pitch_final = 0.0
+            pitch_rate_cmd = -4.0 * (target_pitch_final - pitch) # Simple P-controller to Level
+
+            # Yaw: Slides to center X (Dampened)
+            yaw_rate_cmd = -self.k_yaw * u * 0.2
+            yaw_rate_cmd = max(-0.5, min(0.5, yaw_rate_cmd))
+
+            # Thrust: Modulates to center Y (v=0)
+            # v < 0 means target high (drone low) -> Need more thrust
+            # v > 0 means target low (drone high) -> Need less thrust
+            # Base thrust for hover/level flight approx 0.55
+            # Increased Gain to 2.0
+            thrust_cmd = 0.55 - 2.0 * v
+            thrust_cmd = max(0.1, min(0.95, thrust_cmd))
+
+        elif tracking_uv:
             pitch_rate_cmd = (1.0 - w_safety) * pitch_track + w_safety * pitch_safety
             thrust_cmd = (1.0 - w_safety) * thrust_track + w_safety * thrust_safety
         else:
