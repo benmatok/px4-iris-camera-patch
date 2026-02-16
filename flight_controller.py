@@ -190,12 +190,11 @@ class DPCFlightController:
         thrust_safety = 0.75
 
         # --- Stage 3: Finale (Docking) Logic ---
-        # Trigger: Target moves high in frame (v < -0.1).
-        # Removed RER/Overshoot triggers to prevent premature engagement.
+        # Trigger: Target moves high in frame (v < -0.1) OR Low in frame (Overshoot v > 0.4).
         # Only enter if tracking is valid.
         if tracking_uv and not self.final_mode:
             u, v = tracking_uv
-            if v < -0.1:
+            if v < -0.1 or v > 0.4:
                 logger.info(f"Entering Final Mode! v={v:.2f}, RER={self.rer_smoothed:.2f}")
                 self.final_mode = True
 
@@ -203,20 +202,30 @@ class DPCFlightController:
         if self.final_mode and tracking_uv:
             u, v = tracking_uv
 
-            # Pitch: Locks Level (0 deg)
-            target_pitch_final = 0.0
-            pitch_rate_cmd = 4.0 * (target_pitch_final - pitch) # Corrected Sign: P-controller to Level
-
             # Yaw: Slides to center X (Dampened)
             yaw_rate_cmd = -self.k_yaw * u * 0.2
             yaw_rate_cmd = max(-0.5, min(0.5, yaw_rate_cmd))
 
-            # Thrust: Modulates to center Y (v=0)
-            # v < 0 means target high (drone low) -> Need more thrust
-            # v > 0 means target low (drone high) -> Need less thrust
-            # Base thrust for hover/level flight approx 0.55
-            # Increased Gain to 2.0
-            thrust_cmd = 0.55 - 2.0 * v
+            # Split Logic for Undershoot vs Overshoot
+            if v < 0.1:
+                # Undershoot / Recovery (Target High) -> Level & Power
+                target_pitch_final = 0.0
+                pitch_rate_cmd = 4.0 * (target_pitch_final - pitch)
+
+                # Thrust: Modulates to center Y (v=0)
+                # Gain 2.0 to climb
+                thrust_cmd = 0.55 - 2.0 * v
+            else:
+                # Overshoot / Sink (Target Low) -> Nose Down & Gentle Sink
+                # Keep nose down (-5 deg) to maintain view/momentum
+                target_pitch_final = -0.08
+                pitch_rate_cmd = 4.0 * (target_pitch_final - pitch)
+
+                # Thrust: Modulates to gently sink towards ideal v=0.24
+                # If v=0.4, error=0.16. Thrust = 0.55 - 1.0 * 0.16 = 0.39.
+                # Not a hard cut to 0.1
+                thrust_cmd = 0.55 - 1.0 * (v - 0.24)
+
             thrust_cmd = max(0.1, min(0.95, thrust_cmd))
 
         elif tracking_uv:
