@@ -51,6 +51,7 @@ The simulation is built on a pure Python implementation of a 6-DOF Quadrotor mod
 ### 2. Flight Controller (`flight_controller.py`)
 The `DPCFlightController` implements a heuristic-based control logic designed for robustness:
 - **Visual Servoing**: Uses a PID-based approach with Adaptive Pitch Biasing to keep the target centered and maintain an optimal glide slope.
+- **Terrain Agnostic**: The control logic operates without altitude-based safety checks (e.g., auto-flare or ground proximity warnings). This allows robust operation in non-flat environments where ground height is unknown or variable.
 - **Blind Mode**: When velocity sensors (`vz`, `vx`, `vy`) are unavailable, the controller estimates state by integrating acceleration commands, allowing it to function without GPS or flow sensors.
 - **Ghost Paths**: Generates forward-predicted trajectories based on the current estimated state. These "ghosts" are visualized in the web app to show where the drone "thinks" it is going.
 - **Final Mode**: specialized logic triggered when close to the target to ensure precise docking or collision avoidance.
