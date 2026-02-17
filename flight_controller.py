@@ -78,7 +78,6 @@ class DPCFlightController:
             accel_z -= 0.1 * self.est_vz
             self.est_vz += accel_z * self.dt
             self.est_pz += self.est_vz * self.dt
-            if self.est_pz < 0.0: self.est_pz = 0.0; self.est_vz = 0.0
             pz = self.est_pz
             vz = self.est_vz
         else:
@@ -111,10 +110,6 @@ class DPCFlightController:
         self.last_tracking_size = tracking_size
 
         # --- Control Logic ---
-
-        # 1. Weights based on Altitude (pz)
-        # Flare starts late (5m)
-        w_safety = max(0.0, min(1.0, (5.0 - pz) / 4.0))
 
         # 2. Tracking Control (Visual Servoing)
         pitch_track = 0.0
@@ -184,11 +179,6 @@ class DPCFlightController:
             pitch_track = 0.0
             thrust_track = 0.55
 
-        # 3. Safety Control (Flare)
-        target_pitch_safety = math.radians(5.0)
-        pitch_safety = 3.0 * (target_pitch_safety - pitch)
-        thrust_safety = 0.75
-
         # --- Stage 3: Finale (Docking) Logic ---
         # Trigger: Target moves high in frame (v < -0.1) OR Low in frame (Overshoot v > 0.4).
         # Only enter if tracking is valid.
@@ -198,7 +188,7 @@ class DPCFlightController:
                 logger.info(f"Entering Final Mode! v={v:.2f}, RER={self.rer_smoothed:.2f}")
                 self.final_mode = True
 
-        # 4. Blending / Final Mode Execution
+        # 4. Final Mode Execution
         if self.final_mode and tracking_uv:
             u, v = tracking_uv
 
@@ -229,16 +219,12 @@ class DPCFlightController:
             thrust_cmd = max(0.1, min(0.95, thrust_cmd))
 
         elif tracking_uv:
-            pitch_rate_cmd = (1.0 - w_safety) * pitch_track + w_safety * pitch_safety
-            thrust_cmd = (1.0 - w_safety) * thrust_track + w_safety * thrust_safety
+            pitch_rate_cmd = pitch_track
+            thrust_cmd = thrust_track
         else:
-            # If blind and low, flare
-            if pz < 5.0:
-                 pitch_rate_cmd = 0.5
-                 thrust_cmd = 0.6
-            else:
-                 pitch_rate_cmd = 0.0
-                 thrust_cmd = 0.5
+            # Blind / Lost Tracking
+            pitch_rate_cmd = 0.0
+            thrust_cmd = 0.5
 
         # 5. Prevent Inverted Flight AND Stall
         if pitch < -1.45 and pitch_rate_cmd < 0.0:
