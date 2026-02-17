@@ -60,6 +60,16 @@ The `DPCFlightController` implements a heuristic-based control logic designed fo
 - **Visual Tracker** (`visual_tracker.py`): Detects the target (red blob) in the synthetic camera image and provides `(u, v)` coordinates and size.
 - **Flow Velocity Estimator** (`vision/flow_estimator.py`): Estimates the Focus of Expansion (FOE) from optical flow to aid in velocity estimation when other sensors fail.
 
+### 4. Mission Logic (`mission_manager.py`)
+The drone operates as a state machine with the following behaviors:
+- **TAKEOFF**: Ascends vertically to a safe `target_alt`. Transitions to **SCAN** if reached without seeing the target, or **HOMING** if the target is detected.
+- **SCAN**: Rotates (yaws) in place to search for the target. Transitions to **HOMING** upon detection.
+- **HOMING**: The standard intercept mode. It flies towards the target (using visual servoing) to minimize distance.
+  - *Assumption*: Requires a clear line of sight to the target.
+- **STAIRCASE** (Optional): A specialized maneuver for steep dives (High Altitude, Low Distance).
+  - *Logic*: If `Alt > 30m` and `Dist < 15m`, it triggers a descent of 20m (**STAIRCASE_DESCEND**) followed by a brief hover (**STAIRCASE_STABILIZE**) to reacquire the target before resuming the attack.
+  - *Assumption*: The target is stationary or moving slowly enough to be reacquired after the blind descent.
+
 ## Validation
 
 To verify the simulation logic and controller performance, you can run the scenario validation script:
