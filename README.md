@@ -59,10 +59,7 @@ The `DPCFlightController` implements a robust, multi-stage control strategy for 
    - **Thrust Modulation**: Reduces thrust (brakes) if the target expands too quickly, ensuring a controlled collision.
    - **Flare Logic**: Triggers a pitch-up maneuver if the expansion rate exceeds safety thresholds to prevent high-speed impact.
 
-3. **Spiral Search**:
-   If the target is lost or not yet acquired (Blind Mode), the controller executes a yaw spin command (driven by `MissionManager`) to scan the horizon and reacquire the target visually.
-
-4. **Final Mode (Docking)**:
+3. **Final Mode (Docking)**:
    Activated when the target is in close proximity (large vertical error in frame).
    - **Recovery**: If undershooting (target high), the drone levels off and boosts thrust.
    - **Sink**: If overshooting (target low), the drone pitches down and reduces thrust to sink onto the target.

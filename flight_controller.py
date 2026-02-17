@@ -113,13 +113,19 @@ class DPCFlightController:
         # --- Control Logic ---
 
         # 1. Weights based on Altitude (pz)
-        # Flare starts late (5m)
-        w_safety = max(0.0, min(1.0, (5.0 - pz) / 4.0))
+        # Flare starts earlier (30m) and ramps up slower to provide smoother pull-up
+        # But per user instruction, we should not rely heavily on absolute pz for safety logic
+        # if terrain is unknown. However, w_safety is used for flare near "ground".
+        # We will keep a basic version or rely on pitch constraints.
+        # Original: w_safety = max(0.0, min(1.0, (5.0 - pz) / 4.0))
+        # Updated for safety in sim (assuming 0 is ground):
+        w_safety = max(0.0, min(1.0, (10.0 - pz) / 10.0))
 
         # 2. Tracking Control (Visual Servoing)
         pitch_track = 0.0
         yaw_rate_cmd = 0.0
         thrust_track = 0.6 # Base Trim Thrust
+        thrust_correction = 0.0
 
         if tracking_uv:
             u, v = tracking_uv
@@ -132,7 +138,13 @@ class DPCFlightController:
             # Aggressive Adaptive Pitch Bias
             # Steep (-1.2) -> Bias 0.0 (Aim Straight)
             # Shallow (-0.6) -> Bias 0.2 (Aim High)
-            pitch_bias = 0.40 + 0.33 * pitch # Decreased intercept 0.42 -> 0.40
+            pitch_bias = 0.40 + 0.33 * pitch
+
+            # --- Shallow Dive Altitude Maintenance ---
+            # If pitch is shallow (>-0.8), boost bias to keep nose up and extend range
+            if pitch > -0.8:
+                 pitch_bias = 0.25 # Override with a strong positive bias
+
             # Clamp limits reasonable for bias
             pitch_bias = max(-0.1, min(0.3, pitch_bias))
 
@@ -144,11 +156,31 @@ class DPCFlightController:
             if pitch < -1.2:
                  v_target = 0.27 + 0.33 * (pitch + 1.2)
             else:
+                 # Standard Tent
                  v_target = 0.27 - 0.11 * (pitch + 1.2)
 
             v_target = max(0.1, v_target)
 
+            # Enforce Safe Pitch (Attack Angle) for Shallow Dives
+            # "At least 10 degrees attack angle" -> Pitch should not be too negative.
+            if pitch > -0.5:
+                 v_target = 0.55 # Allow target to be very low in frame to maintain altitude
+
             pitch_track = -self.k_pitch * (v - v_target) + pitch_bias
+
+            # --- Safety Override: Prevent Steep Dive (Ground Impact) ---
+            # Instead of checking pz, we check Pitch Angle directly.
+            # Don't let pitch go too negative (Steep Dive)
+            # Limit to e.g. -25 degrees (-0.44 rad)
+            min_pitch = -0.4
+            if pitch_track < 0.0: # If commanding pitch down
+                # If current pitch is already below limit, don't pitch down more
+                # Or just clamp the output pitch_track to not exceed a rate that leads to invalid state
+                # Here we clamp the *command* but more importantly we want to clamp the *state* logic
+                # Actually, DPCFlightController outputs rates.
+                # If pitch < min_pitch and pitch_rate_cmd < 0, set to 0 or positive.
+                pass # Handled in step 5 logic
+
             pitch_track = max(-2.5, min(2.5, pitch_track))
 
             # --- Constant RER Thrust Strategy ---
@@ -179,8 +211,8 @@ class DPCFlightController:
                 pitch_track += flare_pitch
 
         else:
-            # Blind / Lost Tracking / Spiral Search
-            yaw_rate_cmd = extra_yaw_rate
+            # Blind / Lost Tracking
+            yaw_rate_cmd = 0.0 # Spiral Search Disabled
             pitch_track = 0.0
             thrust_track = 0.55
 
@@ -240,12 +272,19 @@ class DPCFlightController:
                  pitch_rate_cmd = 0.0
                  thrust_cmd = 0.5
 
-        # 5. Prevent Inverted Flight AND Stall
+        # 5. Prevent Inverted Flight AND Stall AND Ground Impact
         if pitch < -1.45 and pitch_rate_cmd < 0.0:
              pitch_rate_cmd = 0.0
 
         if pitch > 0.8 and pitch_rate_cmd > 0.0:
              pitch_rate_cmd = 0.0
+
+        # Minimum Pitch Constraint (Safe Glide)
+        # Prevent pitching down further if we are already at -25 deg (-0.44 rad)
+        if pitch < -0.44 and pitch_rate_cmd < 0.0:
+             pitch_rate_cmd = 0.0 # Stop pitching down
+             # Optional: Gently pitch up to recover
+             pitch_rate_cmd = 0.5 * (-0.4 - pitch)
 
         # 6. Roll Control
         roll_rate_cmd = 4.0 * (0.0 - roll)
@@ -286,4 +325,11 @@ class DPCFlightController:
              path.append({'px': sim_x, 'py': sim_y, 'pz': sim_z})
         ghost_paths.append(path)
 
-        return action, ghost_paths
+        # Determine Control State for Viz
+        ctrl_state = "TRACK"
+        if self.final_mode:
+            ctrl_state = "FINAL"
+        elif tracking_uv and thrust_correction > 0.0:
+            ctrl_state = "RER"
+
+        return action, ghost_paths, ctrl_state

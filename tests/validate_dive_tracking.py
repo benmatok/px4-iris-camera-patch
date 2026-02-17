@@ -181,13 +181,23 @@ class DiveValidator:
                 tracking_norm = self.projector.pixel_to_normalized(center[0], center[1])
                 tracking_size_norm = radius / 480.0
 
-            action_out, _ = self.controller.compute_action(
+            res = self.controller.compute_action(
                 state_obs,
                 dpc_target,
                 tracking_uv=tracking_norm,
                 tracking_size=tracking_size_norm,
                 extra_yaw_rate=extra_yaw
             )
+
+            if len(res) == 3:
+                action_out, _, ctrl_state = res
+            else:
+                action_out, _ = res
+                ctrl_state = "TRACK"
+
+            if 'ctrl_state' not in history:
+                history['ctrl_state'] = []
+            history['ctrl_state'].append(ctrl_state)
 
             # 5. Apply Control to Sim
             sim_action = np.array([
