@@ -17,13 +17,13 @@ class VisionConfig:
 
 @dataclass
 class ControlConfig:
-    k_yaw: float = 2.01
-    k_pitch: float = 7.65
+    k_yaw: float = 3.31
+    k_pitch: float = 4.52
 
     # Cruise / Dive Logic
-    dive_trigger_rer: float = 0.08
-    dive_trigger_v_threshold: float = 0.42
-    cruise_pitch_gain: float = 0.22
+    dive_trigger_rer: float = 0.23
+    dive_trigger_v_threshold: float = 0.44
+    cruise_pitch_gain: float = 0.34
 
     # Pitch Bias Logic: bias = A + B * pitch
     pitch_bias_intercept: float = 0.40
@@ -39,15 +39,15 @@ class ControlConfig:
     v_target_pitch_threshold: float = -1.2
 
     # Thrust
-    thrust_base_intercept: float = 0.70
-    thrust_base_slope: float = 0.38
+    thrust_base_intercept: float = 0.64
+    thrust_base_slope: float = 0.40
     thrust_min: float = 0.15
     thrust_max: float = 0.5 # Base max
 
     rer_target: float = 0.25
-    k_rer: float = 1.37
+    k_rer: float = 2.75
 
-    flare_gain: float = 1.72
+    flare_gain: float = 2.22
     flare_threshold_offset: float = 0.25
 
     # Final Mode (Disabled for now to simplify logic)
@@ -70,9 +70,9 @@ class ControlConfig:
 
     # Velocity Estimation & Speed Limiting
     velocity_limit: float = 5.0
-    braking_pitch_gain: float = 0.2
+    braking_pitch_gain: float = 0.35
     max_braking_pitch_rate: float = 1.0
-    velocity_smoothing_alpha: float = 0.5
+    velocity_smoothing_alpha: float = 0.53
 
 @dataclass
 class MissionConfig:
