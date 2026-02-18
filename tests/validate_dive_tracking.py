@@ -11,6 +11,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from vision.projection import Projector
 from sim_interface import SimDroneInterface
 from visual_tracker import VisualTracker
+from vision.msckf import MSCKF
+from vision.feature_tracker import FeatureTracker
 from flight_controller import DPCFlightController
 from mission_manager import MissionManager
 from flight_config import FlightConfig
@@ -47,6 +49,11 @@ class DiveValidator:
 
         # Perception
         self.tracker = VisualTracker(self.projector)
+
+        # VIO
+        self.msckf = MSCKF(self.projector)
+        self.feature_tracker = FeatureTracker(self.projector)
+        self.msckf.initialized = False
 
         # Logic
         self.mission = MissionManager(target_alt=init_alt, enable_staircase=self.config.mission.enable_staircase, config=self.config)
@@ -185,21 +192,58 @@ class DiveValidator:
                 tracking_norm = self.projector.pixel_to_normalized(center[0], center[1])
                 tracking_size_norm = radius / 480.0
 
-            # Simulate Reliable Flow Estimation using Ground Truth Velocity (NED)
-            # Sim (ENU) -> NED: vx_ned = vy_sim, vy_ned = vx_sim, vz_ned = -vz_sim
-            gt_vel_ned = {
-                'vx': s['vy'],
-                'vy': s['vx'],
-                'vz': -s['vz']
-            }
+            # --- VIO UPDATE ---
 
+            # IMU Data
+            # s has ax_b, ay_b, az_b from my patch
+            gyro = np.array([s['wx'], s['wy'], s['wz']], dtype=np.float64)
+            accel = np.array([s.get('ax_b', 0.0), s.get('ay_b', 0.0), s.get('az_b', 9.81)], dtype=np.float64)
+
+            # Init VIO if needed (Ground Truth Init)
+            if not self.msckf.initialized:
+                from scipy.spatial.transform import Rotation as R
+                r_angle = dpc_state_ned_abs['roll']
+                p_angle = dpc_state_ned_abs['pitch']
+                y_angle = dpc_state_ned_abs['yaw']
+                q_init = R.from_euler('xyz', [r_angle, p_angle, y_angle], degrees=False).as_quat()
+
+                p_init = np.array([dpc_state_ned_abs['px'], dpc_state_ned_abs['py'], dpc_state_ned_abs['pz']])
+                v_init = np.array([dpc_state_ned_abs['vx'], dpc_state_ned_abs['vy'], dpc_state_ned_abs['vz']])
+
+                self.msckf.initialize(q_init, p_init, v_init)
+
+            # Propagate
+            self.msckf.propagate(gyro, accel, DT)
+
+            # Augment
+            self.msckf.augment_state()
+
+            # Features
+            # Body Rates
+            body_rates = (s['wx'], s['wy'], s['wz'])
+            current_clone_idx = self.msckf.cam_clones[-1]['id'] if self.msckf.cam_clones else 0
+
+            foe, finished_tracks = self.feature_tracker.update(dpc_state_ned_abs, body_rates, DT, current_clone_idx)
+
+            if finished_tracks:
+                self.msckf.update_features(finished_tracks)
+
+            # Height
+            height_meas = dpc_state_ned_abs['pz']
+            self.msckf.update_height(height_meas)
+
+            # Get VIO Output
+            vio_vel = self.msckf.get_velocity()
+            vel_est = {'vx': vio_vel[0], 'vy': vio_vel[1], 'vz': vio_vel[2]}
+
+            # Use VIO velocity for controller
             action_out, _ = self.controller.compute_action(
                 state_obs,
                 dpc_target,
                 tracking_uv=tracking_norm,
                 tracking_size=tracking_size_norm,
                 extra_yaw_rate=extra_yaw,
-                velocity_est=gt_vel_ned,
+                velocity_est=vel_est,
                 velocity_reliable=True
             )
 
