@@ -287,7 +287,7 @@ class TheShow:
         # dpc_state_ned_abs is current state
         # body rates needed: s['wx'], s['wy'], s['wz']
         body_rates = (s['wx'], s['wy'], s['wz'])
-        foe = self.flow_estimator.update(dpc_state_ned_abs, body_rates, DT)
+        foe, vel_est, vel_reliable = self.flow_estimator.update(dpc_state_ned_abs, body_rates, DT)
 
         foe_px = None
         if foe:
@@ -317,7 +317,9 @@ class TheShow:
             tracking_uv=tracking_norm,
             tracking_size=tracking_size_norm,
             extra_yaw_rate=extra_yaw,
-            foe_uv=foe
+            foe_uv=foe,
+            velocity_est=vel_est,
+            velocity_reliable=vel_reliable
         )
 
         # 5. Apply Control to Sim
@@ -473,6 +475,7 @@ class TheShow:
             'sim_target': sim_target_ned, # Absolute NED (Green)
             'tracker': {'u': center[0] if center else 0, 'v': center[1] if center else 0, 'size': radius},
             'flight_direction': foe_px,
+            'velocity_est': vel_est,
             'dpc_error': dpc_error,
             'ghosts': ghosts_viz,
             'paused': self.paused

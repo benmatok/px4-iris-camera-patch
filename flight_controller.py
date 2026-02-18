@@ -63,7 +63,7 @@ class DPCFlightController:
         self.locked_pitch = 0.0
         logger.info(f"DPCFlightController reset.")
 
-    def compute_action(self, state_obs, target_cmd, tracking_uv=None, tracking_size=None, extra_yaw_rate=0.0, foe_uv=None):
+    def compute_action(self, state_obs, target_cmd, tracking_uv=None, tracking_size=None, extra_yaw_rate=0.0, foe_uv=None, velocity_est=None, velocity_reliable=False):
         # Unpack State
         obs_pz = state_obs.get('pz')
         obs_vz = state_obs.get('vz')
@@ -262,6 +262,37 @@ class DPCFlightController:
             pitch_rate_cmd = 0.0
             thrust_cmd = 0.5
 
+        # Speed Limiting (Global) & State Update
+        if velocity_reliable and velocity_est:
+             vx, vy, vz = velocity_est['vx'], velocity_est['vy'], velocity_est['vz']
+
+             # Update Internal State Estimate (Critical for Blind Mode Visualization)
+             # Blend with existing estimate or overwrite?
+             # Since flow is "measurement", we treat it as observation.
+             alpha_vel = 0.5
+             self.est_vx = alpha_vel * vx + (1-alpha_vel) * self.est_vx
+             self.est_vy = alpha_vel * vy + (1-alpha_vel) * self.est_vy
+
+             # Vz: Only use flow Vz if Baro is missing (Blind)
+             if obs_vz is None:
+                  self.est_vz = alpha_vel * vz + (1-alpha_vel) * self.est_vz
+
+             v_mag = math.sqrt(vx*vx + vy*vy + vz*vz)
+             if v_mag > 5.0:
+                  excess = v_mag - 5.0
+                  # Brake by Pitching Up (Positive Pitch Rate)
+                  # Gain 0.2 rad/s per m/s excess
+                  pitch_brake = 0.2 * excess
+                  # Limit max brake to avoid stall/loop
+                  pitch_brake = min(1.0, pitch_brake)
+
+                  pitch_rate_cmd += pitch_brake
+
+                  # Optional: Reduce Thrust if braking hard?
+                  # If we pitch up, drag increases.
+                  # Keeping thrust might result in climb.
+                  # But simpler is just pitch for now.
+
         # 5. Prevent Inverted Flight AND Stall
         if pitch < -1.45 and pitch_rate_cmd < 0.0:
              pitch_rate_cmd = 0.0
@@ -286,16 +317,17 @@ class DPCFlightController:
         sim_vy = self.est_vy
         sim_vz = vz
 
-        if abs(pitch) > 0.1:
-             v_xy_est = abs(sim_vz / math.tan(pitch))
-             v_xy_est = min(20.0, v_xy_est)
-             sim_vx = 0.9 * sim_vx + 0.1 * (v_xy_est * math.cos(yaw))
-             sim_vy = 0.9 * sim_vy + 0.1 * (v_xy_est * math.sin(yaw))
-             self.est_vx = sim_vx
-             self.est_vy = sim_vy
-        else:
-             self.est_vx *= 0.95
-             self.est_vy *= 0.95
+        if not (velocity_reliable and velocity_est):
+             if abs(pitch) > 0.1:
+                  v_xy_est = abs(sim_vz / math.tan(pitch))
+                  v_xy_est = min(20.0, v_xy_est)
+                  sim_vx = 0.9 * sim_vx + 0.1 * (v_xy_est * math.cos(yaw))
+                  sim_vy = 0.9 * sim_vy + 0.1 * (v_xy_est * math.sin(yaw))
+                  self.est_vx = sim_vx
+                  self.est_vy = sim_vy
+             else:
+                  self.est_vx *= 0.95
+                  self.est_vy *= 0.95
 
         ghost_paths = []
         path = []
