@@ -68,6 +68,12 @@ class ControlConfig:
     final_mode_overshoot_thrust_gain: float = 1.0
     final_mode_overshoot_v_target: float = 0.24
 
+    # Velocity Estimation & Speed Limiting
+    velocity_limit: float = 5.0
+    braking_pitch_gain: float = 0.2
+    max_braking_pitch_rate: float = 1.0
+    velocity_smoothing_alpha: float = 0.5
+
 @dataclass
 class MissionConfig:
     target_alt: float = 50.0
