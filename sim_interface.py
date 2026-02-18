@@ -162,6 +162,24 @@ class PyGhostModel:
         ay = ay_thrust + ay_drag
         az = az_thrust + az_drag - self.G
 
+        # Accelerometer Output (Specific Force in Body Frame)
+        # f_meas = R_w2b * (a_world - g_world)
+        # g_world = [0, 0, -G]. So (a - g) = [ax, ay, az+G].
+        # In PyGhostModel (Z-Up), G is down (-9.81). So gravity vector is [0, 0, -9.81].
+        # Wait, if G=9.81, gravity acts down (-Z). az equation has -G.
+        # So a_world_z = az_thrust + az_drag - G.
+        # Specific Force = a_world - g_world = (a_world) - (0,0,-G)
+        # = (ax, ay, az+G) - (0,0,0) ? No.
+        # Accel measures reaction force. Gravity pulls down, floor pushes up. Accel reads +1g up.
+        # So f = a - g.
+        # If stationary: a=0. f = -g = -(-9.81) = +9.81 (Up). Correct.
+
+        accel_world = np.array([ax, ay, az + self.G], dtype=np.float32)
+
+        # Transform to Body Frame
+        # R_next maps Body to World. R_next.T maps World to Body.
+        accel_body = R_next.T @ accel_world
+
         next_vx = vx + ax * dt
         next_vy = vy + ay * dt
         next_vz = vz + az * dt
@@ -174,7 +192,8 @@ class PyGhostModel:
             'px': next_px, 'py': next_py, 'pz': next_pz,
             'vx': next_vx, 'vy': next_vy, 'vz': next_vz,
             'roll': next_roll, 'pitch': next_pitch, 'yaw': next_yaw,
-            'wx': next_wx, 'wy': next_wy, 'wz': next_wz
+            'wx': next_wx, 'wy': next_wy, 'wz': next_wz,
+            'ax_b': accel_body[0], 'ay_b': accel_body[1], 'az_b': accel_body[2]
         }
 
 class SimDroneInterface:
@@ -202,7 +221,8 @@ class SimDroneInterface:
             'px': 0.0, 'py': 0.0, 'pz': 1.0,
             'vx': 0.0, 'vy': 0.0, 'vz': 0.0,
             'roll': 0.0, 'pitch': 0.0, 'yaw': 0.0,
-            'wx': 0.0, 'wy': 0.0, 'wz': 0.0
+            'wx': 0.0, 'wy': 0.0, 'wz': 0.0,
+            'ax_b': 0.0, 'ay_b': 0.0, 'az_b': 9.81
         }
 
         self.masses = [self.mass]

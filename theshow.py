@@ -20,7 +20,8 @@ try:
     from vision.projection import Projector
     from sim_interface import SimDroneInterface
     from visual_tracker import VisualTracker
-    from vision.flow_estimator import FlowVelocityEstimator
+    from vision.feature_tracker import FeatureTracker
+    from vision.msckf import MSCKF
     from flight_controller import DPCFlightController
     from mission_manager import MissionManager
 except ImportError as e:
@@ -49,7 +50,8 @@ class TheShow:
 
             # Perception
             self.tracker = VisualTracker(self.projector)
-            self.flow_estimator = FlowVelocityEstimator(self.projector)
+            self.feature_tracker = FeatureTracker(self.projector)
+            self.msckf = MSCKF(self.projector)
 
             # Logic
             self.mission = MissionManager()
@@ -130,6 +132,11 @@ class TheShow:
                 # Reset Logic
                 self.mission.reset(target_alt=alt)
                 self.controller.reset()
+
+                # Reset VIO
+                self.msckf = MSCKF(self.projector)
+                self.feature_tracker = FeatureTracker(self.projector)
+                self.msckf.initialized = False
 
                 self.prediction_history = []
                 self.loops = 0
@@ -283,11 +290,59 @@ class TheShow:
 
         mission_state, dpc_target, extra_yaw = self.mission.update(sim_state_rel, (center, target_wp_sim))
 
-        # Update Flow Estimator
-        # dpc_state_ned_abs is current state
-        # body rates needed: s['wx'], s['wy'], s['wz']
-        body_rates = (s['wx'], s['wy'], s['wz'])
-        foe, vel_est, vel_reliable = self.flow_estimator.update(dpc_state_ned_abs, body_rates, DT)
+        # --- VIO UPDATE ---
+
+        # 1. IMU Propagation
+        # Get IMU data from Sim State (sim_interface patched to provide ax_b, ay_b, az_b)
+        gyro = np.array([s['wx'], s['wy'], s['wz']], dtype=np.float64)
+        accel = np.array([s.get('ax_b', 0.0), s.get('ay_b', 0.0), s.get('az_b', 9.81)], dtype=np.float64)
+
+        # Initialize if needed
+        if not self.msckf.initialized:
+            # Init with Truth for now (In real life, static alignment)
+            # q_wb = from rpy
+            # NED Quaternion
+            r = dpc_state_ned_abs['roll']
+            p = dpc_state_ned_abs['pitch']
+            y = dpc_state_ned_abs['yaw']
+
+            # Use scipy to get quat
+            from scipy.spatial.transform import Rotation as R
+            q_init = R.from_euler('xyz', [r, p, y], degrees=False).as_quat()
+
+            p_init = np.array([dpc_state_ned_abs['px'], dpc_state_ned_abs['py'], dpc_state_ned_abs['pz']])
+            v_init = np.array([dpc_state_ned_abs['vx'], dpc_state_ned_abs['vy'], dpc_state_ned_abs['vz']])
+
+            self.msckf.initialize(q_init, p_init, v_init)
+
+        self.msckf.propagate(gyro, accel, DT)
+
+        # 2. State Augmentation (Camera Image)
+        # Clone current pose
+        self.msckf.augment_state()
+
+        # 3. Feature Tracking & Update
+        current_clone_idx = self.msckf.cam_clones[-1]['id'] if self.msckf.cam_clones else 0
+
+        # dpc_state_ned_abs used for generation inside tracker, but we should rely on image content ideally
+        # Here we use synthetic generation
+        foe, finished_tracks = self.feature_tracker.update(dpc_state_ned_abs, body_rates, DT, current_clone_idx)
+
+        if finished_tracks:
+            self.msckf.update_features(finished_tracks)
+
+        # 4. Height Update (Inject Scale)
+        # Measure Altitude (Z-Down, so -pz)
+        # Baro gives us -pz.
+        height_meas = dpc_state_ned_abs['pz'] # NED Pz is negative altitude (e.g. -100)
+        # Wait, if we are at 100m alt, NED Pz is -100.
+        # MSCKF tracks NED position.
+        self.msckf.update_height(height_meas)
+
+        # Get Estimated Velocity
+        vio_vel = self.msckf.get_velocity()
+        vel_est = {'vx': vio_vel[0], 'vy': vio_vel[1], 'vz': vio_vel[2]}
+        vel_reliable = True # Assumed reliable if initialized
 
         foe_px = None
         if foe:
