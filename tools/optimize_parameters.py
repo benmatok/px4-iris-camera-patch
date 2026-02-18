@@ -37,7 +37,9 @@ PARAM_SPACE = {
     'k_rer': (1.0, 4.0),
     'flare_gain': (1.0, 4.0),
     'thrust_base_intercept': (0.4, 0.8),
-    'thrust_base_slope': (0.1, 0.5)
+    'thrust_base_slope': (0.1, 0.5),
+    'braking_pitch_gain': (0.1, 0.5),
+    'velocity_smoothing_alpha': (0.1, 0.9)
 }
 
 PARAM_NAMES = list(PARAM_SPACE.keys())
@@ -81,7 +83,7 @@ def evaluate_params(params_vector):
 
             # Run simulation
             try:
-                hist = validator.run(duration=25.0)
+                hist = validator.run(duration=40.0)
                 min_dist = min(hist['dist'])
             except Exception:
                 min_dist = 1000.0 # High penalty for crash/error
@@ -195,10 +197,11 @@ def local_sgd(start_params, n_steps=10, lr=0.01):
     return current_params, evaluate_params(current_params)
 
 if __name__ == "__main__":
-    best_gp_params, best_gp_loss = gp_search(n_initial=5, n_iter=10)
+    # Reduced iterations for faster execution
+    best_gp_params, best_gp_loss = gp_search(n_initial=3, n_iter=3)
     print(f"\nBest GP Params Loss: {best_gp_loss:.4f}")
 
-    final_params, final_loss = local_sgd(best_gp_params, n_steps=5, lr=0.05)
+    final_params, final_loss = local_sgd(best_gp_params, n_steps=3, lr=0.05)
 
     print("\n" + "="*40)
     print("OPTIMIZATION COMPLETE")
