@@ -269,7 +269,7 @@ class DPCFlightController:
              # Update Internal State Estimate (Critical for Blind Mode Visualization)
              # Blend with existing estimate or overwrite?
              # Since flow is "measurement", we treat it as observation.
-             alpha_vel = 0.5
+             alpha_vel = ctrl.velocity_smoothing_alpha
              self.est_vx = alpha_vel * vx + (1-alpha_vel) * self.est_vx
              self.est_vy = alpha_vel * vy + (1-alpha_vel) * self.est_vy
 
@@ -278,13 +278,13 @@ class DPCFlightController:
                   self.est_vz = alpha_vel * vz + (1-alpha_vel) * self.est_vz
 
              v_mag = math.sqrt(vx*vx + vy*vy + vz*vz)
-             if v_mag > 5.0:
-                  excess = v_mag - 5.0
+             if v_mag > ctrl.velocity_limit:
+                  excess = v_mag - ctrl.velocity_limit
                   # Brake by Pitching Up (Positive Pitch Rate)
                   # Gain 0.2 rad/s per m/s excess
-                  pitch_brake = 0.2 * excess
+                  pitch_brake = ctrl.braking_pitch_gain * excess
                   # Limit max brake to avoid stall/loop
-                  pitch_brake = min(1.0, pitch_brake)
+                  pitch_brake = min(ctrl.max_braking_pitch_rate, pitch_brake)
 
                   pitch_rate_cmd += pitch_brake
 
