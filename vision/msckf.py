@@ -380,6 +380,9 @@ class MSCKF:
 
         S = H_stack @ self.P @ H_stack.T + R_noise
 
+        # Add small regularization for numerical stability
+        S += np.eye(S.shape[0]) * 1e-6
+
         try:
             # Use pseudo-inverse for robustness against singular S
             # S is symmetric, so pinvh is good or just pinv
