@@ -50,8 +50,8 @@ def run_scenarios():
             config=config
         )
 
-        # Run for 25 seconds
-        hist = validator.run(duration=25.0)
+        # Run for 40 seconds to accommodate 5 m/s speed limit
+        hist = validator.run(duration=40.0)
 
         # GENERATE PLOTS
         from tests.validate_dive_tracking import plot_results
@@ -82,7 +82,7 @@ def run_scenarios():
             "final_dist": min_dist
         })
 
-        print(f"{sid:<4} {alt:<6.1f} {dist:<6.1f} {res_str:<10} {min_dist:<12.2f} 25.0s")
+        print(f"{sid:<4} {alt:<6.1f} {dist:<6.1f} {res_str:<10} {min_dist:<12.2f} 40.0s")
 
     print("-" * 60)
 

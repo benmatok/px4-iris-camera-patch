@@ -110,9 +110,13 @@ class FlowVelocityEstimator:
 
         self.prev_projections = curr_projections
 
+        # 4a. Estimate Velocity (Full 3D)
+        # We assume flat ground at current altitude to derive depth for each point.
+        vel_est, vel_reliable = self._estimate_velocity(flow_vectors, drone_state, dt)
+
         # 4. Estimate FOE (Initial Guess via Algebraic Least Squares)
         if len(flow_vectors) < 10:
-            return None
+            return None, vel_est, vel_reliable
 
         A = []
         b = []
@@ -129,7 +133,7 @@ class FlowVelocityEstimator:
             b.append(dv * x - du * y)
 
         if len(A) < 5:
-            return None
+            return None, vel_est, vel_reliable
 
         A = np.array(A)
         b = np.array(b)
@@ -220,13 +224,117 @@ class FlowVelocityEstimator:
                  self.filtered_foe_u = alpha * u_foe + (1 - alpha) * self.filtered_foe_u
                  self.filtered_foe_v = alpha * v_foe + (1 - alpha) * self.filtered_foe_v
 
-            return (self.filtered_foe_u, self.filtered_foe_v)
+            return (self.filtered_foe_u, self.filtered_foe_v), vel_est, vel_reliable
 
         except np.linalg.LinAlgError:
-            return None
+            return None, vel_est, vel_reliable
         except Exception as e:
             # Fallback or log error
-            return None
+            return None, vel_est, vel_reliable
+
+    def _estimate_velocity(self, flow_vectors, drone_state, dt):
+        """
+        Estimates velocity (Vx, Vy, Vz) in NED Frame using flow vectors and altitude.
+        Assumes flat ground at Z=0 (Altitude = -pz).
+
+        Args:
+            flow_vectors: List of (x, y, du, dv) tuples (displacement over dt).
+            drone_state: dict with 'px', 'py', 'pz', 'roll', 'pitch', 'yaw'.
+            dt: Time step in seconds.
+
+        Returns:
+            velocity_ned: dict {'vx': ..., 'vy': ..., 'vz': ...} or None if unreliable.
+            reliable: bool
+        """
+        altitude = -drone_state['pz']
+        if len(flow_vectors) < 5 or altitude < 0.5 or dt < 1e-4:
+             return None, False
+
+        # Calculate Rotation Matrix Body to World (NED)
+        roll = drone_state['roll']
+        pitch = drone_state['pitch']
+        yaw = drone_state['yaw']
+
+        cphi, sphi = np.cos(roll), np.sin(roll)
+        ctheta, stheta = np.cos(pitch), np.sin(pitch)
+        cpsi, spsi = np.cos(yaw), np.sin(yaw)
+
+        # R_b2w construction
+        r11 = ctheta * cpsi
+        r12 = cpsi * sphi * stheta - cphi * spsi
+        r13 = sphi * spsi + cphi * cpsi * stheta
+        r21 = ctheta * spsi
+        r22 = cphi * cpsi + sphi * spsi * stheta
+        r23 = cphi * spsi * stheta - cpsi * sphi
+        r31 = -stheta
+        r32 = ctheta * sphi
+        r33 = cphi * ctheta
+
+        R_b2w = np.array([
+            [r11, r12, r13],
+            [r21, r22, r23],
+            [r31, r32, r33]
+        ])
+
+        # Total Rotation Camera to World (NED)
+        # R_c2w = R_b2w @ R_c2b
+        R_total = R_b2w @ self.projector.R_c2b
+
+        A = []
+        b = []
+
+        for x, y, udot, vdot in flow_vectors:
+            # Normalized ray direction in Camera Frame: D_c = [x, y, 1.0]
+            # Ray direction in World Frame: D_w = R_total @ D_c
+
+            D_c = np.array([x, y, 1.0])
+            D_w = R_total @ D_c
+
+            denom = D_w[2] # Z component (Down)
+
+            # If ray points up or horizontal, ignore (sky)
+            if denom <= 0.01:
+                continue
+
+            z_c = altitude / denom
+
+            # LS Equation for V_cam:
+            # [1, 0, -x] * V = -z_c * udot
+            # [0, 1, -y] * V = -z_c * vdot
+            # where udot = du / dt
+
+            udot = udot / dt
+            vdot = vdot / dt
+
+            A.append([1.0, 0.0, -x])
+            b.append(-z_c * udot)
+
+            A.append([0.0, 1.0, -y])
+            b.append(-z_c * vdot)
+
+        if len(A) < 10:
+            return None, False
+
+        A_mat = np.array(A)
+        b_vec = np.array(b)
+
+        try:
+            res, residuals, rank, s = np.linalg.lstsq(A_mat, b_vec, rcond=None)
+            V_cam = res # [Vx, Vy, Vz] in Camera Frame
+
+            # Convert V_cam to V_ned
+            # V_ned = R_total @ V_cam
+            V_ned = R_total @ V_cam
+
+            vel_dict = {
+                'vx': V_ned[0],
+                'vy': V_ned[1],
+                'vz': V_ned[2]
+            }
+            return vel_dict, True
+
+        except np.linalg.LinAlgError:
+            return None, False
 
     def _get_terrain_height(self, x, y):
         """

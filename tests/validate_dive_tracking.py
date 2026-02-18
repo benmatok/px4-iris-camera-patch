@@ -185,12 +185,22 @@ class DiveValidator:
                 tracking_norm = self.projector.pixel_to_normalized(center[0], center[1])
                 tracking_size_norm = radius / 480.0
 
+            # Simulate Reliable Flow Estimation using Ground Truth Velocity (NED)
+            # Sim (ENU) -> NED: vx_ned = vy_sim, vy_ned = vx_sim, vz_ned = -vz_sim
+            gt_vel_ned = {
+                'vx': s['vy'],
+                'vy': s['vx'],
+                'vz': -s['vz']
+            }
+
             action_out, _ = self.controller.compute_action(
                 state_obs,
                 dpc_target,
                 tracking_uv=tracking_norm,
                 tracking_size=tracking_size_norm,
-                extra_yaw_rate=extra_yaw
+                extra_yaw_rate=extra_yaw,
+                velocity_est=gt_vel_ned,
+                velocity_reliable=True
             )
 
             # 5. Apply Control to Sim
