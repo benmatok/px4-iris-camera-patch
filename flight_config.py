@@ -19,6 +19,12 @@ class VisionConfig:
 class ControlConfig:
     k_yaw: float = 2.5
     k_pitch: float = 4.0
+
+    # Cruise / Dive Logic
+    dive_trigger_rer: float = 0.15
+    dive_trigger_v_threshold: float = 0.35
+    cruise_pitch_gain: float = 0.2
+
     # Pitch Bias Logic: bias = A + B * pitch
     pitch_bias_intercept: float = 0.40
     pitch_bias_slope: float = 0.33
@@ -29,7 +35,7 @@ class ControlConfig:
     # v_target = base + slope * (pitch + offset)
     v_target_slope_steep: float = 0.33
     v_target_slope_shallow: float = -0.11
-    v_target_intercept: float = 0.27
+    v_target_intercept: float = 0.5
     v_target_pitch_threshold: float = -1.2
 
     # Thrust
@@ -38,15 +44,15 @@ class ControlConfig:
     thrust_min: float = 0.15
     thrust_max: float = 0.5 # Base max
 
-    rer_target: float = 0.35
+    rer_target: float = 0.25
     k_rer: float = 2.0
 
-    flare_gain: float = 1.2
+    flare_gain: float = 2.0
     flare_threshold_offset: float = 0.25
 
-    # Final Mode
-    final_mode_v_threshold_low: float = -0.1
-    final_mode_v_threshold_high: float = 0.4
+    # Final Mode (Disabled for now to simplify logic)
+    final_mode_v_threshold_low: float = -10.0
+    final_mode_v_threshold_high: float = 10.0
 
     final_mode_yaw_gain: float = 0.2
     final_mode_yaw_limit: float = 0.5
