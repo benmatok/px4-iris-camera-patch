@@ -1,10 +1,14 @@
 import numpy as np
 from scipy.optimize import least_squares
+from flight_config import FlightConfig
 
 class FlowVelocityEstimator:
-    def __init__(self, projector, num_points=300):
+    def __init__(self, projector, config: FlightConfig = None):
         self.projector = projector
-        self.num_points = num_points
+        self.config = config or FlightConfig()
+        vis = self.config.vision
+
+        self.num_points = vis.num_flow_points
         self.filtered_foe_u = None
         self.filtered_foe_v = None
         self.world_points = {}  # id -> np.array([x, y, z])
@@ -12,8 +16,8 @@ class FlowVelocityEstimator:
         self.prev_projections = {}  # id -> (u_norm, v_norm)
 
         # Generation parameters
-        self.gen_dist_min = 5.0
-        self.gen_dist_max = 150.0 # Extended for DTM raycasting
+        self.gen_dist_min = vis.flow_gen_dist_min
+        self.gen_dist_max = vis.flow_gen_dist_max
 
         # Calculate Body Forward direction in Normalized Camera Coordinates
         # Body Forward = [1, 0, 0] in Body Frame

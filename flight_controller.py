@@ -1,6 +1,7 @@
 import numpy as np
 import logging
 import math
+from flight_config import FlightConfig
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +23,10 @@ class DPCFlightController:
       - Positive Pitch Rate -> Pitch Angle Increases (Nose Up).
       - Positive Yaw Rate -> Yaw Angle Increases (Turn Left).
     """
-    def __init__(self, dt=0.05, mode='PID'):
+    def __init__(self, dt=0.05, mode='PID', config: FlightConfig = None):
         self.dt = dt
         self.mode = mode
-
-        # Gains
-        self.k_yaw = 2.5
-        self.k_pitch = 4.0
-        self.k_rer = 1.0
+        self.config = config or FlightConfig()
 
         # State Variables
         self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
@@ -68,6 +65,9 @@ class DPCFlightController:
         pitch = state_obs['pitch']
         yaw = state_obs['yaw']
 
+        ctrl = self.config.control
+        vis = self.config.vision
+
         # Blind Mode Logic
         if obs_pz is None:
             # Full Blind Integration
@@ -104,7 +104,7 @@ class DPCFlightController:
             raw_rer = (tracking_size - self.last_tracking_size) / (self.last_tracking_size * self.dt)
 
         # Exponential Moving Average for RER smoothing
-        alpha_rer = 0.2
+        alpha_rer = vis.rer_smoothing_alpha
         self.rer_smoothed = (1.0 - alpha_rer) * self.rer_smoothed + alpha_rer * raw_rer
 
         self.last_tracking_size = tracking_size
@@ -120,43 +120,43 @@ class DPCFlightController:
             u, v = tracking_uv
 
             # Yaw Logic (ENU: +Yaw is Left)
-            yaw_rate_cmd = -self.k_yaw * u
+            yaw_rate_cmd = -ctrl.k_yaw * u
             yaw_rate_cmd = max(-1.5, min(1.5, yaw_rate_cmd))
 
             # Pitch Logic (ENU: +Pitch is Nose Up)
             # Aggressive Adaptive Pitch Bias
             # Steep (-1.2) -> Bias 0.0 (Aim Straight)
             # Shallow (-0.6) -> Bias 0.2 (Aim High)
-            pitch_bias = 0.40 + 0.33 * pitch # Decreased intercept 0.42 -> 0.40
+            pitch_bias = ctrl.pitch_bias_intercept + ctrl.pitch_bias_slope * pitch
             # Clamp limits reasonable for bias
-            pitch_bias = max(-0.1, min(0.3, pitch_bias))
+            pitch_bias = max(ctrl.pitch_bias_min, min(ctrl.pitch_bias_max, pitch_bias))
 
             # --- Camera Tilt Compensation ---
             # Adaptive v_target based on pitch ("Tent" function).
             # Peak at pitch = -1.2 (Medium dive) -> v_target = 0.27 (Aim higher to extend range)
             # Steep (< -1.2) -> Reduce v_target to aim down (0.17 at -1.5)
             # Shallow (> -1.2) -> Reduce v_target to prevent float (0.19 at -0.5)
-            if pitch < -1.2:
-                 v_target = 0.27 + 0.33 * (pitch + 1.2)
+            if pitch < ctrl.v_target_pitch_threshold:
+                 v_target = ctrl.v_target_intercept + ctrl.v_target_slope_steep * (pitch - ctrl.v_target_pitch_threshold)
             else:
-                 v_target = 0.27 - 0.11 * (pitch + 1.2)
+                 v_target = ctrl.v_target_intercept + ctrl.v_target_slope_shallow * (pitch - ctrl.v_target_pitch_threshold)
 
             v_target = max(0.1, v_target)
 
-            pitch_track = -self.k_pitch * (v - v_target) + pitch_bias
+            pitch_track = -ctrl.k_pitch * (v - v_target) + pitch_bias
             pitch_track = max(-2.5, min(2.5, pitch_track))
 
             # --- Constant RER Thrust Strategy ---
-            rer_target = 0.35 # Target RER (TTC ~ 2.8s)
+            rer_target = ctrl.rer_target # Target RER (TTC ~ 2.8s)
 
             # Pitch-Dependent Base Thrust
             # Steep Dive (-1.5) -> Low Thrust (0.15) to maintain steep glide slope.
             # Level/Shallow (0.0) -> High Thrust (0.6) to maintain lift/speed.
-            thrust_base = 0.6 + 0.3 * pitch
-            thrust_base = max(0.15, min(0.5, thrust_base))
+            thrust_base = ctrl.thrust_base_intercept + ctrl.thrust_base_slope * pitch
+            thrust_base = max(ctrl.thrust_min, min(ctrl.thrust_max, thrust_base))
 
             # One-Sided RER Feedback (Brake Only)
-            k_rer = 2.0
+            k_rer = ctrl.k_rer
             thrust_correction = max(0.0, k_rer * (self.rer_smoothed - rer_target))
 
             thrust_track = thrust_base + thrust_correction
@@ -169,8 +169,8 @@ class DPCFlightController:
 
             # Flare Logic: Pitch Up if Collision Imminent (RER High)
             # Delayed Flare (Threshold +0.25)
-            if self.rer_smoothed > rer_target + 0.25:
-                flare_pitch = 1.2 * (self.rer_smoothed - (rer_target + 0.25))
+            if self.rer_smoothed > rer_target + ctrl.flare_threshold_offset:
+                flare_pitch = ctrl.flare_gain * (self.rer_smoothed - (rer_target + ctrl.flare_threshold_offset))
                 pitch_track += flare_pitch
 
         else:
@@ -184,7 +184,7 @@ class DPCFlightController:
         # Only enter if tracking is valid.
         if tracking_uv and not self.final_mode:
             u, v = tracking_uv
-            if v < -0.1 or v > 0.4:
+            if v < ctrl.final_mode_v_threshold_low or v > ctrl.final_mode_v_threshold_high:
                 logger.info(f"Entering Final Mode! v={v:.2f}, RER={self.rer_smoothed:.2f}")
                 self.final_mode = True
 
@@ -193,28 +193,28 @@ class DPCFlightController:
             u, v = tracking_uv
 
             # Yaw: Slides to center X (Dampened)
-            yaw_rate_cmd = -self.k_yaw * u * 0.2
-            yaw_rate_cmd = max(-0.5, min(0.5, yaw_rate_cmd))
+            yaw_rate_cmd = -ctrl.k_yaw * u * ctrl.final_mode_yaw_gain
+            yaw_rate_cmd = max(-ctrl.final_mode_yaw_limit, min(ctrl.final_mode_yaw_limit, yaw_rate_cmd))
 
             # Split Logic for Undershoot vs Overshoot
             if v < 0.1:
                 # Undershoot / Recovery (Target High) -> Level & Power
-                target_pitch_final = 0.0
-                pitch_rate_cmd = 4.0 * (target_pitch_final - pitch)
+                target_pitch_final = ctrl.final_mode_undershoot_pitch_target
+                pitch_rate_cmd = ctrl.final_mode_undershoot_pitch_gain * (target_pitch_final - pitch)
 
                 # Thrust: Modulates to center Y (v=0)
                 # Gain 2.0 to climb
-                thrust_cmd = 0.55 - 2.0 * v
+                thrust_cmd = ctrl.final_mode_undershoot_thrust_base - ctrl.final_mode_undershoot_thrust_gain * v
             else:
                 # Overshoot / Sink (Target Low) -> Nose Down & Gentle Sink
                 # Keep nose down (-5 deg) to maintain view/momentum
-                target_pitch_final = -0.08
-                pitch_rate_cmd = 4.0 * (target_pitch_final - pitch)
+                target_pitch_final = ctrl.final_mode_overshoot_pitch_target
+                pitch_rate_cmd = ctrl.final_mode_overshoot_pitch_gain * (target_pitch_final - pitch)
 
                 # Thrust: Modulates to gently sink towards ideal v=0.24
                 # If v=0.4, error=0.16. Thrust = 0.55 - 1.0 * 0.16 = 0.39.
                 # Not a hard cut to 0.1
-                thrust_cmd = 0.55 - 1.0 * (v - 0.24)
+                thrust_cmd = ctrl.final_mode_overshoot_thrust_base - ctrl.final_mode_overshoot_thrust_gain * (v - ctrl.final_mode_overshoot_v_target)
 
             thrust_cmd = max(0.1, min(0.95, thrust_cmd))
 
