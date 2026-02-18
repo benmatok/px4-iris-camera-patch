@@ -342,7 +342,7 @@ class TheShow:
         # Get Estimated Velocity
         vio_vel = self.msckf.get_velocity()
         vel_est = {'vx': vio_vel[0], 'vy': vio_vel[1], 'vz': vio_vel[2]}
-        vel_reliable = True # Assumed reliable if initialized
+        vel_reliable = self.msckf.is_reliable()
 
         foe_px = None
         if foe:

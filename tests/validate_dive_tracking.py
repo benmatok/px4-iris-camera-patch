@@ -123,7 +123,8 @@ class DiveValidator:
             'drone_pos': [],
             'target_est': [],
             'dist': [],
-            'state': []
+            'state': [],
+            'vel_reliable': []
         }
 
         logger.info(f"Running Validation (Ground Truth: {self.use_ground_truth}, Blind Mode: {self.use_blind_mode}) for {duration}s...")
@@ -236,6 +237,8 @@ class DiveValidator:
             vio_vel = self.msckf.get_velocity()
             vel_est = {'vx': vio_vel[0], 'vy': vio_vel[1], 'vz': vio_vel[2]}
 
+            vel_reliable = self.msckf.is_reliable()
+
             # Use VIO velocity for controller
             action_out, _ = self.controller.compute_action(
                 state_obs,
@@ -244,7 +247,7 @@ class DiveValidator:
                 tracking_size=tracking_size_norm,
                 extra_yaw_rate=extra_yaw,
                 velocity_est=vel_est,
-                velocity_reliable=True
+                velocity_reliable=vel_reliable
             )
 
             # 5. Apply Control to Sim
@@ -265,6 +268,7 @@ class DiveValidator:
                            (s['pz'] - self.target_pos_sim_world[2])**2)
             history['dist'].append(dist)
             history['state'].append(mission_state)
+            history['vel_reliable'].append(vel_reliable)
 
             # Logging
             history['t'].append(t)
@@ -312,6 +316,16 @@ def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_t
     if hist_blind:
         pos_blind = np.array(hist_blind['drone_pos'])
         axs[0, 0].plot(pos_blind[:, 0], pos_blind[:, 2], 'r:', linewidth=2, label='Blind Mode (Web App)')
+
+        # Mark VIO Lock
+        if 'vel_reliable' in hist_blind:
+            try:
+                # Find first index where True
+                lock_idx = next(i for i, v in enumerate(hist_blind['vel_reliable']) if v)
+                lock_pos = pos_blind[lock_idx]
+                axs[0, 0].plot(lock_pos[0], lock_pos[2], 'mo', markersize=8, label='VIO Lock', zorder=5)
+            except StopIteration:
+                pass
 
     # Target
     if target_pos is not None:

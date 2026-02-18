@@ -63,6 +63,10 @@ class MSCKF:
         self.p_c2b = np.zeros(3)
 
         self.initialized = False
+        self.features_processed = False
+
+    def is_reliable(self):
+        return self.initialized and self.features_processed
 
     def initialize(self, q, p, v):
         self.q = q
@@ -365,6 +369,9 @@ class MSCKF:
 
         if not H_list:
             return
+
+        # Mark as reliable since we are processing features
+        self.features_processed = True
 
         # Stack all projected residuals
         H_stack = np.vstack(H_list)
