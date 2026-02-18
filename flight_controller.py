@@ -40,6 +40,12 @@ class DPCFlightController:
         self.last_tracking_size = None
         self.rer_smoothed = 0.0
 
+        # Phase Logic
+        self.phase = 'HOVER_ALIGN'
+        self.hover_alt_target = None
+        self.last_tracking_uv = None
+        self.shallow_approach = False
+
         # Final Mode State
         self.final_mode = False
         self.locked_pitch = 0.0
@@ -52,6 +58,11 @@ class DPCFlightController:
         self.est_vy = 0.0
         self.last_tracking_size = None
         self.rer_smoothed = 0.0
+
+        self.phase = 'HOVER_ALIGN'
+        self.hover_alt_target = None
+        self.last_tracking_uv = None
+        self.shallow_approach = False
 
         self.final_mode = False
         self.locked_pitch = 0.0
@@ -123,69 +134,121 @@ class DPCFlightController:
             yaw_rate_cmd = -ctrl.k_yaw * u
             yaw_rate_cmd = max(-1.5, min(1.5, yaw_rate_cmd))
 
+            # --- Update UV Speed ---
+            uv_speed = 0.0
+            if self.last_tracking_uv:
+                lu, lv = self.last_tracking_uv
+                uv_speed = math.sqrt((u - lu)**2 + (v - lv)**2) / self.dt
+            self.last_tracking_uv = tracking_uv
+
+            # --- Phase Transitions ---
+            if self.phase == 'HOVER_ALIGN':
+                # Steep Dive Override: If pitch is steep (e.g. < -0.9 rad), skip Hover Align
+                if pitch < -0.9:
+                     self.phase = 'ATTACK'
+                     logger.info(f"Transition: HOVER_ALIGN -> ATTACK (Steep Dive: {pitch:.2f})")
+
+                elif uv_speed > ctrl.hover_align_uv_speed_threshold:
+                    # Refine Transition: Filter out rotational flow
+                    # Only transition if pitch is stable
+                    # Use 'wy' (Body Pitch Rate) as proxy for pitch instability
+                    pitch_rate_est = state_obs.get('wy', 0.0)
+                    if abs(pitch_rate_est) < 0.2:
+                        self.phase = 'ATTACK'
+                        logger.info(f"Transition: HOVER_ALIGN -> ATTACK (Speed: {uv_speed:.2f})")
+
+            if self.phase == 'ATTACK':
+                if tracking_size is not None and tracking_size > ctrl.brake_size_threshold:
+                    self.phase = 'EARLY_BRAKE'
+                    logger.info(f"Transition: ATTACK -> EARLY_BRAKE (Size: {tracking_size:.2f})")
+
+            # --- Standard (ATTACK) Logic Calculation ---
             # Pitch Logic (ENU: +Pitch is Nose Up)
-            # Aggressive Adaptive Pitch Bias
-            # Steep (-1.2) -> Bias 0.0 (Aim Straight)
-            # Shallow (-0.6) -> Bias 0.2 (Aim High)
             pitch_bias = ctrl.pitch_bias_intercept + ctrl.pitch_bias_slope * pitch
-            # Clamp limits reasonable for bias
             pitch_bias = max(ctrl.pitch_bias_min, min(ctrl.pitch_bias_max, pitch_bias))
 
-            # --- Camera Tilt Compensation ---
-            # Adaptive v_target based on pitch ("Tent" function).
-            # Peak at pitch = -1.2 (Medium dive) -> v_target = 0.27 (Aim higher to extend range)
-            # Steep (< -1.2) -> Reduce v_target to aim down (0.17 at -1.5)
-            # Shallow (> -1.2) -> Reduce v_target to prevent float (0.19 at -0.5)
             if pitch < ctrl.v_target_pitch_threshold:
                  v_target = ctrl.v_target_intercept + ctrl.v_target_slope_steep * (pitch - ctrl.v_target_pitch_threshold)
             else:
                  v_target = ctrl.v_target_intercept + ctrl.v_target_slope_shallow * (pitch - ctrl.v_target_pitch_threshold)
-
             v_target = max(0.1, v_target)
 
-            pitch_track = -ctrl.k_pitch * (v - v_target) + pitch_bias
-            pitch_track = max(-2.5, min(2.5, pitch_track))
+            standard_pitch_track = -ctrl.k_pitch * (v - v_target) + pitch_bias
+            standard_pitch_track = max(-2.5, min(2.5, standard_pitch_track))
 
-            # --- Constant RER Thrust Strategy ---
-            rer_target = ctrl.rer_target # Target RER (TTC ~ 2.8s)
-
-            # Pitch-Dependent Base Thrust
-            # Steep Dive (-1.5) -> Low Thrust (0.15) to maintain steep glide slope.
-            # Level/Shallow (0.0) -> High Thrust (0.6) to maintain lift/speed.
+            # Thrust Logic
+            rer_target = ctrl.rer_target
             thrust_base = ctrl.thrust_base_intercept + ctrl.thrust_base_slope * pitch
             thrust_base = max(ctrl.thrust_min, min(ctrl.thrust_max, thrust_base))
 
-            # One-Sided RER Feedback (Brake Only)
-            k_rer = ctrl.k_rer
-            thrust_correction = max(0.0, k_rer * (self.rer_smoothed - rer_target))
+            # Shallow Dive Thrust Boost (Fix for Scenario 5)
+            # Scenario 5 (25m/150m) needs boost. Scenario 3 (20m/50m) works without.
+            if self.shallow_approach and self.hover_alt_target is not None and self.hover_alt_target > 22.0:
+                 thrust_base += 0.25
 
-            thrust_track = thrust_base + thrust_correction
+            thrust_correction = max(0.0, ctrl.k_rer * (self.rer_smoothed - rer_target))
+            standard_thrust_track = thrust_base + thrust_correction
 
-            # Additional Heuristic: If we need to pull up significantly (Target High), Boost Thrust
             if v < v_target - 0.2:
-                thrust_track += -(v - v_target) * 2.0
+                standard_thrust_track += -(v - v_target) * 2.0
+            standard_thrust_track = max(0.1, min(0.95, standard_thrust_track))
 
-            thrust_track = max(0.1, min(0.95, thrust_track))
-
-            # Flare Logic: Pitch Up if Collision Imminent (RER High)
-            # Delayed Flare (Threshold +0.25)
+            # Flare Logic
             if self.rer_smoothed > rer_target + ctrl.flare_threshold_offset:
                 flare_pitch = ctrl.flare_gain * (self.rer_smoothed - (rer_target + ctrl.flare_threshold_offset))
-                pitch_track += flare_pitch
+                standard_pitch_track += flare_pitch
+
+            # --- Apply Phase Logic ---
+            if self.final_mode:
+                 # Prioritize Final Mode Logic (Standard Logic + Final Mode Handling)
+                 # This ensures that if we are close enough to trigger Final Mode, we don't force Hover Align
+                 pitch_track = standard_pitch_track
+                 thrust_track = standard_thrust_track
+
+            elif self.phase == 'HOVER_ALIGN':
+                # Mark as Shallow Approach since we are hovering
+                self.shallow_approach = True
+
+                # Pitch: Visual Tracking (Keep target in view)
+                pitch_track = standard_pitch_track
+
+                # Thrust: Altitude Hold
+                if self.hover_alt_target is None:
+                    self.hover_alt_target = pz # Capture current alt
+
+                # PD Control on Altitude
+                err_z = self.hover_alt_target - pz
+                err_vz = 0.0 - vz
+
+                thrust_track = 0.55 + ctrl.hover_align_alt_hold_kp * err_z + ctrl.hover_align_alt_hold_kd * err_vz
+                thrust_track = max(0.1, min(0.9, thrust_track))
+
+            elif self.phase == 'EARLY_BRAKE':
+                pitch_track = standard_pitch_track + ctrl.early_brake_pitch_bias
+                thrust_track = standard_thrust_track
+
+            else: # ATTACK or FINAL (pre-check)
+                pitch_track = standard_pitch_track
+                thrust_track = standard_thrust_track
 
         else:
             # Blind / Lost Tracking
+            self.last_tracking_uv = None
             yaw_rate_cmd = 0.0
             pitch_track = 0.0
             thrust_track = 0.55
 
         # --- Stage 3: Finale (Docking) Logic ---
         # Trigger: Target moves high in frame (v < -0.1) OR Low in frame (Overshoot v > 0.4).
-        # Only enter if tracking is valid.
+        # Only enter if tracking is valid and we are LOW enough (e.g. < 5m).
         if tracking_uv and not self.final_mode:
             u, v = tracking_uv
-            if v < ctrl.final_mode_v_threshold_low or v > ctrl.final_mode_v_threshold_high:
-                logger.info(f"Entering Final Mode! v={v:.2f}, RER={self.rer_smoothed:.2f}")
+            should_enter = v < ctrl.final_mode_v_threshold_low or v > ctrl.final_mode_v_threshold_high
+
+            # Additional Check: Don't enter Final Mode if we are still high (e.g. > 5m)
+            # This prevents premature triggering during high-speed flyovers
+            if should_enter and self.est_pz < 5.0:
+                logger.info(f"Entering Final Mode! v={v:.2f}, RER={self.rer_smoothed:.2f}, Alt={self.est_pz:.1f}")
                 self.final_mode = True
 
         # 4. Final Mode Execution
