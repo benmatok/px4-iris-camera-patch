@@ -62,18 +62,19 @@ class ControlConfig:
     final_mode_overshoot_thrust_gain: float = 1.0
     final_mode_overshoot_v_target: float = 0.24
 
-    # Phase 1: Hover Align (Gains)
+    # Phase 1: Hover Align
     hover_align_alt_hold_kp: float = 0.2
     hover_align_alt_hold_kd: float = 0.1
+    hover_pitch_threshold: float = -0.9 # Pitch < -0.9 is Steep
+    hover_yaw_threshold: float = 0.1 # Align threshold
 
-    # Phase 2: Early Brake (Gains)
-    early_brake_pitch_bias: float = 0.2
+    # Phase 2: Attack
+    attack_pitch_setpoint: float = 0.15 # Fixed screen position lock
 
-    # Phase 1: Hover Align (Threshold)
-    hover_align_uv_speed_threshold: float = 0.8
-
-    # Phase 2: Early Brake (Threshold)
-    brake_size_threshold: float = 0.15
+    # Brake / Thrust
+    thrust_cruise: float = 0.65
+    brake_k_rer: float = 0.8
+    brake_rer_threshold: float = 0.1
 
 @dataclass
 class MissionConfig:

@@ -134,102 +134,79 @@ class DPCFlightController:
             yaw_rate_cmd = -ctrl.k_yaw * u
             yaw_rate_cmd = max(-1.5, min(1.5, yaw_rate_cmd))
 
-            # --- Update UV Speed ---
-            uv_speed = 0.0
-            if self.last_tracking_uv:
-                lu, lv = self.last_tracking_uv
-                uv_speed = math.sqrt((u - lu)**2 + (v - lv)**2) / self.dt
-            self.last_tracking_uv = tracking_uv
-
-            # --- Phase Transitions ---
+            # --- Phase 1: HOVER ALIGN Decision ---
             if self.phase == 'HOVER_ALIGN':
-                # Steep Dive Override: If pitch is steep (e.g. < -0.9 rad), skip Hover Align
-                if pitch < -0.9:
-                     self.phase = 'ATTACK'
-                     logger.info(f"Transition: HOVER_ALIGN -> ATTACK (Steep Dive: {pitch:.2f})")
+                # Check Geometry using Pitch (since v is 0 when tracking)
+                # Steep: pitch < -0.9 (e.g. -1.1). Shallow: pitch > -0.9 (e.g. -0.6).
+                is_steep = pitch < ctrl.hover_pitch_threshold
+                is_yaw_aligned = abs(u) < ctrl.hover_yaw_threshold
 
-                elif uv_speed > ctrl.hover_align_uv_speed_threshold:
-                    # Refine Transition: Filter out rotational flow
-                    # Only transition if pitch is stable
-                    # Use 'wy' (Body Pitch Rate) as proxy for pitch instability
-                    pitch_rate_est = state_obs.get('wy', 0.0)
-                    if abs(pitch_rate_est) < 0.2:
+                if is_steep:
+                    # High Alt: Wait for Yaw Align
+                    if is_yaw_aligned:
                         self.phase = 'ATTACK'
-                        logger.info(f"Transition: HOVER_ALIGN -> ATTACK (Speed: {uv_speed:.2f})")
+                        logger.info(f"Transition: HOVER_ALIGN -> ATTACK (Aligned Steep: pitch={pitch:.2f}, u={u:.2f})")
+                else:
+                    # Low Alt / Shallow: Go Immediately
+                    self.phase = 'ATTACK'
+                    logger.info(f"Transition: HOVER_ALIGN -> ATTACK (Shallow: pitch={pitch:.2f})")
 
-            if self.phase == 'ATTACK':
-                if tracking_size is not None and tracking_size > ctrl.brake_size_threshold:
-                    self.phase = 'EARLY_BRAKE'
-                    logger.info(f"Transition: ATTACK -> EARLY_BRAKE (Size: {tracking_size:.2f})")
-
-            # --- Standard (ATTACK) Logic Calculation ---
-            # Pitch Logic (ENU: +Pitch is Nose Up)
+            # --- Phase 2: ATTACK Logic (Standard) ---
+            # Pitch: Fixed Setpoint Lock
             pitch_bias = ctrl.pitch_bias_intercept + ctrl.pitch_bias_slope * pitch
             pitch_bias = max(ctrl.pitch_bias_min, min(ctrl.pitch_bias_max, pitch_bias))
 
-            if pitch < ctrl.v_target_pitch_threshold:
-                 v_target = ctrl.v_target_intercept + ctrl.v_target_slope_steep * (pitch - ctrl.v_target_pitch_threshold)
-            else:
-                 v_target = ctrl.v_target_intercept + ctrl.v_target_slope_shallow * (pitch - ctrl.v_target_pitch_threshold)
-            v_target = max(0.1, v_target)
+            attack_pitch = -ctrl.k_pitch * (v - ctrl.attack_pitch_setpoint) + pitch_bias
+            attack_pitch = max(-2.5, min(2.5, attack_pitch))
 
-            standard_pitch_track = -ctrl.k_pitch * (v - v_target) + pitch_bias
-            standard_pitch_track = max(-2.5, min(2.5, standard_pitch_track))
+            # Thrust: Linear Braking with Threshold
+            # thrust = Cruise - Gain * max(0, RER - Threshold)
+            thrust_base = ctrl.thrust_cruise
+            brake_val = ctrl.brake_k_rer * max(0.0, self.rer_smoothed - ctrl.brake_rer_threshold)
+            attack_thrust = thrust_base - brake_val
 
-            # Thrust Logic
+            # Boost if target is very high in frame (undershoot recovery)
+            if v < ctrl.attack_pitch_setpoint - 0.2:
+                 attack_thrust += 0.2
+
+            attack_thrust = max(0.1, min(0.95, attack_thrust))
+
+            # Flare Logic (Safety Override)
             rer_target = ctrl.rer_target
-            thrust_base = ctrl.thrust_base_intercept + ctrl.thrust_base_slope * pitch
-            thrust_base = max(ctrl.thrust_min, min(ctrl.thrust_max, thrust_base))
-
-            # Shallow Dive Thrust Boost (Fix for Scenario 5)
-            # Scenario 5 (25m/150m) needs boost. Scenario 3 (20m/50m) works without.
-            if self.shallow_approach and self.hover_alt_target is not None and self.hover_alt_target > 22.0:
-                 thrust_base += 0.25
-
-            thrust_correction = max(0.0, ctrl.k_rer * (self.rer_smoothed - rer_target))
-            standard_thrust_track = thrust_base + thrust_correction
-
-            if v < v_target - 0.2:
-                standard_thrust_track += -(v - v_target) * 2.0
-            standard_thrust_track = max(0.1, min(0.95, standard_thrust_track))
-
-            # Flare Logic
             if self.rer_smoothed > rer_target + ctrl.flare_threshold_offset:
                 flare_pitch = ctrl.flare_gain * (self.rer_smoothed - (rer_target + ctrl.flare_threshold_offset))
-                standard_pitch_track += flare_pitch
+                attack_pitch += flare_pitch
 
-            # --- Apply Phase Logic ---
+            # --- Control Output ---
             if self.final_mode:
-                 # Prioritize Final Mode Logic (Standard Logic + Final Mode Handling)
-                 # This ensures that if we are close enough to trigger Final Mode, we don't force Hover Align
-                 pitch_track = standard_pitch_track
-                 thrust_track = standard_thrust_track
+                 # Re-use attack logic but let final mode logic override thrust/pitch slightly if needed
+                 # Actually, previous final mode logic was quite custom.
+                 # For now, let's trust the Attack Logic unless we are really close?
+                 # Or use the specialized Final Mode block if implemented.
+                 # Let's use the Attack Logic as the "Standard" and let Final Mode override if condition met below.
+                 pass
 
-            elif self.phase == 'HOVER_ALIGN':
-                # Mark as Shallow Approach since we are hovering
-                self.shallow_approach = True
+            if self.phase == 'HOVER_ALIGN':
+                # Pitch: Hold Altitude (PID) - Wait, Pitch controls forward speed/pos.
+                # To hold altitude, we need Thrust.
+                # To hold position (or just look), we need Pitch to keep target in view?
+                # Previous logic used standard_pitch_track (Track V) + Altitude Hold Thrust.
+                # Let's stick to that: Track V, Hold Altitude.
 
-                # Pitch: Visual Tracking (Keep target in view)
-                pitch_track = standard_pitch_track
+                pitch_track = attack_pitch # Track Target
 
-                # Thrust: Altitude Hold
+                # Altitude Hold Thrust
                 if self.hover_alt_target is None:
-                    self.hover_alt_target = pz # Capture current alt
+                    self.hover_alt_target = pz
 
-                # PD Control on Altitude
                 err_z = self.hover_alt_target - pz
                 err_vz = 0.0 - vz
-
                 thrust_track = 0.55 + ctrl.hover_align_alt_hold_kp * err_z + ctrl.hover_align_alt_hold_kd * err_vz
                 thrust_track = max(0.1, min(0.9, thrust_track))
 
-            elif self.phase == 'EARLY_BRAKE':
-                pitch_track = standard_pitch_track + ctrl.early_brake_pitch_bias
-                thrust_track = standard_thrust_track
-
-            else: # ATTACK or FINAL (pre-check)
-                pitch_track = standard_pitch_track
-                thrust_track = standard_thrust_track
+            else: # ATTACK
+                pitch_track = attack_pitch
+                thrust_track = attack_thrust
 
         else:
             # Blind / Lost Tracking
