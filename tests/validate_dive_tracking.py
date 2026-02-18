@@ -13,6 +13,7 @@ from sim_interface import SimDroneInterface
 from visual_tracker import VisualTracker
 from flight_controller import DPCFlightController
 from mission_manager import MissionManager
+from flight_config import FlightConfig
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
@@ -22,12 +23,15 @@ logger = logging.getLogger(__name__)
 DT = 0.05
 
 class DiveValidator:
-    def __init__(self, use_ground_truth=True, use_blind_mode=False, init_alt=50.0, init_dist=150.0):
+    def __init__(self, use_ground_truth=True, use_blind_mode=False, init_alt=50.0, init_dist=150.0, config: FlightConfig = None):
         self.use_ground_truth = use_ground_truth
         self.use_blind_mode = use_blind_mode
+        self.config = config or FlightConfig()
+
+        cam = self.config.camera
 
         # Tilt 30.0 (Up) as in theshow.py
-        self.projector = Projector(width=640, height=480, fov_deg=120.0, tilt_deg=30.0)
+        self.projector = Projector(width=cam.width, height=cam.height, fov_deg=cam.fov_deg, tilt_deg=cam.tilt_deg)
 
         # Scenario / Sim
         self.sim = SimDroneInterface(self.projector)
@@ -45,10 +49,10 @@ class DiveValidator:
         self.tracker = VisualTracker(self.projector)
 
         # Logic
-        self.mission = MissionManager(target_alt=init_alt, enable_staircase=False)
+        self.mission = MissionManager(target_alt=init_alt, enable_staircase=self.config.mission.enable_staircase, config=self.config)
 
         # Control
-        self.controller = DPCFlightController(dt=DT)
+        self.controller = DPCFlightController(dt=DT, config=self.config)
 
     def calculate_initial_orientation(self, drone_pos, target_pos):
         dx = target_pos[0] - drone_pos[0]
@@ -60,7 +64,7 @@ class DiveValidator:
         pitch_vec = np.arctan2(dz, dist_xy)
 
         # Camera Tilt is 30.0 (Up)
-        camera_tilt = np.deg2rad(30.0)
+        camera_tilt = np.deg2rad(self.config.camera.tilt_deg)
 
         # PyGhostModel Convention: Positive Pitch = Nose Down.
         # But flight_controller uses Positive Pitch = Nose Up.

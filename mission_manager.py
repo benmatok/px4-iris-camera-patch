@@ -1,13 +1,18 @@
 import logging
 import math
 import time
+from flight_config import FlightConfig
 
 logger = logging.getLogger(__name__)
 
 class MissionManager:
-    def __init__(self, target_alt=50.0, enable_staircase=False):
-        self.target_alt = target_alt
-        self.enable_staircase = enable_staircase
+    def __init__(self, target_alt=None, enable_staircase=None, config: FlightConfig = None):
+        self.config = config or FlightConfig()
+
+        # Priority: explicit arg > config > default (handled by config default)
+        self.target_alt = target_alt if target_alt is not None else self.config.mission.target_alt
+        self.enable_staircase = enable_staircase if enable_staircase is not None else self.config.mission.enable_staircase
+
         self.staircase_start_time = 0.0
         self.reset()
 
@@ -15,6 +20,7 @@ class MissionManager:
         self.state = "TAKEOFF"
         if target_alt is not None:
             self.target_alt = target_alt
+
         self.dpc_target = [0.0, 0.0, self.target_alt] # Z-Up Target
         self.staircase_target_z = 0.0
         logger.info(f"MissionManager reset to TAKEOFF with Target Alt: {self.target_alt}")
@@ -34,6 +40,8 @@ class MissionManager:
         """
         center, target_wp = detection_result
         current_alt = drone_state_sim['pz'] # Sim Z is Up (Altitude)
+
+        mis = self.config.mission
 
         extra_yaw = 0.0
 
@@ -60,9 +68,9 @@ class MissionManager:
 
                 # Check for "Too High and Steep" Condition (Staircase Trigger)
                 # Alt > 20m AND Dist < 10m (Steep)
-                if self.enable_staircase and current_alt > 30.0 and lat_dist < 15.0:
+                if self.enable_staircase and current_alt > mis.staircase_trigger_alt and lat_dist < mis.staircase_trigger_dist:
                     self.state = "STAIRCASE_DESCEND"
-                    self.staircase_target_z = current_alt - 20.0
+                    self.staircase_target_z = current_alt - mis.staircase_drop
                     if self.staircase_target_z < 5.0:
                          self.staircase_target_z = 5.0 # Floor for safety during staircasing
                     logger.info(f"Triggering STAIRCASE_DESCEND. Alt: {current_alt}, Dist: {lat_dist}, TargetZ: {self.staircase_target_z}")

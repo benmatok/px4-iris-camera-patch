@@ -7,12 +7,17 @@ import numpy as np
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from tests.validate_dive_tracking import DiveValidator
+from flight_config import FlightConfig
 
 # Configure Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ScenarioValidator")
 
 def run_scenarios():
+    config = FlightConfig()
+    # You can modify config here if needed, e.g.:
+    # config.control.k_yaw = 2.5
+
     scenarios = [
         {"id": 1, "alt": 100.0, "dist": 50.0},
         {"id": 2, "alt": 50.0,  "dist": 75.0},
@@ -39,7 +44,8 @@ def run_scenarios():
             use_ground_truth=True,
             use_blind_mode=True,
             init_alt=alt,
-            init_dist=dist
+            init_dist=dist,
+            config=config
         )
 
         # Run for 25 seconds
