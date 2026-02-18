@@ -38,7 +38,11 @@ class DPCFlightController:
         self.est_vy = 0.0
 
         self.last_tracking_size = None
+        self.last_tracking_v = None
         self.rer_smoothed = 0.0
+
+        # Cruise / Dive State
+        self.dive_initiated = False
 
         # Final Mode State
         self.final_mode = False
@@ -51,8 +55,10 @@ class DPCFlightController:
         self.est_vx = 0.0
         self.est_vy = 0.0
         self.last_tracking_size = None
+        self.last_tracking_v = None
         self.rer_smoothed = 0.0
 
+        self.dive_initiated = False
         self.final_mode = False
         self.locked_pitch = 0.0
         logger.info(f"DPCFlightController reset.")
@@ -119,59 +125,89 @@ class DPCFlightController:
         if tracking_uv:
             u, v = tracking_uv
 
-            # Yaw Logic (ENU: +Yaw is Left)
+            # Calculate Screen Speed (v_dot)
+            v_dot = 0.0
+            if self.last_tracking_v is not None:
+                v_dot = (v - self.last_tracking_v) / self.dt
+            self.last_tracking_v = v
+
+            # --- Trigger Logic (Cruise -> Dive) ---
+            if not self.dive_initiated:
+                trigger_rer = self.rer_smoothed > ctrl.dive_trigger_rer
+                trigger_v_speed = False # v_dot > ctrl.dive_trigger_v_threshold # Disable v_dot trigger
+                trigger_v_pos = v > ctrl.dive_trigger_v_threshold
+
+                if trigger_rer or trigger_v_speed or trigger_v_pos:
+                    logger.info(f"DIVE INITIATED! RER={self.rer_smoothed:.2f}, v_dot={v_dot:.2f}, v={v:.2f}")
+                    self.dive_initiated = True
+
+            # Yaw Logic (Always Center Target)
             yaw_rate_cmd = -ctrl.k_yaw * u
             yaw_rate_cmd = max(-1.5, min(1.5, yaw_rate_cmd))
 
-            # Pitch Logic (ENU: +Pitch is Nose Up)
-            # Aggressive Adaptive Pitch Bias
-            # Steep (-1.2) -> Bias 0.0 (Aim Straight)
-            # Shallow (-0.6) -> Bias 0.2 (Aim High)
-            pitch_bias = ctrl.pitch_bias_intercept + ctrl.pitch_bias_slope * pitch
-            # Clamp limits reasonable for bias
-            pitch_bias = max(ctrl.pitch_bias_min, min(ctrl.pitch_bias_max, pitch_bias))
+            if not self.dive_initiated:
+                # --- CRUISE MODE (Maintain Altitude) ---
+                # Pitch: Maintain Vertical Speed (vz ~ 0)
+                # If falling (vz < 0), error > 0 -> Pitch Up
+                vz_err = 0.0 - self.est_vz
+                pitch_track = ctrl.cruise_pitch_gain * vz_err
+                pitch_track = max(-1.0, min(1.0, pitch_track))
 
-            # --- Camera Tilt Compensation ---
-            # Adaptive v_target based on pitch ("Tent" function).
-            # Peak at pitch = -1.2 (Medium dive) -> v_target = 0.27 (Aim higher to extend range)
-            # Steep (< -1.2) -> Reduce v_target to aim down (0.17 at -1.5)
-            # Shallow (> -1.2) -> Reduce v_target to prevent float (0.19 at -0.5)
-            if pitch < ctrl.v_target_pitch_threshold:
-                 v_target = ctrl.v_target_intercept + ctrl.v_target_slope_steep * (pitch - ctrl.v_target_pitch_threshold)
+                # Thrust: Cruise
+                thrust_track = 0.55
+
             else:
-                 v_target = ctrl.v_target_intercept + ctrl.v_target_slope_shallow * (pitch - ctrl.v_target_pitch_threshold)
+                # --- DIVE MODE (Visual Servoing) ---
+                # Pitch Logic (ENU: +Pitch is Nose Up)
+                # Aggressive Adaptive Pitch Bias
+                # Steep (-1.2) -> Bias 0.0 (Aim Straight)
+                # Shallow (-0.6) -> Bias 0.2 (Aim High)
+                pitch_bias = ctrl.pitch_bias_intercept + ctrl.pitch_bias_slope * pitch
+                # Clamp limits reasonable for bias
+                pitch_bias = max(ctrl.pitch_bias_min, min(ctrl.pitch_bias_max, pitch_bias))
 
-            v_target = max(0.1, v_target)
+                # --- Camera Tilt Compensation ---
+                # Adaptive v_target based on pitch ("Tent" function).
+                # Peak at pitch = -1.2 (Medium dive) -> v_target = 0.27 (Aim higher to extend range)
+                # Steep (< -1.2) -> Reduce v_target to aim down (0.17 at -1.5)
+                # Shallow (> -1.2) -> Reduce v_target to prevent float (0.19 at -0.5)
+                if pitch < ctrl.v_target_pitch_threshold:
+                     v_target = ctrl.v_target_intercept + ctrl.v_target_slope_steep * (pitch - ctrl.v_target_pitch_threshold)
+                else:
+                     v_target = ctrl.v_target_intercept + ctrl.v_target_slope_shallow * (pitch - ctrl.v_target_pitch_threshold)
 
-            pitch_track = -ctrl.k_pitch * (v - v_target) + pitch_bias
-            pitch_track = max(-2.5, min(2.5, pitch_track))
+                v_target = max(0.1, v_target)
 
-            # --- Constant RER Thrust Strategy ---
-            rer_target = ctrl.rer_target # Target RER (TTC ~ 2.8s)
+                pitch_track = -ctrl.k_pitch * (v - v_target) + pitch_bias
+                pitch_track = max(-2.5, min(2.5, pitch_track))
 
-            # Pitch-Dependent Base Thrust
-            # Steep Dive (-1.5) -> Low Thrust (0.15) to maintain steep glide slope.
-            # Level/Shallow (0.0) -> High Thrust (0.6) to maintain lift/speed.
-            thrust_base = ctrl.thrust_base_intercept + ctrl.thrust_base_slope * pitch
-            thrust_base = max(ctrl.thrust_min, min(ctrl.thrust_max, thrust_base))
+                # --- Constant RER Thrust Strategy ---
+                rer_target = ctrl.rer_target # Target RER (TTC ~ 2.8s)
 
-            # One-Sided RER Feedback (Brake Only)
-            k_rer = ctrl.k_rer
-            thrust_correction = max(0.0, k_rer * (self.rer_smoothed - rer_target))
+                # Pitch-Dependent Base Thrust
+                # Steep Dive (-1.5) -> Low Thrust (0.15) to maintain steep glide slope.
+                # Level/Shallow (0.0) -> High Thrust (0.6) to maintain lift/speed.
+                thrust_base = ctrl.thrust_base_intercept + ctrl.thrust_base_slope * pitch
+                thrust_base = max(ctrl.thrust_min, min(ctrl.thrust_max, thrust_base))
 
-            thrust_track = thrust_base + thrust_correction
+                # One-Sided RER Feedback (Brake Only)
+                # Adaptive Gain: Brake harder on steep dives, gentle on shallow glides.
+                effective_k_rer = ctrl.k_rer * (abs(pitch) ** 2)
+                thrust_correction = max(0.0, effective_k_rer * (self.rer_smoothed - rer_target))
 
-            # Additional Heuristic: If we need to pull up significantly (Target High), Boost Thrust
-            if v < v_target - 0.2:
-                thrust_track += -(v - v_target) * 2.0
+                thrust_track = thrust_base - thrust_correction
 
-            thrust_track = max(0.1, min(0.95, thrust_track))
+                # Additional Heuristic: If we need to pull up significantly (Target High), Boost Thrust
+                if v < v_target - 0.2:
+                    thrust_track += -(v - v_target) * 2.0
 
-            # Flare Logic: Pitch Up if Collision Imminent (RER High)
-            # Delayed Flare (Threshold +0.25)
-            if self.rer_smoothed > rer_target + ctrl.flare_threshold_offset:
-                flare_pitch = ctrl.flare_gain * (self.rer_smoothed - (rer_target + ctrl.flare_threshold_offset))
-                pitch_track += flare_pitch
+                thrust_track = max(0.1, min(0.95, thrust_track))
+
+                # Flare Logic: Pitch Up if Collision Imminent (RER High)
+                # Delayed Flare (Threshold +0.25)
+                if self.rer_smoothed > rer_target + ctrl.flare_threshold_offset:
+                    flare_pitch = ctrl.flare_gain * (self.rer_smoothed - (rer_target + ctrl.flare_threshold_offset))
+                    pitch_track += flare_pitch
 
         else:
             # Blind / Lost Tracking
@@ -181,8 +217,8 @@ class DPCFlightController:
 
         # --- Stage 3: Finale (Docking) Logic ---
         # Trigger: Target moves high in frame (v < -0.1) OR Low in frame (Overshoot v > 0.4).
-        # Only enter if tracking is valid.
-        if tracking_uv and not self.final_mode:
+        # Only enter if tracking is valid and we have already initiated the dive.
+        if tracking_uv and not self.final_mode and self.dive_initiated:
             u, v = tracking_uv
             if v < ctrl.final_mode_v_threshold_low or v > ctrl.final_mode_v_threshold_high:
                 logger.info(f"Entering Final Mode! v={v:.2f}, RER={self.rer_smoothed:.2f}")

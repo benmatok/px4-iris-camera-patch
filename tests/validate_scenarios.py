@@ -22,7 +22,9 @@ def run_scenarios():
         {"id": 1, "alt": 100.0, "dist": 50.0},
         {"id": 2, "alt": 50.0,  "dist": 75.0},
         {"id": 3, "alt": 20.0,  "dist": 50.0},
-        {"id": 4, "alt": 60.0,  "dist": 80.0}
+        {"id": 4, "alt": 60.0,  "dist": 80.0},
+        {"id": 5, "alt": 50.0,  "dist": 50.0},
+        {"id": 6, "alt": 25.0,  "dist": 150.0}
     ]
 
     all_passed = True
