@@ -260,6 +260,85 @@ class MSCKF:
         except Exception as e:
             logger.error(f"Height Update Failed: {e}")
 
+    def update_measurements(self, height_meas, vz_meas, tracks):
+        """
+        Updates state with Height, Vz, and Feature tracks in a single step (sequentially).
+        """
+        if not self.initialized:
+            return
+
+        # 1. Height Update
+        if height_meas is not None:
+            self._update_height_internal(height_meas)
+
+        # 2. Vz Update
+        if vz_meas is not None:
+            self._update_vz_internal(vz_meas)
+
+        # 3. Features Update
+        if tracks:
+            self.update_features(tracks)
+
+    def _update_height_internal(self, height_meas, noise_std=0.1):
+        # Residual
+        r = height_meas - self.p[2]
+
+        # Safety Check
+        if abs(r) > 5.0:
+            logger.warning(f"Large Height Residual: {r:.2f}m. Resetting Height State and Vertical Velocity.")
+            self.p[2] = height_meas
+            self.v[2] = 0.0
+            self.P[5, 5] = 100.0
+            self.P[8, 8] = 10.0
+            return
+
+        H = np.zeros((1, self.P.shape[0]))
+        H[0, 5] = 1.0
+
+        S = H @ self.P @ H.T + noise_std**2
+        try:
+            S_inv = np.linalg.inv(S)
+            K = self.P @ H.T @ S_inv
+            dx = K @ np.array([r])
+            self._inject_error(dx)
+            I = np.eye(self.P.shape[0])
+            self.P = (I - K @ H) @ self.P
+        except Exception as e:
+            logger.error(f"Height Update Failed: {e}")
+
+    def _update_vz_internal(self, vz_meas, noise_std=0.1):
+        # Residual
+        r = vz_meas - self.v[2]
+
+        # Safety Check
+        if abs(r) > 10.0:
+            logger.warning(f"Large Vz Residual: {r:.2f}m/s. Resetting Vertical Velocity.")
+            self.v[2] = vz_meas
+            self.P[8, 8] = 10.0
+            return
+
+        H = np.zeros((1, self.P.shape[0]))
+        H[0, 8] = 1.0
+
+        S = H @ self.P @ H.T + noise_std**2
+        try:
+            S_inv = np.linalg.inv(S)
+            K = self.P @ H.T @ S_inv
+            dx = K @ np.array([r])
+            self._inject_error(dx)
+            I = np.eye(self.P.shape[0])
+            self.P = (I - K @ H) @ self.P
+        except Exception as e:
+            logger.error(f"Vz Update Failed: {e}")
+
+    def update_height(self, height_meas, noise_std=0.1):
+        # Legacy wrapper
+        self._update_height_internal(height_meas, noise_std)
+
+    def update_vertical_velocity(self, vz_meas, noise_std=0.1):
+        # Legacy wrapper
+        self._update_vz_internal(vz_meas, noise_std)
+
     def update_features(self, tracks):
         """
         MSCKF Update.

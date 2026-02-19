@@ -230,12 +230,12 @@ class DiveValidator:
 
             foe, finished_tracks = self.feature_tracker.update(dpc_state_ned_abs, body_rates_ned, DT, current_clone_idx)
 
-            if finished_tracks:
-                self.msckf.update_features(finished_tracks)
-
-            # Height
+            # Measurement Updates
             height_meas = dpc_state_ned_abs['pz']
-            self.msckf.update_height(height_meas)
+            vz_meas = dpc_state_ned_abs['vz']
+
+            # Update all measurements including features
+            self.msckf.update_measurements(height_meas, vz_meas, finished_tracks)
 
             # Get VIO Output
             vio_vel = self.msckf.get_velocity()
