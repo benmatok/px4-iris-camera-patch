@@ -78,72 +78,67 @@ class MSCKF:
 
     def propagate(self, gyro, accel, dt):
         """
-        Standard IMU Propagation.
+        Standard IMU Propagation with Sub-stepping.
         """
         if not self.initialized:
             return
 
-        # Unbias
+        # Sub-stepping configuration
+        # 0.05s is too coarse for IMU integration (20Hz)
+        # Use 5 sub-steps -> 100Hz equivalent
+        n_steps = 5
+        sub_dt = dt / n_steps
+
+        # Unbias (Constant over the step)
         w = gyro - self.bg
         a = accel - self.ba
 
-        # 1. Nominal State Propagation
-        # Rotation
-        # dq = [0.5 * w * dt] -> exp map
-        angle = np.linalg.norm(w) * dt
-        axis = w / np.linalg.norm(w) if np.linalg.norm(w) > 1e-6 else np.array([1,0,0])
-        dq = R.from_rotvec(axis * angle).as_quat() # x, y, z, w
+        for _ in range(n_steps):
+            # 1. Nominal State Propagation
+            angle = np.linalg.norm(w) * sub_dt
+            axis = w / np.linalg.norm(w) if np.linalg.norm(w) > 1e-6 else np.array([1,0,0])
+            dq = R.from_rotvec(axis * angle).as_quat()
 
-        # Update q (q_new = q_old * dq)
-        r_old = R.from_quat(self.q)
-        r_new = r_old * R.from_quat(dq)
-        self.q = r_new.as_quat()
+            r_old = R.from_quat(self.q)
+            r_new = r_old * R.from_quat(dq)
+            self.q = r_new.as_quat()
 
-        R_mat = r_old.as_matrix() # R_wb
+            R_mat = r_old.as_matrix() # R_wb at start of sub-step
 
-        # Velocity
-        # v_dot = R_wb * a_body + g
-        acc_world = R_mat @ a + self.g
-        self.p = self.p + self.v * dt + 0.5 * acc_world * dt**2
-        self.v = self.v + acc_world * dt
+            acc_world = R_mat @ a + self.g
+            self.p = self.p + self.v * sub_dt + 0.5 * acc_world * sub_dt**2
+            self.v = self.v + acc_world * sub_dt
 
-        # 2. Error State Covariance Propagation
-        # F_x matrix (15x15)
-        F = np.eye(15)
+            # 2. Error State Covariance Propagation
+            # F_x matrix (15x15)
+            F = np.eye(15)
 
-        # Theta block
-        # theta_dot = -[w]x * theta - I * dbg
-        F[0:3, 0:3] = np.eye(3) - self.skew(w) * dt
-        F[0:3, 9:12] = -np.eye(3) * dt
+            # Theta block
+            F[0:3, 0:3] = np.eye(3) - self.skew(w) * sub_dt
+            F[0:3, 9:12] = -np.eye(3) * sub_dt
 
-        # Pos block
-        # p_dot = v
-        F[3:6, 6:9] = np.eye(3) * dt
+            # Pos block
+            F[3:6, 6:9] = np.eye(3) * sub_dt
 
-        # Vel block
-        # v_dot = -R [a]x theta - R dba
-        F[6:9, 0:3] = -R_mat @ self.skew(a) * dt
-        F[6:9, 12:15] = -R_mat * dt
+            # Vel block
+            F[6:9, 0:3] = -R_mat @ self.skew(a) * sub_dt
+            F[6:9, 12:15] = -R_mat * sub_dt
 
-        # Noise Jacobian G (15 x 12)
-        G = np.zeros((15, 12))
-        G[0:3, 0:3] = -np.eye(3) # gyro noise maps to theta
-        G[6:9, 3:6] = -R_mat    # accel noise maps to vel
-        G[9:12, 6:9] = np.eye(3)
-        G[12:15, 9:12] = np.eye(3)
+            # Noise Jacobian G (15 x 12)
+            G = np.zeros((15, 12))
+            G[0:3, 0:3] = -np.eye(3)
+            G[6:9, 3:6] = -R_mat
+            G[9:12, 6:9] = np.eye(3)
+            G[12:15, 9:12] = np.eye(3)
 
-        Q = G @ self.Qc @ G.T * dt # Approximate discrete noise
+            Q = G @ self.Qc @ G.T * sub_dt
 
-        # Propagate P
-        # Only the IMU block (top-left 15x15) changes dynamically,
-        # but correlations with clones (rest of P) also need update: P_ic = F * P_ic
+            P_ii = self.P[0:15, 0:15]
+            P_ic = self.P[0:15, 15:]
 
-        P_ii = self.P[0:15, 0:15]
-        P_ic = self.P[0:15, 15:]
-
-        self.P[0:15, 0:15] = F @ P_ii @ F.T + Q
-        self.P[0:15, 15:] = F @ P_ic
-        self.P[15:, 0:15] = self.P[0:15, 15:].T
+            self.P[0:15, 0:15] = F @ P_ii @ F.T + Q
+            self.P[0:15, 15:] = F @ P_ic
+            self.P[15:, 0:15] = self.P[0:15, 15:].T
 
         # P_cc (clones-clones) remains static
 
