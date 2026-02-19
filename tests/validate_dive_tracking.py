@@ -124,7 +124,8 @@ class DiveValidator:
             'target_est': [],
             'dist': [],
             'state': [],
-            'vel_reliable': []
+            'vel_reliable': [],
+            'ghost_paths': []
         }
 
         logger.info(f"Running Validation (Ground Truth: {self.use_ground_truth}, Blind Mode: {self.use_blind_mode}) for {duration}s...")
@@ -240,7 +241,7 @@ class DiveValidator:
             vel_reliable = self.msckf.is_reliable()
 
             # Use VIO velocity for controller
-            action_out, _ = self.controller.compute_action(
+            action_out, ghost_paths = self.controller.compute_action(
                 state_obs,
                 dpc_target,
                 tracking_uv=tracking_norm,
@@ -269,6 +270,7 @@ class DiveValidator:
             history['dist'].append(dist)
             history['state'].append(mission_state)
             history['vel_reliable'].append(vel_reliable)
+            history['ghost_paths'].append(ghost_paths)
 
             # Logging
             history['t'].append(t)
@@ -298,7 +300,7 @@ class DiveValidator:
         return history
 
 def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_tracking.png", target_pos=None):
-    fig, axs = plt.subplots(2, 2, figsize=(15, 10))
+    fig, axs = plt.subplots(3, 2, figsize=(15, 15))
 
     # 1. Trajectory Side View (X-Z)
     axs[0, 0].set_title("Trajectory Side View (X-Z)")
@@ -337,6 +339,59 @@ def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_t
     axs[0, 0].set_ylabel("Z (m)")
     axs[0, 0].legend()
     axs[0, 0].grid(True)
+
+    # Overlay Ghost Paths for Blind Run (if available)
+    if hist_blind and 'ghost_paths' in hist_blind:
+        t = np.array(hist_blind['t'])
+        pos = np.array(hist_blind['drone_pos'])
+        # Plot every 1.0s (approx 20 steps)
+        for i in range(0, len(t), 20):
+            if i >= len(hist_blind['ghost_paths']): break
+            gps = hist_blind['ghost_paths'][i]
+            if not gps: continue
+            gp = gps[0] # Take first path
+
+            # Check reliability for frame
+            reliable = hist_blind['vel_reliable'][i]
+
+            # Convert to absolute for plotting
+            gp_abs = []
+            curr_pos = pos[i]
+
+            # For heuristic (not reliable), Z is absolute est, XY relative.
+            # For GDPC (reliable), All Relative.
+
+            # We want to show what the drone thinks.
+            # But we don't have est_pz recorded.
+            # So we best-effort relative visualization anchored to current true pos.
+
+            start_z = gp[0]['pz']
+
+            for p in gp:
+                px = p['px']
+                py = p['py']
+                pz = p['pz']
+
+                abs_x = curr_pos[0] + px
+                abs_y = curr_pos[1] + py
+
+                if reliable:
+                    abs_z = curr_pos[2] + pz
+                else:
+                    # Heuristic: pz is absolute estimate.
+                    # We shift it to anchor at current true pos to show trajectory shape.
+                    # shift = curr_pos[2] - est_pz
+                    # approximated est_pz ~ start_z (roughly)
+                    # abs_z = pz + (curr_pos[2] - start_z)
+                    # actually simpler:
+                    rel_z = pz - start_z
+                    abs_z = curr_pos[2] + rel_z
+
+                gp_abs.append([abs_x, abs_y, abs_z])
+
+            gp_abs = np.array(gp_abs)
+            axs[0, 0].plot(gp_abs[:, 0], gp_abs[:, 2], 'c-', alpha=0.3, linewidth=1)
+
 
     # 2. Distance to Target
     axs[0, 1].set_title("Distance to Target")
@@ -390,6 +445,65 @@ def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_t
     axs[1, 1].set_yticklabels(["TAKEOFF", "SCAN", "HOMING", "DESCEND", "STABILIZE"])
     axs[1, 1].set_xlabel("Time (s)")
     axs[1, 1].grid(True)
+
+    # 5. Prediction Error
+    axs[2, 0].set_title("Mean Prediction Error (Dynamics)")
+    if hist_blind and 'ghost_paths' in hist_blind:
+        t_vals = []
+        err_vals = []
+        pos = np.array(hist_blind['drone_pos'])
+
+        for i in range(len(hist_blind['t'])):
+            if i >= len(hist_blind['ghost_paths']): break
+            gps = hist_blind['ghost_paths'][i]
+            if not gps: continue
+            gp = gps[0]
+
+            # Calculate Mean Euclidean Error over the horizon
+            errors = []
+
+            # Determine start Z for relative calculation
+            start_z = gp[0]['pz']
+            reliable = hist_blind['vel_reliable'][i]
+
+            for k, p in enumerate(gp):
+                future_idx = i + k + 1
+                if future_idx >= len(pos): break
+
+                actual_rel = pos[future_idx] - pos[i]
+
+                pred_rel_x = p['px']
+                pred_rel_y = p['py']
+
+                if reliable:
+                    pred_rel_z = p['pz']
+                else:
+                    pred_rel_z = p['pz'] - start_z # Approximate relative
+
+                pred_rel = np.array([pred_rel_x, pred_rel_y, pred_rel_z])
+
+                dist = np.linalg.norm(pred_rel - actual_rel)
+                errors.append(dist)
+
+            if errors:
+                mean_err = np.mean(errors)
+                t_vals.append(hist_blind['t'][i])
+                err_vals.append(mean_err)
+
+        axs[2, 0].plot(t_vals, err_vals, 'm-', label='Pred Error')
+        axs[2, 0].set_xlabel("Time (s)")
+        axs[2, 0].set_ylabel("Mean Error (m)")
+        axs[2, 0].legend()
+        axs[2, 0].grid(True)
+
+    # 6. VIO Reliability
+    axs[2, 1].set_title("VIO Reliability")
+    if hist_blind:
+        rel = [1 if r else 0 for r in hist_blind['vel_reliable']]
+        axs[2, 1].plot(hist_blind['t'], rel, 'k-', label='Reliable')
+        axs[2, 1].set_ylim(-0.1, 1.1)
+        axs[2, 1].set_xlabel("Time (s)")
+        axs[2, 1].grid(True)
 
     plt.tight_layout()
     try:
@@ -454,3 +568,54 @@ if __name__ == "__main__":
     mean_dev = np.mean(diffs)
     print(f"Max Deviation (Full vs Blind): {max_dev:.2f}m")
     print(f"Mean Deviation (Full vs Blind): {mean_dev:.2f}m")
+
+    # --- Prediction Error Analysis (Blind Run) ---
+    if hist_blind and 'ghost_paths' in hist_blind:
+        print("\n--- Prediction Error Analysis (Blind/VIO Run) ---")
+        pred_errors = []
+        vio_vel_errors = []
+
+        pos = np.array(hist_blind['drone_pos'])
+
+        # Calculate errors
+        for i in range(len(hist_blind['t'])):
+            # VIO Velocity Error
+            # Re-calculate VIO vel from reliable flag? No, we didn't store VIO vel in history.
+            # We can't compute VIO error unless we stored 'velocity_est' in history.
+            # Let's assume prediction error covers it.
+
+            if i >= len(hist_blind['ghost_paths']): break
+            gps = hist_blind['ghost_paths'][i]
+            if not gps: continue
+            gp = gps[0]
+
+            start_z = gp[0]['pz']
+            reliable = hist_blind['vel_reliable'][i]
+
+            step_errors = []
+            for k, p in enumerate(gp):
+                future_idx = i + k + 1
+                if future_idx >= len(pos): break
+
+                actual_rel = pos[future_idx] - pos[i]
+                pred_rel_x = p['px']
+                pred_rel_y = p['py']
+                if reliable:
+                    pred_rel_z = p['pz']
+                else:
+                    pred_rel_z = p['pz'] - start_z
+
+                pred_rel = np.array([pred_rel_x, pred_rel_y, pred_rel_z])
+                dist = np.linalg.norm(pred_rel - actual_rel)
+                step_errors.append(dist)
+
+            if step_errors:
+                pred_errors.append(np.mean(step_errors))
+
+        if pred_errors:
+            avg_pred_err = np.mean(pred_errors)
+            max_pred_err = np.max(pred_errors)
+            print(f"Mean Prediction Error: {avg_pred_err:.4f}m")
+            print(f"Max Prediction Error: {max_pred_err:.4f}m")
+        else:
+            print("No prediction data available.")
