@@ -279,6 +279,10 @@ class MSCKF:
         if tracks:
             self.update_features(tracks)
 
+    def _log_state(self, tag):
+        v_mag = np.linalg.norm(self.v)
+        logger.debug(f"[{tag}] V={self.v} (|V|={v_mag:.2f}) P={self.p}")
+
     def _update_height_internal(self, height_meas, noise_std=0.1):
         # Residual
         r = height_meas - self.p[2]
@@ -300,9 +304,16 @@ class MSCKF:
             S_inv = np.linalg.inv(S)
             K = self.P @ H.T @ S_inv
             dx = K @ np.array([r])
+
+            # Log dx for velocity
+            dv = dx[6:9]
+            if np.linalg.norm(dv) > 1.0:
+                 logger.warning(f"Height Update induced Large Velocity Jump: {dv}")
+
             self._inject_error(dx)
             I = np.eye(self.P.shape[0])
             self.P = (I - K @ H) @ self.P
+            self._log_state("Post-Height")
         except Exception as e:
             logger.error(f"Height Update Failed: {e}")
 
@@ -325,9 +336,16 @@ class MSCKF:
             S_inv = np.linalg.inv(S)
             K = self.P @ H.T @ S_inv
             dx = K @ np.array([r])
+
+            # Log dx for velocity
+            dv = dx[6:9]
+            if np.linalg.norm(dv) > 1.0:
+                 logger.warning(f"Vz Update induced Large Velocity Jump: {dv}")
+
             self._inject_error(dx)
             I = np.eye(self.P.shape[0])
             self.P = (I - K @ H) @ self.P
+            self._log_state("Post-Vz")
         except Exception as e:
             logger.error(f"Vz Update Failed: {e}")
 
@@ -518,10 +536,16 @@ class MSCKF:
             K = self.P @ H_stack.T @ S_inv
             dx = K @ r_stack
 
+            # Log dx for velocity
+            dv = dx[6:9]
+            if np.linalg.norm(dv) > 1.0:
+                 logger.warning(f"Feature Update induced Large Velocity Jump: {dv} (Resid Norm: {np.linalg.norm(r_stack):.2f})")
+
             self._inject_error(dx)
 
             I = np.eye(self.P.shape[0])
             self.P = (I - K @ H_stack) @ self.P
+            self._log_state("Post-Feature")
         except Exception as e:
             logger.error(f"VIO Update Failed: {e}")
 
