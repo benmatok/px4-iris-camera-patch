@@ -337,13 +337,11 @@ class TheShow:
         if finished_tracks:
             self.msckf.update_features(finished_tracks)
 
-        # 4. Height Update (Inject Scale)
-        # Measure Altitude (Z-Down, so -pz)
-        # Baro gives us -pz.
-        height_meas = dpc_state_ned_abs['pz'] # NED Pz is negative altitude (e.g. -100)
-        # Wait, if we are at 100m alt, NED Pz is -100.
-        # MSCKF tracks NED position.
-        self.msckf.update_height(height_meas)
+        # 4. Measurement Updates (Height, Vz, Features)
+        height_meas = dpc_state_ned_abs['pz'] # NED Pz
+        vz_meas = dpc_state_ned_abs['vz'] # NED Vz
+
+        self.msckf.update_measurements(height_meas, vz_meas, finished_tracks)
 
         # Get Estimated Velocity
         vio_vel = self.msckf.get_velocity()
