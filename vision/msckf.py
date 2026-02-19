@@ -50,12 +50,12 @@ class MSCKF:
         self.P[9:12, 9:12] = 0.0001 # Low initial bias error
         self.P[12:15, 12:15] = 0.0001
 
-        # Process Noise
+        # Process Noise (Low noise for Sim)
         self.Qc = np.diag([
-            0.001, 0.001, 0.001, # Gyro Noise
-            0.01, 0.01, 0.01,    # Accel Noise
-            0.0001, 0.0001, 0.0001, # Gyro Bias Walk
-            0.0001, 0.0001, 0.0001  # Accel Bias Walk
+            1e-6, 1e-6, 1e-6, # Gyro Noise
+            1e-5, 1e-5, 1e-5,    # Accel Noise
+            1e-7, 1e-7, 1e-7, # Gyro Bias Walk
+            1e-7, 1e-7, 1e-7  # Accel Bias Walk
         ])
 
         # Extrinsics (Camera to Body)
@@ -396,7 +396,8 @@ class MSCKF:
 
         # EKF Update
         # R_noise is identity * pixel_noise^2
-        noise_var = (1.0 / 480.0)**2 # Normalized coords noise (approx 1 px)
+        # Sim is "almost perfect", so assume sub-pixel accuracy
+        noise_var = (0.1 / 480.0)**2 # 0.1 pixel noise
         R_noise = np.eye(len(r_stack)) * noise_var
 
         S = H_stack @ self.P @ H_stack.T + R_noise
