@@ -103,7 +103,17 @@ class DPCFlightController:
         self.last_tracking_size = tracking_size
 
         # GDPC Logic (Overrides Heuristic if VIO Lock is reliable)
-        if velocity_reliable and velocity_est and hasattr(self.config, 'gdpc'):
+        # Check velocity reliability against limit
+        vel_mag = 0.0
+        if velocity_est:
+             vel_mag = math.sqrt(velocity_est['vx']**2 + velocity_est['vy']**2 + velocity_est['vz']**2)
+
+        is_reliable = velocity_reliable
+        if vel_mag > ctrl.velocity_limit:
+             logger.warning(f"VIO Velocity Exceeds Limit ({vel_mag:.2f} > {ctrl.velocity_limit}). Treating as unreliable.")
+             is_reliable = False
+
+        if is_reliable and velocity_est and hasattr(self.config, 'gdpc'):
              # Update State Estimate (ENU) for Ghost Path Consistency
              # VIO is NED. Convert to ENU.
              # NED North (vx) -> ENU North (vy)

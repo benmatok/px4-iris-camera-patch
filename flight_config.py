@@ -101,12 +101,22 @@ class MissionConfig:
     staircase_trigger_alt: float = 30.0
 
 @dataclass
+class PhysicsConfig:
+    mass: float = 1.0
+    drag_coeff: float = 0.1
+    thrust_coeff: float = 1.0
+    tau: float = 0.1
+    g: float = 9.81
+    max_thrust_base: float = 20.0
+
+@dataclass
 class FlightConfig:
     camera: CameraConfig = field(default_factory=CameraConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     control: ControlConfig = field(default_factory=ControlConfig)
     mission: MissionConfig = field(default_factory=MissionConfig)
     gdpc: GDPCConfig = field(default_factory=GDPCConfig)
+    physics: PhysicsConfig = field(default_factory=PhysicsConfig)
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> 'FlightConfig':
@@ -131,4 +141,8 @@ class FlightConfig:
             for k, v in data['gdpc'].items():
                 if hasattr(config.gdpc, k):
                     setattr(config.gdpc, k, v)
+        if 'physics' in data:
+            for k, v in data['physics'].items():
+                if hasattr(config.physics, k):
+                    setattr(config.physics, k, v)
         return config
