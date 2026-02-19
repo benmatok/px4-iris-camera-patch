@@ -223,11 +223,12 @@ class DiveValidator:
             self.msckf.augment_state()
 
             # Features
-            # Body Rates
-            body_rates = (s['wx'], s['wy'], s['wz'])
+            # Body Rates (NED for Feature Tracker)
+            # Use the already transformed 'gyro' array
+            body_rates_ned = (gyro[0], gyro[1], gyro[2])
             current_clone_idx = self.msckf.cam_clones[-1]['id'] if self.msckf.cam_clones else 0
 
-            foe, finished_tracks = self.feature_tracker.update(dpc_state_ned_abs, body_rates, DT, current_clone_idx)
+            foe, finished_tracks = self.feature_tracker.update(dpc_state_ned_abs, body_rates_ned, DT, current_clone_idx)
 
             if finished_tracks:
                 self.msckf.update_features(finished_tracks)
