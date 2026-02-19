@@ -218,12 +218,24 @@ class MSCKF:
 
         self.cam_clones.pop(idx)
 
-    def update_height(self, height_meas, noise_std=0.5):
+    def update_height(self, height_meas, noise_std=0.1):
         """
         Updates state with height measurement (pz).
         Constraints global Z.
         """
         if not self.initialized:
+            return
+
+        # Residual
+        r = height_meas - self.p[2]
+
+        # Safety Check: If residual is huge, reset height directly
+        # This prevents massive linearized corrections from destabilizing orientation/velocity
+        if abs(r) > 5.0:
+            logger.warning(f"Large Height Residual: {r:.2f}m. Resetting Height State.")
+            self.p[2] = height_meas
+            # Increase uncertainty in Z position
+            self.P[5, 5] = 100.0
             return
 
         # H matrix (1 x N)
@@ -232,20 +244,21 @@ class MSCKF:
         H = np.zeros((1, self.P.shape[0]))
         H[0, 5] = 1.0 # Index 5 is Z component of Position Error
 
-        # Residual
-        r = height_meas - self.p[2]
-
         # EKF Update
         S = H @ self.P @ H.T + noise_std**2
-        K = self.P @ H.T @ np.linalg.inv(S)
 
-        dx = K @ np.array([r])
+        try:
+            S_inv = np.linalg.inv(S)
+            K = self.P @ H.T @ S_inv
+            dx = K @ np.array([r])
 
-        self._inject_error(dx)
+            self._inject_error(dx)
 
-        # Update P
-        I = np.eye(self.P.shape[0])
-        self.P = (I - K @ H) @ self.P
+            # Update P
+            I = np.eye(self.P.shape[0])
+            self.P = (I - K @ H) @ self.P
+        except Exception as e:
+            logger.error(f"Height Update Failed: {e}")
 
     def update_features(self, tracks):
         """
@@ -408,9 +421,18 @@ class MSCKF:
         # Apply error state to nominal state
 
         # 1. Orientation
-        dq = R.from_rotvec(dx[0:3]).as_quat()
-        r_old = R.from_quat(self.q)
-        self.q = (r_old * R.from_quat(dq)).as_quat()
+        try:
+            # Check for NaN or Inf
+            if not np.all(np.isfinite(dx[0:3])):
+                 logger.error(f"Invalid Orientation Update: {dx[0:3]}")
+                 return
+
+            dq = R.from_rotvec(dx[0:3]).as_quat()
+            r_old = R.from_quat(self.q)
+            self.q = (r_old * R.from_quat(dq)).as_quat()
+        except ValueError as e:
+            logger.error(f"Orientation Update Failed: {e}. dx={dx[0:3]}")
+            return
 
         # 2. Pos/Vel/Biases
         self.p += dx[3:6]
