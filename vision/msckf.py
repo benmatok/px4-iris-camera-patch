@@ -228,10 +228,14 @@ class MSCKF:
         # Safety Check: If residual is huge, reset height directly
         # This prevents massive linearized corrections from destabilizing orientation/velocity
         if abs(r) > 5.0:
-            logger.warning(f"Large Height Residual: {r:.2f}m. Resetting Height State.")
+            logger.warning(f"Large Height Residual: {r:.2f}m. Resetting Height State and Vertical Velocity.")
             self.p[2] = height_meas
-            # Increase uncertainty in Z position
-            self.P[5, 5] = 100.0
+            # Also reset Vertical Velocity to avoid immediate re-divergence
+            self.v[2] = 0.0
+
+            # Increase uncertainty
+            self.P[5, 5] = 100.0 # Pos Z
+            self.P[8, 8] = 10.0  # Vel Z
             return
 
         # H matrix (1 x N)
