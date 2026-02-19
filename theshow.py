@@ -328,7 +328,11 @@ class TheShow:
 
         # dpc_state_ned_abs used for generation inside tracker, but we should rely on image content ideally
         # Here we use synthetic generation
-        foe, finished_tracks = self.feature_tracker.update(dpc_state_ned_abs, body_rates, DT, current_clone_idx)
+        # Body rates for feature tracker (Sim Frame or NED? Usually NED for unrotation)
+        # Using aligned gyro (NED)
+        body_rates_ned = (gyro[0], gyro[1], gyro[2])
+
+        foe, finished_tracks = self.feature_tracker.update(dpc_state_ned_abs, body_rates_ned, DT, current_clone_idx)
 
         if finished_tracks:
             self.msckf.update_features(finished_tracks)
