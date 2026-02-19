@@ -109,6 +109,11 @@ class MSCKF:
             self.p = self.p + self.v * sub_dt + 0.5 * acc_world * sub_dt**2
             self.v = self.v + acc_world * sub_dt
 
+            # Clamp Velocity
+            v_norm_p = np.linalg.norm(self.v)
+            if v_norm_p > 60.0: # Slightly higher than update clamp to allow transient
+                 self.v = (self.v / v_norm_p) * 60.0
+
             # 2. Error State Covariance Propagation
             # F_x matrix (15x15)
             F = np.eye(15)
@@ -569,6 +574,12 @@ class MSCKF:
         # 2. Pos/Vel/Biases
         self.p += dx[3:6]
         self.v += dx[6:9]
+
+        # Clamp Velocity to avoid explosion
+        v_norm = np.linalg.norm(self.v)
+        if v_norm > 50.0:
+             self.v = (self.v / v_norm) * 50.0
+
         self.bg += dx[9:12]
         self.ba += dx[12:15]
 

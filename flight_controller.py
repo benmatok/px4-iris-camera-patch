@@ -3,6 +3,8 @@ import logging
 import math
 from flight_config import FlightConfig
 from flight_controller_gdpc import GDPCOptimizer
+from vision.spline_smoother import SplineSmoother
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +40,15 @@ class DPCFlightController:
         # GDPC
         self.gdpc = GDPCOptimizer(self.config)
 
+        # Smoother
+        self.smoother = SplineSmoother(window_size=5, smoothing_factor=0.1)
+        self.start_time = time.time()
+
     def reset(self):
         self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
         self.gdpc.reset()
+        self.smoother.reset()
+        self.start_time = time.time()
         self.est_pz = 100.0
         self.est_vz = 0.0
         self.est_vx = 0.0
@@ -54,7 +62,7 @@ class DPCFlightController:
         self.locked_pitch = 0.0
         logger.info(f"DPCFlightController reset.")
 
-    def compute_action(self, state_obs, target_cmd, tracking_uv=None, tracking_size=None, extra_yaw_rate=0.0, foe_uv=None, velocity_est=None, velocity_reliable=False):
+    def compute_action(self, state_obs, target_cmd, tracking_uv=None, tracking_size=None, extra_yaw_rate=0.0, foe_uv=None, velocity_est=None, position_est=None, velocity_reliable=False):
         # Unpack State
         obs_pz = state_obs.get('pz')
         obs_vz = state_obs.get('vz')
@@ -113,22 +121,36 @@ class DPCFlightController:
              logger.warning(f"VIO Velocity Exceeds Limit ({vel_mag:.2f} > {ctrl.velocity_limit}). Treating as unreliable.")
              is_reliable = False
 
-        if is_reliable and velocity_est and hasattr(self.config, 'gdpc'):
-             # Update State Estimate (ENU) for Ghost Path Consistency
-             # VIO is NED. Convert to ENU.
-             # NED North (vx) -> ENU North (vy)
-             # NED East (vy) -> ENU East (vx)
-             # NED Down (vz) -> ENU Up (-vz)
+        # Spline Smoothing
+        if position_est and is_reliable:
+            # VIO NED Pos -> ENU
+            px_enu = position_est['py'] # East
+            py_enu = position_est['px'] # North
+            pz_enu = -position_est['pz'] # Up
 
-             vx_enu = velocity_est['vy'] # East (VIO vy) -> ENU vx
-             vy_enu = velocity_est['vx'] # North (VIO vx) -> ENU vy
-             vz_enu = -velocity_est['vz'] # Down (VIO vz) -> ENU -vz
+            t_now = time.time() - self.start_time
+            self.smoother.update(t_now, [px_enu, py_enu, pz_enu])
+
+            # Get smoothed velocity
+            _, vel_smooth = self.smoother.get_state(t_now)
+
+            # Use smoothed velocity instead of raw VIO
+            # Note: Spline velocity is derived from Position, so it inherently respects trajectory continuity
+            self.est_vx = vel_smooth[0]
+            self.est_vy = vel_smooth[1]
+            self.est_vz = vel_smooth[2]
+        elif velocity_est and is_reliable:
+             # Fallback to Raw VIO if Position not provided (shouldn't happen with updated call sites)
+             vx_enu = velocity_est['vy']
+             vy_enu = velocity_est['vx']
+             vz_enu = -velocity_est['vz']
 
              alpha_vel = ctrl.velocity_smoothing_alpha
              self.est_vx = alpha_vel * vx_enu + (1-alpha_vel) * self.est_vx
              self.est_vy = alpha_vel * vy_enu + (1-alpha_vel) * self.est_vy
              self.est_vz = alpha_vel * vz_enu + (1-alpha_vel) * self.est_vz
 
+        if is_reliable and hasattr(self.config, 'gdpc'):
              # Construct Relative ENU State for GDPC
              # We ignore absolute position to satisfy "local coordinates" requirement.
              # Drone is at 0,0,0. Target is at [dx, dy, dz] (Relative Vector).

@@ -69,7 +69,7 @@ class ControlConfig:
     final_mode_overshoot_v_target: float = 0.24
 
     # Velocity Estimation & Speed Limiting
-    velocity_limit: float = 40.0 # Allow high speed dives
+    velocity_limit: float = 100.0 # Allow high speed dives
     braking_pitch_gain: float = 0.35
     max_braking_pitch_rate: float = 1.0
     velocity_smoothing_alpha: float = 0.53
@@ -92,7 +92,7 @@ class GDPCConfig:
 
     w_smoothness: float = 0.1 # Allow aggressive maneuvers
     w_terminal: float = 1000.0 # Must hit target
-    w_terminal_vel: float = 10.0
+    w_terminal_vel: float = 100.0 # Strong stopping incentive
 
 @dataclass
 class MissionConfig:
