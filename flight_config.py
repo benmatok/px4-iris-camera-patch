@@ -69,14 +69,14 @@ class ControlConfig:
     final_mode_overshoot_v_target: float = 0.24
 
     # Velocity Estimation & Speed Limiting
-    velocity_limit: float = 15.0 # Slow down
+    velocity_limit: float = 40.0 # Allow high speed dives
     braking_pitch_gain: float = 0.35
     max_braking_pitch_rate: float = 1.0
     velocity_smoothing_alpha: float = 0.53
 
 @dataclass
 class GDPCConfig:
-    horizon: int = 20
+    horizon: int = 40 # 2.0 seconds
     opt_steps: int = 40
     lr: float = 0.05
 
