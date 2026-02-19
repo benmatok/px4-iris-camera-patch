@@ -63,6 +63,46 @@ def run_scenarios():
         plot_results(hist, hist, hist, filename=plot_filename, target_pos=target_pos)
         logger.info(f"Generated plot: {plot_filename}")
 
+        # Prediction Error Analysis
+        if 'ghost_paths' in hist:
+            pred_errors = []
+            pos = np.array(hist['drone_pos'])
+            for i in range(len(hist['t'])):
+                if i >= len(hist['ghost_paths']): break
+                gps = hist['ghost_paths'][i]
+                if not gps: continue
+                gp = gps[0]
+
+                start_z = gp[0]['pz']
+                reliable = hist['vel_reliable'][i]
+
+                step_errors = []
+                for k, p in enumerate(gp):
+                    future_idx = i + k + 1
+                    if future_idx >= len(pos): break
+
+                    actual_rel = pos[future_idx] - pos[i]
+                    pred_rel_x = p['px']
+                    pred_rel_y = p['py']
+                    if reliable:
+                        pred_rel_z = p['pz']
+                    else:
+                        pred_rel_z = p['pz'] - start_z
+
+                    pred_rel = np.array([pred_rel_x, pred_rel_y, pred_rel_z])
+                    dist = np.linalg.norm(pred_rel - actual_rel)
+                    step_errors.append(dist)
+
+                if step_errors:
+                    pred_errors.append(np.mean(step_errors))
+
+            if pred_errors:
+                avg_pred_err = np.mean(pred_errors)
+                max_pred_err = np.max(pred_errors)
+                print(f"Prediction Error: Mean={avg_pred_err:.4f}m Max={max_pred_err:.4f}m")
+            else:
+                 print("Prediction Error: No Data")
+
         final_dist = hist['dist'][-1]
         min_dist = min(hist['dist'])
 
