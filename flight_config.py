@@ -77,20 +77,22 @@ class ControlConfig:
 @dataclass
 class GDPCConfig:
     horizon: int = 40 # 2.0 seconds
-    opt_steps: int = 40
+    opt_steps: int = 20 # Standard maxiter for speed
     lr: float = 0.05
 
-    # Weights for Loss Function (Damping Focus)
-    w_pos: float = 1.0  # Reduced significantly
-    w_vel: float = 5.0  # Increased damping
+    # Weights for Loss Function
+    w_pos: float = 2.0  # Path deviation
+    w_vel: float = 2.0  # Damping (Reduced to allow speed)
     w_att: float = 0.0
 
     w_thrust: float = 0.001
-    w_roll: float = 100.0 # Strict attitude control
-    w_pitch: float = 100.0
+    w_roll: float = 50.0
+    w_pitch: float = 50.0
     w_yaw: float = 20.0
 
-    w_smoothness: float = 0.5
+    w_smoothness: float = 2.0 # Stability
+    w_terminal: float = 50.0 # Terminal Accuracy
+    w_terminal_vel: float = 10.0
 
 @dataclass
 class MissionConfig:

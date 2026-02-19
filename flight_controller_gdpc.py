@@ -204,33 +204,33 @@ class GDPCOptimizer:
             dist_sq = np.sum((pos_traj - target_pos_world)**2, axis=1)
             # Prevent overflow by clamping
             dist_sq = np.clip(dist_sq, 0, 1e6)
-            loss_pos = np.mean(dist_sq) * 1.0 # Keep low
+            loss_pos = np.mean(dist_sq) * self.gdpc_cfg.w_pos
 
             # Velocity cost (Damping)
             v_sq = np.sum(vel_traj**2, axis=1)
             v_sq = np.clip(v_sq, 0, 1e6)
-            loss_vel = np.mean(v_sq) * 5.0 # Increased Damping
+            loss_vel = np.mean(v_sq) * self.gdpc_cfg.w_vel
 
             # Attitude cost (Roll/Pitch penalty)
-            loss_roll = np.mean(att_traj[:, 0]**2) * 50.0
-            loss_pitch = np.mean(att_traj[:, 1]**2) * 50.0
+            loss_roll = np.mean(att_traj[:, 0]**2) * self.gdpc_cfg.w_roll
+            loss_pitch = np.mean(att_traj[:, 1]**2) * self.gdpc_cfg.w_pitch
 
             # Control Input cost
-            loss_thrust = np.mean((u[:, 0] - 0.5)**2) * 0.001
+            loss_thrust = np.mean((u[:, 0] - 0.5)**2) * self.gdpc_cfg.w_thrust
 
             # Smoothness
             u_delta = u[1:] - u[:-1]
-            loss_smooth = np.mean(np.sum(u_delta**2, axis=1)) * 0.1
+            loss_smooth = np.mean(np.sum(u_delta**2, axis=1)) * self.gdpc_cfg.w_smoothness
 
             # Terminal Cost (Encourage getting closer at the end)
             final_pos = pos_traj[-1]
             final_dist_sq = np.sum((final_pos - target_pos_world)**2)
             final_dist_sq = np.clip(final_dist_sq, 0, 1e6)
-            loss_terminal = final_dist_sq * 10.0 # Reduced terminal
+            loss_terminal = final_dist_sq * self.gdpc_cfg.w_terminal
 
             # Terminal Velocity Cost (Stop at the end)
             final_vel = vel_traj[-1]
-            loss_terminal_vel = np.sum(final_vel**2) * 10.0
+            loss_terminal_vel = np.sum(final_vel**2) * self.gdpc_cfg.w_terminal_vel
             loss_terminal_vel = np.clip(loss_terminal_vel, 0, 1e6)
 
             # Penalty for excessive Roll/Pitch Rate (Constraint Softening)
@@ -258,7 +258,7 @@ class GDPCOptimizer:
 
         # Optimize (Using L-BFGS-B)
         # Reduce maxiter for speed
-        res = minimize(cost_fn, x0, method='L-BFGS-B', bounds=bounds, options={'maxiter': 20, 'disp': False})
+        res = minimize(cost_fn, x0, method='L-BFGS-B', bounds=bounds, options={'maxiter': self.gdpc_cfg.opt_steps, 'disp': False})
 
         if res.success or res.message: # Just use result even if not converged fully
              self.u_seq = res.x.reshape((H, 4))
