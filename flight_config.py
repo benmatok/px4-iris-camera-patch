@@ -69,10 +69,28 @@ class ControlConfig:
     final_mode_overshoot_v_target: float = 0.24
 
     # Velocity Estimation & Speed Limiting
-    velocity_limit: float = 5.0
+    velocity_limit: float = 15.0 # Slow down
     braking_pitch_gain: float = 0.35
     max_braking_pitch_rate: float = 1.0
     velocity_smoothing_alpha: float = 0.53
+
+@dataclass
+class GDPCConfig:
+    horizon: int = 20
+    opt_steps: int = 40
+    lr: float = 0.05
+
+    # Weights for Loss Function (Damping Focus)
+    w_pos: float = 1.0  # Reduced significantly
+    w_vel: float = 5.0  # Increased damping
+    w_att: float = 0.0
+
+    w_thrust: float = 0.001
+    w_roll: float = 100.0 # Strict attitude control
+    w_pitch: float = 100.0
+    w_yaw: float = 20.0
+
+    w_smoothness: float = 0.5
 
 @dataclass
 class MissionConfig:
@@ -88,6 +106,7 @@ class FlightConfig:
     vision: VisionConfig = field(default_factory=VisionConfig)
     control: ControlConfig = field(default_factory=ControlConfig)
     mission: MissionConfig = field(default_factory=MissionConfig)
+    gdpc: GDPCConfig = field(default_factory=GDPCConfig)
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> 'FlightConfig':
@@ -108,4 +127,8 @@ class FlightConfig:
             for k, v in data['mission'].items():
                 if hasattr(config.mission, k):
                     setattr(config.mission, k, v)
+        if 'gdpc' in data:
+            for k, v in data['gdpc'].items():
+                if hasattr(config.gdpc, k):
+                    setattr(config.gdpc, k, v)
         return config

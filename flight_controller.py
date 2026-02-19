@@ -2,26 +2,13 @@ import numpy as np
 import logging
 import math
 from flight_config import FlightConfig
+from flight_controller_gdpc import GDPCOptimizer
 
 logger = logging.getLogger(__name__)
 
 class DPCFlightController:
     """
     Standard ENU (East-North-Up) Flight Controller.
-
-    Coordinate System:
-    - Position (px, py, pz): ENU. pz is Altitude (Positive Up).
-    - Velocity (vx, vy, vz): ENU. vz is Vertical Speed (Positive Up).
-    - Attitude (roll, pitch, yaw): radians.
-        - Yaw: Counter-Clockwise from East (Standard Math).
-        - Pitch: Positive Nose Up (Standard Aerospace/ENU).
-        - Roll: Positive Right Wing Down.
-
-    Control Outputs (Rates):
-    - thrust: 0.0 to 1.0 (Unitless).
-    - roll_rate, pitch_rate, yaw_rate: rad/s.
-      - Positive Pitch Rate -> Pitch Angle Increases (Nose Up).
-      - Positive Yaw Rate -> Yaw Angle Increases (Turn Left).
     """
     def __init__(self, dt=0.05, mode='PID', config: FlightConfig = None):
         self.dt = dt
@@ -48,8 +35,12 @@ class DPCFlightController:
         self.final_mode = False
         self.locked_pitch = 0.0
 
+        # GDPC
+        self.gdpc = GDPCOptimizer(self.config)
+
     def reset(self):
         self.last_action = {'thrust': 0.5, 'roll_rate': 0.0, 'pitch_rate': 0.0, 'yaw_rate': 0.0}
+        self.gdpc.reset()
         self.est_pz = 100.0
         self.est_vz = 0.0
         self.est_vx = 0.0
@@ -105,205 +96,200 @@ class DPCFlightController:
         # --- Visual RER / TTC Calculation ---
         raw_rer = 0.0
         if tracking_size is not None and self.last_tracking_size is not None and self.last_tracking_size > 0.001:
-            # Calculate raw RER (Relative Expansion Rate)
-            # RER = size_dot / size
             raw_rer = (tracking_size - self.last_tracking_size) / (self.last_tracking_size * self.dt)
 
-        # Exponential Moving Average for RER smoothing
         alpha_rer = vis.rer_smoothing_alpha
         self.rer_smoothed = (1.0 - alpha_rer) * self.rer_smoothed + alpha_rer * raw_rer
-
         self.last_tracking_size = tracking_size
 
-        # --- Control Logic ---
+        # GDPC Logic (Overrides Heuristic if VIO Lock is reliable)
+        if velocity_reliable and velocity_est and hasattr(self.config, 'gdpc'):
+             # Update State Estimate (ENU) for Ghost Path Consistency
+             # VIO is NED. Convert to ENU.
+             # NED North (vx) -> ENU North (vy)
+             # NED East (vy) -> ENU East (vx)
+             # NED Down (vz) -> ENU Up (-vz)
 
+             vx_enu = velocity_est['vy'] # East (VIO vy) -> ENU vx
+             vy_enu = velocity_est['vx'] # North (VIO vx) -> ENU vy
+             vz_enu = -velocity_est['vz'] # Down (VIO vz) -> ENU -vz
+
+             alpha_vel = ctrl.velocity_smoothing_alpha
+             self.est_vx = alpha_vel * vx_enu + (1-alpha_vel) * self.est_vx
+             self.est_vy = alpha_vel * vy_enu + (1-alpha_vel) * self.est_vy
+             self.est_vz = alpha_vel * vz_enu + (1-alpha_vel) * self.est_vz
+
+             # Construct Relative ENU State for GDPC
+             # We ignore absolute position to satisfy "local coordinates" requirement.
+             # Drone is at 0,0,0. Target is at [dx, dy, dz] (Relative Vector).
+             gdpc_state = {
+                 'px': 0.0,
+                 'py': 0.0,
+                 'pz': 0.0,
+                 'vx': self.est_vx,
+                 'vy': self.est_vy,
+                 'vz': self.est_vz,
+                 'roll': roll,
+                 'pitch': pitch,
+                 'yaw': yaw,
+                 'wx': state_obs.get('wx', 0.0),
+                 'wy': state_obs.get('wy', 0.0),
+                 'wz': state_obs.get('wz', 0.0)
+             }
+
+             # Target is simply the relative command
+             target_pos_relative = target_cmd
+
+             action, traj_enu = self.gdpc.compute_action(gdpc_state, target_pos_relative)
+
+             # Apply Action
+             # Note: compute_action returns Body Rates.
+             # We need to ensure we don't invert them if GDPC already handles it.
+             # In flight_controller_gdpc.py, I am using DifferentiableGhostModel.
+             # It uses PyGhostModel conventions.
+             # DPCFlightController normally inverts pitch/yaw rates at the end.
+             # Let's check DPCFlightController end of file:
+             # 'pitch_rate': -pitch_rate_cmd, 'yaw_rate': -yaw_rate_cmd
+
+             # So if GDPC returns positive pitch rate (Nose Up), DPCFlightController will invert it to Negative.
+             # If Sim requires Negative for Nose Up (Inverted ENU), then this is correct.
+             # If GDPC Model uses standard ENU (Positive Nose Up), it returns Positive.
+             # DPCFlightController inverts it. Sim receives Negative. Sim behaves correct.
+             # OK.
+
+             self.last_action = {
+                 'thrust': action['thrust'],
+                 'roll_rate': action['roll_rate'],
+                'pitch_rate': action['pitch_rate'], # Revert: Backwards test failed. Forward test (Positive X) worked with Direct mapping.
+                 'yaw_rate': action['yaw_rate']
+             }
+
+             # Ghost Paths (Already ENU)
+             ghost_paths = []
+             path = []
+             for i in range(len(traj_enu)):
+                 path.append({'px': traj_enu[i, 0], 'py': traj_enu[i, 1], 'pz': traj_enu[i, 2]})
+             ghost_paths.append(path)
+
+             # We need to return action in the dict format expected by DPCFlightController's invoker
+             # BUT, DPCFlightController modifies action at the end of this method (lines 284+).
+             # It sets self.last_action, but returns `action` constructed from local variables.
+
+             # We should assign to local variables `thrust_cmd`, `roll_rate_cmd`, etc.
+             # And skip the rest of the visual servoing logic.
+             # Or just return immediately?
+             # Returning immediately is safer to avoid interference.
+
+             # BUT: The end of the method does the inversion:
+             # action = { ..., 'pitch_rate': -pitch_rate_cmd, ... }
+             # So we must manually do the inversion if we return early, OR assign to vars and let it flow.
+
+             # Let's return early but format it correctly.
+
+             final_action = {
+                'thrust': action['thrust'],
+                'roll_rate': action['roll_rate'],
+                'pitch_rate': action['pitch_rate'],
+                'yaw_rate': action['yaw_rate']
+             }
+             return final_action, ghost_paths
+
+        # ... (Rest of the Heuristic Controller) ...
         # 2. Tracking Control (Visual Servoing)
         pitch_track = 0.0
         yaw_rate_cmd = 0.0
-        thrust_track = 0.6 # Base Trim Thrust
+        thrust_track = 0.6
 
         if tracking_uv:
             u, v = tracking_uv
-
-            # Calculate Screen Speed (v_dot)
             v_dot = 0.0
             if self.last_tracking_v is not None:
                 v_dot = (v - self.last_tracking_v) / self.dt
             self.last_tracking_v = v
 
-            # --- Trigger Logic (Cruise -> Dive) ---
             if not self.dive_initiated:
                 trigger_rer = self.rer_smoothed > ctrl.dive_trigger_rer
-                trigger_v_speed = False # v_dot > ctrl.dive_trigger_v_threshold # Disable v_dot trigger
                 trigger_v_pos = v > ctrl.dive_trigger_v_threshold
 
-                if trigger_rer or trigger_v_speed or trigger_v_pos:
-                    logger.info(f"DIVE INITIATED! RER={self.rer_smoothed:.2f}, v_dot={v_dot:.2f}, v={v:.2f}")
+                if trigger_rer or trigger_v_pos:
+                    logger.info(f"DIVE INITIATED! RER={self.rer_smoothed:.2f}, v={v:.2f}")
                     self.dive_initiated = True
 
-            # Yaw Logic (Always Center Target)
             yaw_rate_cmd = -ctrl.k_yaw * u
             yaw_rate_cmd = max(-1.5, min(1.5, yaw_rate_cmd))
 
             if not self.dive_initiated:
-                # --- CRUISE MODE (Maintain Altitude) ---
-                # Pitch: Maintain Vertical Speed (vz ~ 0)
-                # If falling (vz < 0), error > 0 -> Pitch Up
                 vz_err = 0.0 - self.est_vz
                 pitch_track = ctrl.cruise_pitch_gain * vz_err
                 pitch_track = max(-1.0, min(1.0, pitch_track))
-
-                # Thrust: Cruise
                 thrust_track = 0.55
-
             else:
-                # --- DIVE MODE (Visual Servoing) ---
-                # Pitch Logic (ENU: +Pitch is Nose Up)
-                # Aggressive Adaptive Pitch Bias
-                # Steep (-1.2) -> Bias 0.0 (Aim Straight)
-                # Shallow (-0.6) -> Bias 0.2 (Aim High)
                 pitch_bias = ctrl.pitch_bias_intercept + ctrl.pitch_bias_slope * pitch
-                # Clamp limits reasonable for bias
                 pitch_bias = max(ctrl.pitch_bias_min, min(ctrl.pitch_bias_max, pitch_bias))
 
-                # --- Camera Tilt Compensation ---
-                # Adaptive v_target based on pitch ("Tent" function).
-                # Peak at pitch = -1.2 (Medium dive) -> v_target = 0.27 (Aim higher to extend range)
-                # Steep (< -1.2) -> Reduce v_target to aim down (0.17 at -1.5)
-                # Shallow (> -1.2) -> Reduce v_target to prevent float (0.19 at -0.5)
                 if pitch < ctrl.v_target_pitch_threshold:
                      v_target = ctrl.v_target_intercept + ctrl.v_target_slope_steep * (pitch - ctrl.v_target_pitch_threshold)
                 else:
                      v_target = ctrl.v_target_intercept + ctrl.v_target_slope_shallow * (pitch - ctrl.v_target_pitch_threshold)
-
                 v_target = max(0.1, v_target)
 
                 pitch_track = -ctrl.k_pitch * (v - v_target) + pitch_bias
                 pitch_track = max(-2.5, min(2.5, pitch_track))
 
-                # --- Constant RER Thrust Strategy ---
-                rer_target = ctrl.rer_target # Target RER (TTC ~ 2.8s)
-
-                # Pitch-Dependent Base Thrust
-                # Steep Dive (-1.5) -> Low Thrust (0.15) to maintain steep glide slope.
-                # Level/Shallow (0.0) -> High Thrust (0.6) to maintain lift/speed.
                 thrust_base = ctrl.thrust_base_intercept + ctrl.thrust_base_slope * pitch
                 thrust_base = max(ctrl.thrust_min, min(ctrl.thrust_max, thrust_base))
 
-                # One-Sided RER Feedback (Brake Only)
-                # Adaptive Gain: Brake harder on steep dives, gentle on shallow glides.
                 effective_k_rer = ctrl.k_rer * (abs(pitch) ** 2)
-                thrust_correction = max(0.0, effective_k_rer * (self.rer_smoothed - rer_target))
-
+                thrust_correction = max(0.0, effective_k_rer * (self.rer_smoothed - ctrl.rer_target))
                 thrust_track = thrust_base - thrust_correction
 
-                # Additional Heuristic: If we need to pull up significantly (Target High), Boost Thrust
                 if v < v_target - 0.2:
                     thrust_track += -(v - v_target) * 2.0
-
                 thrust_track = max(0.1, min(0.95, thrust_track))
 
-                # Flare Logic: Pitch Up if Collision Imminent (RER High)
-                # Delayed Flare (Threshold +0.25)
-                if self.rer_smoothed > rer_target + ctrl.flare_threshold_offset:
-                    flare_pitch = ctrl.flare_gain * (self.rer_smoothed - (rer_target + ctrl.flare_threshold_offset))
+                if self.rer_smoothed > ctrl.rer_target + ctrl.flare_threshold_offset:
+                    flare_pitch = ctrl.flare_gain * (self.rer_smoothed - (ctrl.rer_target + ctrl.flare_threshold_offset))
                     pitch_track += flare_pitch
 
         else:
-            # Blind / Lost Tracking
             yaw_rate_cmd = 0.0
             pitch_track = 0.0
             thrust_track = 0.55
 
-        # --- Stage 3: Finale (Docking) Logic ---
-        # Trigger: Target moves high in frame (v < -0.1) OR Low in frame (Overshoot v > 0.4).
-        # Only enter if tracking is valid and we have already initiated the dive.
         if tracking_uv and not self.final_mode and self.dive_initiated:
             u, v = tracking_uv
             if v < ctrl.final_mode_v_threshold_low or v > ctrl.final_mode_v_threshold_high:
-                logger.info(f"Entering Final Mode! v={v:.2f}, RER={self.rer_smoothed:.2f}")
                 self.final_mode = True
 
-        # 4. Final Mode Execution
+        pitch_rate_cmd = pitch_track
+        thrust_cmd = thrust_track
+
         if self.final_mode and tracking_uv:
             u, v = tracking_uv
-
-            # Yaw: Slides to center X (Dampened)
             yaw_rate_cmd = -ctrl.k_yaw * u * ctrl.final_mode_yaw_gain
             yaw_rate_cmd = max(-ctrl.final_mode_yaw_limit, min(ctrl.final_mode_yaw_limit, yaw_rate_cmd))
 
-            # Split Logic for Undershoot vs Overshoot
             if v < 0.1:
-                # Undershoot / Recovery (Target High) -> Level & Power
                 target_pitch_final = ctrl.final_mode_undershoot_pitch_target
                 pitch_rate_cmd = ctrl.final_mode_undershoot_pitch_gain * (target_pitch_final - pitch)
-
-                # Thrust: Modulates to center Y (v=0)
-                # Gain 2.0 to climb
                 thrust_cmd = ctrl.final_mode_undershoot_thrust_base - ctrl.final_mode_undershoot_thrust_gain * v
             else:
-                # Overshoot / Sink (Target Low) -> Nose Down & Gentle Sink
-                # Keep nose down (-5 deg) to maintain view/momentum
                 target_pitch_final = ctrl.final_mode_overshoot_pitch_target
                 pitch_rate_cmd = ctrl.final_mode_overshoot_pitch_gain * (target_pitch_final - pitch)
-
-                # Thrust: Modulates to gently sink towards ideal v=0.24
-                # If v=0.4, error=0.16. Thrust = 0.55 - 1.0 * 0.16 = 0.39.
-                # Not a hard cut to 0.1
                 thrust_cmd = ctrl.final_mode_overshoot_thrust_base - ctrl.final_mode_overshoot_thrust_gain * (v - ctrl.final_mode_overshoot_v_target)
-
             thrust_cmd = max(0.1, min(0.95, thrust_cmd))
 
-        elif tracking_uv:
-            pitch_rate_cmd = pitch_track
-            thrust_cmd = thrust_track
-        else:
-            # Blind / Lost Tracking
+        elif not tracking_uv:
             pitch_rate_cmd = 0.0
             thrust_cmd = 0.5
 
-        # Speed Limiting (Global) & State Update
-        if velocity_reliable and velocity_est:
-             vx, vy, vz = velocity_est['vx'], velocity_est['vy'], velocity_est['vz']
-
-             # Update Internal State Estimate (Critical for Blind Mode Visualization)
-             # Blend with existing estimate or overwrite?
-             # Since flow is "measurement", we treat it as observation.
-             alpha_vel = ctrl.velocity_smoothing_alpha
-             self.est_vx = alpha_vel * vx + (1-alpha_vel) * self.est_vx
-             self.est_vy = alpha_vel * vy + (1-alpha_vel) * self.est_vy
-
-             # Vz: Only use flow Vz if Baro is missing (Blind)
-             if obs_vz is None:
-                  self.est_vz = alpha_vel * vz + (1-alpha_vel) * self.est_vz
-
-             v_mag = math.sqrt(vx*vx + vy*vy + vz*vz)
-             if v_mag > ctrl.velocity_limit:
-                  excess = v_mag - ctrl.velocity_limit
-                  # Brake by Pitching Up (Positive Pitch Rate)
-                  # Gain 0.2 rad/s per m/s excess
-                  pitch_brake = ctrl.braking_pitch_gain * excess
-                  # Limit max brake to avoid stall/loop
-                  pitch_brake = min(ctrl.max_braking_pitch_rate, pitch_brake)
-
-                  pitch_rate_cmd += pitch_brake
-
-                  # Optional: Reduce Thrust if braking hard?
-                  # If we pitch up, drag increases.
-                  # Keeping thrust might result in climb.
-                  # But simpler is just pitch for now.
-
-        # 5. Prevent Inverted Flight AND Stall
         if pitch < -1.45 and pitch_rate_cmd < 0.0:
              pitch_rate_cmd = 0.0
-
         if pitch > 0.8 and pitch_rate_cmd > 0.0:
              pitch_rate_cmd = 0.0
 
-        # 6. Roll Control
         roll_rate_cmd = 4.0 * (0.0 - roll)
 
-        # NOTE: The Sim Interface (PyGhostModel) uses Inverted Pitch/Yaw logic internally.
         action = {
             'thrust': thrust_cmd,
             'roll_rate': roll_rate_cmd,
@@ -312,30 +298,18 @@ class DPCFlightController:
         }
         self.last_action = action
 
-        # --- Ghost Paths (Viz) ---
+        # Ghost Paths (Viz)
         sim_vx = self.est_vx
         sim_vy = self.est_vy
-        sim_vz = vz
+        sim_vz = vz # Using Baro VZ or Estimated
 
-        if not (velocity_reliable and velocity_est):
-             if abs(pitch) > 0.1:
-                  v_xy_est = abs(sim_vz / math.tan(pitch))
-                  v_xy_est = min(20.0, v_xy_est)
-                  sim_vx = 0.9 * sim_vx + 0.1 * (v_xy_est * math.cos(yaw))
-                  sim_vy = 0.9 * sim_vy + 0.1 * (v_xy_est * math.sin(yaw))
-                  self.est_vx = sim_vx
-                  self.est_vy = sim_vy
-             else:
-                  self.est_vx *= 0.95
-                  self.est_vy *= 0.95
-
+        # Blind Path Prediction
         ghost_paths = []
         path = []
         sim_x = 0.0; sim_y = 0.0; sim_z = pz
-
         for i in range(20):
-             sim_x += self.est_vx * self.dt
-             sim_y += self.est_vy * self.dt
+             sim_x += sim_vx * self.dt
+             sim_y += sim_vy * self.dt
              sim_z += sim_vz * self.dt
              path.append({'px': sim_x, 'py': sim_y, 'pz': sim_z})
         ghost_paths.append(path)
