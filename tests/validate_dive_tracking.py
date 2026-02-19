@@ -238,8 +238,9 @@ class DiveValidator:
             self.msckf.update_measurements(height_meas, vz_meas, finished_tracks)
 
             # Get VIO Output
-            vio_vel = self.msckf.get_velocity()
-            vel_est = {'vx': vio_vel[0], 'vy': vio_vel[1], 'vz': vio_vel[2]}
+            vio_state = self.msckf.get_state_dict()
+            vel_est = {'vx': vio_state['vx'], 'vy': vio_state['vy'], 'vz': vio_state['vz']}
+            pos_est = {'px': vio_state['px'], 'py': vio_state['py'], 'pz': vio_state['pz']}
 
             vel_reliable = self.msckf.is_reliable()
 
@@ -251,6 +252,7 @@ class DiveValidator:
                 tracking_size=tracking_size_norm,
                 extra_yaw_rate=extra_yaw,
                 velocity_est=vel_est,
+                position_est=pos_est,
                 velocity_reliable=vel_reliable
             )
 
