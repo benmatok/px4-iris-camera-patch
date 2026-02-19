@@ -339,6 +339,34 @@ class MSCKF:
         # Legacy wrapper
         self._update_vz_internal(vz_meas, noise_std)
 
+    def update_velocity_vector(self, v_ned_meas, noise_std=0.1):
+        """
+        Updates state with full 3D velocity measurement (Validation Only).
+        """
+        if not self.initialized:
+            return
+
+        r = v_ned_meas - self.v
+
+        # H is Identity at index 6 (Velocity)
+        # 3xN
+        H = np.zeros((3, self.P.shape[0]))
+        H[0:3, 6:9] = np.eye(3)
+
+        R_noise = np.eye(3) * noise_std**2
+
+        try:
+            S = H @ self.P @ H.T + R_noise
+            S_inv = np.linalg.inv(S)
+            K = self.P @ H.T @ S_inv
+            dx = K @ r
+
+            self._inject_error(dx)
+            I = np.eye(self.P.shape[0])
+            self.P = (I - K @ H) @ self.P
+        except Exception as e:
+            logger.error(f"Vel Vector Update Failed: {e}")
+
     def update_features(self, tracks):
         """
         MSCKF Update.
