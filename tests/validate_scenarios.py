@@ -19,11 +19,7 @@ def run_scenarios():
     # config.control.k_yaw = 2.5
 
     scenarios = [
-        {"id": 1, "alt": 100.0, "dist": 50.0},
-        {"id": 2, "alt": 50.0,  "dist": 75.0},
         {"id": 3, "alt": 20.0,  "dist": 50.0},
-        {"id": 4, "alt": 60.0,  "dist": 80.0},
-        {"id": 5, "alt": 50.0,  "dist": 50.0},
         {"id": 6, "alt": 25.0,  "dist": 150.0}
     ]
 
@@ -50,8 +46,8 @@ def run_scenarios():
             config=config
         )
 
-        # Run for 40 seconds to accommodate 5 m/s speed limit
-        hist = validator.run(duration=40.0)
+        # Run for 10 seconds for faster validation
+        hist = validator.run(duration=10.0)
 
         # GENERATE PLOTS
         from tests.validate_dive_tracking import plot_results

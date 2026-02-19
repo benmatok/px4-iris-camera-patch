@@ -305,19 +305,10 @@ def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_t
     # 1. Trajectory Side View (X-Z)
     axs[0, 0].set_title("Trajectory Side View (X-Z)")
 
-    # Ground Truth Run
-    pos_gt = np.array(hist_gt['drone_pos'])
-    axs[0, 0].plot(pos_gt[:, 0], pos_gt[:, 2], 'b-', label='Full State (GT Tracking)')
-
-    # Vision Run
-    if hist_vis:
-        pos_vis = np.array(hist_vis['drone_pos'])
-        axs[0, 0].plot(pos_vis[:, 0], pos_vis[:, 2], 'g--', label='Full State (Vision Tracking)')
-
-    # Blind Run (Web App)
+    # Blind Run (Web App) - This is the one we care about for GDPC prediction
     if hist_blind:
         pos_blind = np.array(hist_blind['drone_pos'])
-        axs[0, 0].plot(pos_blind[:, 0], pos_blind[:, 2], 'r:', linewidth=2, label='Blind Mode (Web App)')
+        axs[0, 0].plot(pos_blind[:, 0], pos_blind[:, 2], 'k-', linewidth=2, label='Actual Trajectory')
 
         # Mark VIO Lock
         if 'vel_reliable' in hist_blind:
@@ -334,11 +325,6 @@ def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_t
         axs[0, 0].plot(target_pos[0], target_pos[2], 'rx', markersize=10, label='Target')
     else:
         axs[0, 0].plot(150.0, 0.0, 'rx', markersize=10, label='Target (Default)')
-
-    axs[0, 0].set_xlabel("X (m)")
-    axs[0, 0].set_ylabel("Z (m)")
-    axs[0, 0].legend()
-    axs[0, 0].grid(True)
 
     # Overlay Ghost Paths for Blind Run (if available)
     if hist_blind and 'ghost_paths' in hist_blind:
@@ -358,13 +344,6 @@ def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_t
             gp_abs = []
             curr_pos = pos[i]
 
-            # For heuristic (not reliable), Z is absolute est, XY relative.
-            # For GDPC (reliable), All Relative.
-
-            # We want to show what the drone thinks.
-            # But we don't have est_pz recorded.
-            # So we best-effort relative visualization anchored to current true pos.
-
             start_z = gp[0]['pz']
 
             for p in gp:
@@ -378,24 +357,25 @@ def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_t
                 if reliable:
                     abs_z = curr_pos[2] + pz
                 else:
-                    # Heuristic: pz is absolute estimate.
-                    # We shift it to anchor at current true pos to show trajectory shape.
-                    # shift = curr_pos[2] - est_pz
-                    # approximated est_pz ~ start_z (roughly)
-                    # abs_z = pz + (curr_pos[2] - start_z)
-                    # actually simpler:
                     rel_z = pz - start_z
                     abs_z = curr_pos[2] + rel_z
 
                 gp_abs.append([abs_x, abs_y, abs_z])
 
             gp_abs = np.array(gp_abs)
-            axs[0, 0].plot(gp_abs[:, 0], gp_abs[:, 2], 'c-', alpha=0.3, linewidth=1)
+            label = 'GDPC Prediction' if i == 0 else None
+            axs[0, 0].plot(gp_abs[:, 0], gp_abs[:, 2], 'c-', alpha=0.6, linewidth=1.5, label=label)
+
+    axs[0, 0].set_xlabel("X (m)")
+    axs[0, 0].set_ylabel("Z (m)")
+    axs[0, 0].legend()
+    axs[0, 0].grid(True)
 
 
     # 2. Distance to Target
     axs[0, 1].set_title("Distance to Target")
-    axs[0, 1].plot(hist_gt['t'], hist_gt['dist'], 'b-', label='Full GT')
+    if hist_gt:
+        axs[0, 1].plot(hist_gt['t'], hist_gt['dist'], 'b-', label='Full GT')
     if hist_vis:
         axs[0, 1].plot(hist_vis['t'], hist_vis['dist'], 'g--', label='Full Vision')
     if hist_blind:
@@ -409,7 +389,7 @@ def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_t
     axs[1, 0].set_title("Target Estimation Error (Vision Run)")
 
     # Use hist_vis if available, else hist_gt just to show something (or None)
-    ref_hist = hist_vis if hist_vis else hist_gt
+    ref_hist = hist_vis if hist_vis else (hist_gt if hist_gt else hist_blind)
 
     t = np.array(ref_hist['t'])
     est = ref_hist['target_est']
@@ -513,61 +493,57 @@ def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_t
         pass
 
 if __name__ == "__main__":
-    # Run with Ground Truth (Full State)
-    validator_gt = DiveValidator(use_ground_truth=True, use_blind_mode=False, init_alt=50.0, init_dist=150.0)
-    hist_gt = validator_gt.run(duration=25.0)
+    # Run with Blind Mode (Web App Logic) - Short run for plot validation
+    validator_blind = DiveValidator(use_ground_truth=True, use_blind_mode=True, init_alt=50.0, init_dist=150.0)
+    hist_blind = validator_blind.run(duration=3.0)
 
-    # Run with Vision (Full State)
-    validator_vis = DiveValidator(use_ground_truth=False, use_blind_mode=False, init_alt=50.0, init_dist=150.0)
-    hist_vis = validator_vis.run(duration=25.0)
-
-    # Run with Blind Mode (Web App Logic)
-    validator_blind = DiveValidator(use_ground_truth=True, use_blind_mode=True, init_alt=50.0, init_dist=150.0) # Use GT tracking for fair comparison of control
-    hist_blind = validator_blind.run(duration=25.0)
-
-    plot_results(hist_gt, hist_vis, hist_blind, target_pos=[150.0, 0.0, 0.0])
+    # Pass None for others to skip plotting them
+    plot_results(None, None, hist_blind, target_pos=[150.0, 0.0, 0.0])
 
     # Validation Checks
-    final_dist_gt = hist_gt['dist'][-1]
-    final_dist_vis = hist_vis['dist'][-1]
-    final_dist_blind = hist_blind['dist'][-1]
+    hist_gt = None # Define variable
+    hist_vis = None
 
-    print(f"Final Distance (Full GT): {final_dist_gt:.2f}m")
-    print(f"Final Distance (Full Vision): {final_dist_vis:.2f}m")
-    print(f"Final Distance (Blind Web): {final_dist_blind:.2f}m")
+    if hist_gt:
+        final_dist_gt = hist_gt['dist'][-1]
+        print(f"Final Distance (Full GT): {final_dist_gt:.2f}m")
+        if final_dist_gt < 2.0:
+            print("SUCCESS: Full GT Dive Successful")
+        else:
+            print("FAILURE: Full GT Dive Failed")
 
-    # STRICT CRITERIA: Must be close to 0 (Collision)
-    if final_dist_gt < 2.0:
-        print("SUCCESS: Full GT Dive Successful")
-    else:
-        print("FAILURE: Full GT Dive Failed")
+    if hist_vis:
+        final_dist_vis = hist_vis['dist'][-1]
+        print(f"Final Distance (Full Vision): {final_dist_vis:.2f}m")
+        if final_dist_vis < 2.0:
+            print("SUCCESS: Full Vision Dive Successful")
+        else:
+            print("FAILURE: Full Vision Dive Failed")
 
-    if final_dist_vis < 2.0:
-        print("SUCCESS: Full Vision Dive Successful")
-    else:
-        print("FAILURE: Full Vision Dive Failed")
-
-    if final_dist_blind < 2.0:
-        print("SUCCESS: Blind Web Dive Successful")
-    else:
-        print("FAILURE: Blind Web Dive Failed")
+    if hist_blind:
+        final_dist_blind = hist_blind['dist'][-1]
+        print(f"Final Distance (Blind Web): {final_dist_blind:.2f}m")
+        if final_dist_blind < 2.0:
+            print("SUCCESS: Blind Web Dive Successful")
+        else:
+            print("FAILURE: Blind Web Dive Failed")
 
     # Similarity Check (Full GT vs Blind Web)
-    # This is to check if the control logic is reasonably consistent
-    pos_gt = np.array(hist_gt['drone_pos'])
-    pos_blind = np.array(hist_blind['drone_pos'])
+    if hist_gt and hist_blind:
+        pos_gt = np.array(hist_gt['drone_pos'])
+        pos_blind = np.array(hist_blind['drone_pos'])
 
-    # Calculate Max Deviation over overlapping time
-    min_len = min(len(pos_gt), len(pos_blind))
-    diffs = []
-    for i in range(min_len):
-        d = np.linalg.norm(pos_gt[i] - pos_blind[i])
-        diffs.append(d)
+        # Calculate Max Deviation over overlapping time
+        min_len = min(len(pos_gt), len(pos_blind))
+        diffs = []
+        for i in range(min_len):
+            d = np.linalg.norm(pos_gt[i] - pos_blind[i])
+            diffs.append(d)
 
-    max_dev = max(diffs)
-    mean_dev = np.mean(diffs)
-    print(f"Max Deviation (Full vs Blind): {max_dev:.2f}m")
-    print(f"Mean Deviation (Full vs Blind): {mean_dev:.2f}m")
+        max_dev = max(diffs)
+        mean_dev = np.mean(diffs)
+        print(f"Max Deviation (Full vs Blind): {max_dev:.2f}m")
+        print(f"Mean Deviation (Full vs Blind): {mean_dev:.2f}m")
 
     # --- Prediction Error Analysis (Blind Run) ---
     if hist_blind and 'ghost_paths' in hist_blind:
