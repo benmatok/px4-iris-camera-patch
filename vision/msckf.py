@@ -30,7 +30,8 @@ class MSCKF:
         self.projector = projector
 
         # Constants
-        self.g = np.array([0, 0, -9.81]) # Gravity in World Frame (Z-Up)
+        # World Frame is NED (Z-Down). Gravity points Down.
+        self.g = np.array([0, 0, 9.81])
 
         # State
         self.q = np.array([0.0, 0.0, 0.0, 1.0]) # Identity Quaternion
