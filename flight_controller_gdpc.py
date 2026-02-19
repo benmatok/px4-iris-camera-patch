@@ -53,13 +53,13 @@ def matrix_to_rpy_np(R):
     return roll, pitch, yaw
 
 class NumPyGhostModel:
-    def __init__(self, mass=1.0, drag_coeff=0.1, thrust_coeff=1.0, tau=0.1, g=9.81):
+    def __init__(self, mass=1.0, drag_coeff=0.1, thrust_coeff=1.0, tau=0.1, g=9.81, max_thrust_base=20.0):
         self.mass = mass
         self.drag_coeff = drag_coeff
         self.thrust_coeff = thrust_coeff
         self.tau = tau
         self.g = g
-        self.max_thrust_base = 20.0
+        self.max_thrust_base = max_thrust_base
 
     def rollout(self, initial_state_dict, action_seq, dt=0.05):
         """
@@ -158,7 +158,17 @@ class GDPCOptimizer:
     def __init__(self, config: FlightConfig):
         self.config = config
         self.gdpc_cfg = config.gdpc
-        self.model = NumPyGhostModel()
+
+        # Initialize Model with Physics Config
+        phy = config.physics
+        self.model = NumPyGhostModel(
+            mass=phy.mass,
+            drag_coeff=phy.drag_coeff,
+            thrust_coeff=phy.thrust_coeff,
+            tau=phy.tau,
+            g=phy.g,
+            max_thrust_base=phy.max_thrust_base
+        )
         self.u_seq = None # Shape (H, 4)
 
     def reset(self):

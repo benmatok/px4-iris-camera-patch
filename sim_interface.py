@@ -196,13 +196,18 @@ class PyGhostModel:
             'ax_b': accel_body[0], 'ay_b': accel_body[1], 'az_b': accel_body[2]
         }
 
+from flight_config import FlightConfig
+
 class SimDroneInterface:
-    def __init__(self, projector):
+    def __init__(self, projector, config: FlightConfig = None):
         self.projector = projector
-        self.mass = 1.0
-        self.drag_coeff = 0.1
-        self.thrust_coeff = 1.0
-        self.tau = 0.1
+        self.config = config or FlightConfig()
+        phy = self.config.physics
+
+        self.mass = phy.mass
+        self.drag_coeff = phy.drag_coeff
+        self.thrust_coeff = phy.thrust_coeff
+        self.tau = phy.tau
 
         # Wind parameters (Default 0, set via reset or init)
         self.wind_x = 0.0
@@ -216,6 +221,7 @@ class SimDroneInterface:
             wind_x=self.wind_x,
             wind_y=self.wind_y
         )
+        self.model.MAX_THRUST_BASE = phy.max_thrust_base
 
         self.state = {
             'px': 0.0, 'py': 0.0, 'pz': 1.0,
