@@ -316,7 +316,8 @@ class DPCFlightController:
         # Blind Path Prediction
         ghost_paths = []
         path = []
-        sim_x = 0.0; sim_y = 0.0; sim_z = pz
+        # Return RELATIVE trajectory (consistent with GDPC)
+        sim_x = 0.0; sim_y = 0.0; sim_z = 0.0
         for i in range(20):
              sim_x += sim_vx * self.dt
              sim_y += sim_vy * self.dt
