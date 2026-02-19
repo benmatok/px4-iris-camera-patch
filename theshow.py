@@ -293,9 +293,11 @@ class TheShow:
         # --- VIO UPDATE ---
 
         # 1. IMU Propagation
-        # Get IMU data from Sim State (sim_interface patched to provide ax_b, ay_b, az_b)
-        gyro = np.array([s['wx'], s['wy'], s['wz']], dtype=np.float64)
-        accel = np.array([s.get('ax_b', 0.0), s.get('ay_b', 0.0), s.get('az_b', 9.81)], dtype=np.float64)
+        # Get IMU data from Sim State (Sim Frame: Forward-Left-Up)
+        # VIO expects NED Body Frame (Forward-Right-Down)
+        # Transformation: X->X, Y->-Y, Z->-Z
+        gyro = np.array([s['wx'], -s['wy'], -s['wz']], dtype=np.float64)
+        accel = np.array([s.get('ax_b', 0.0), -s.get('ay_b', 0.0), -s.get('az_b', 9.81)], dtype=np.float64)
 
         # Initialize if needed
         if not self.msckf.initialized:
