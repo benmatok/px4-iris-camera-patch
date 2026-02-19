@@ -178,7 +178,7 @@ class GDPCOptimizer:
         """
         Uses SciPy Optimize to find the best action sequence.
         """
-        H = 20
+        H = self.gdpc_cfg.horizon
 
         # Initialize u_seq if needed
         if self.u_seq is None or self.u_seq.shape[0] != H:
