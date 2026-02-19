@@ -86,14 +86,18 @@ class MissionManager:
                 else:
                     # Normal Homing (Intercept)
                     # Fly to 0.0m (Collision allowed)
-                    self.dpc_target = [target_wp[0], target_wp[1], 0.0]
+                    # Target is at Z=0 World. Relative Z = 0 - current_alt = -current_alt
+                    # Add Safety Buffer: Aim for Z=5.0m to avoid ground impact during approach
+                    self.dpc_target = [target_wp[0], target_wp[1], -current_alt + 5.0]
             else:
                 # Lost Tracking
                 dt = 0.05
                 vx = drone_state_sim.get('vx', 0.0)
                 vy = drone_state_sim.get('vy', 0.0)
+                vz = drone_state_sim.get('vz', 0.0)
                 self.dpc_target[0] -= vx * dt
                 self.dpc_target[1] -= vy * dt
+                self.dpc_target[2] -= vz * dt
 
         elif self.state == "STAIRCASE_DESCEND":
             # Continue tracking XY, but force Z
