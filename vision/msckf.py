@@ -3,6 +3,7 @@ import numpy as np
 import math
 import logging
 from scipy.spatial.transform import Rotation as R
+from scipy.stats import chi2
 
 logger = logging.getLogger(__name__)
 
@@ -505,9 +506,37 @@ class MSCKF:
                     r_proj = Q2.T @ r_j
                     H_proj = Q2.T @ H_x_j
 
-                    H_list.append(H_proj)
-                    r_list.append(r_proj)
-            except:
+                    # Chi-Square Gating
+                    try:
+                        # Noise for this feature's residuals
+                        # r_proj is (2N-3)
+                        dof = r_proj.shape[0]
+                        noise_var = (2.0 / 480.0)**2
+                        R_noise_i = np.eye(dof) * noise_var
+
+                        # Innovation Covariance S_i = H P H^T + R
+                        S_i = H_proj @ self.P @ H_proj.T + R_noise_i
+
+                        # Chi2 Statistic
+                        # gamma = r^T * S^-1 * r
+                        # Use solve for stability
+                        gamma = r_proj.T @ np.linalg.solve(S_i, r_proj)
+
+                        # Threshold (95% confidence)
+                        threshold = chi2.ppf(0.95, df=dof)
+
+                        if gamma < threshold:
+                            H_list.append(H_proj)
+                            r_list.append(r_proj)
+                        else:
+                            logger.warning(f"Feature Rejected: Chi2 {gamma:.2f} > {threshold:.2f} (DoF {dof})")
+
+                    except np.linalg.LinAlgError:
+                        logger.warning("Chi2 Gating Failed (Singular Matrix), skipping feature")
+                        pass
+
+            except Exception as e:
+                logger.error(f"Projection/Nullspace Failed: {e}")
                 pass
 
         if not H_list:
@@ -520,13 +549,8 @@ class MSCKF:
         H_stack = np.vstack(H_list)
         r_stack = np.hstack(r_list)
 
-        # Outlier Rejection (Chi-Square)
-        # Simple for now: ignore
-
         # EKF Update
-        # R_noise is identity * pixel_noise^2
-        # Relax feature noise to handle integration discrepancies
-        noise_var = (2.0 / 480.0)**2 # 2.0 pixel noise
+        noise_var = (2.0 / 480.0)**2
         R_noise = np.eye(len(r_stack)) * noise_var
 
         S = H_stack @ self.P @ H_stack.T + R_noise
