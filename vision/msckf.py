@@ -1,271 +1,288 @@
 import numpy as np
-import math
 import logging
 import csv
 from scipy.spatial.transform import Rotation as R
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
 class MSCKF:
     """
-    Velocity-Only EKF (Simplified MSCKF).
-    State Vector (3): [vx, vy, vz] in NED Frame
+    Batch Window Velocity Estimator.
+    Accumulates IMU and Features for 1s, then resolves state.
     """
     def __init__(self, projector):
         self.projector = projector
-        self.g = np.array([0, 0, 9.81]) # NED Gravity (Down)
+        self.g = np.array([0, 0, 9.81]) # NED Gravity
 
-        # State
-        self.q = np.array([0.0, 0.0, 0.0, 1.0])
-        self.p = np.zeros(3)
-        self.v = np.zeros(3)
-        self.bg = np.zeros(3)
-        self.ba = np.zeros(3)
+        # State at start of window
+        self.start_state = {
+            'q': np.array([0., 0., 0., 1.]),
+            'p': np.zeros(3),
+            'v': np.zeros(3),
+            'bg': np.zeros(3),
+            'ba': np.zeros(3)
+        }
 
-        # Clones
-        self.max_clones = 5
-        self.cam_clones = []
-        self.next_clone_id = 0
-        self.current_time = 0.0
+        # Live State (Integrated)
+        self.live_state = self.start_state.copy()
 
-        # Covariance (3x3 - Velocity Only)
-        self.P = np.eye(3) * 0.1
-        self.Qc = np.diag([0.01, 0.01, 0.01])
+        # Buffers
+        self.imu_buffer = [] # (gyro, accel, dt)
+        self.obs_buffer = [] # list of {'id':, 'u':, 'v':, 't_rel':}
+        self.baro_buffer = [] # list of (pz, t_rel)
+
+        self.window_duration = 0.5
+        self.time_in_window = 0.0
+        self.total_time = 0.0
 
         self.R_c2b = self.projector.R_c2b
         self.p_c2b = np.zeros(3)
 
         self.initialized = False
-        self.features_processed = False
-        self.last_res_norm = 0.0
 
-        self.log_file = open("vio_state.csv", "w", newline='')
+        self.log_file = open("vio_batch_log.csv", "w", newline='')
         self.csv_writer = csv.writer(self.log_file)
-        self.csv_writer.writerow(["time", "vx", "vy", "vz", "foe_u", "foe_v", "P_det", "res_norm"])
-
-    def is_reliable(self):
-        return self.initialized and self.features_processed
+        self.csv_writer.writerow(["time", "vx_live", "vy_live", "vz_live", "vx_res", "vy_res", "vz_res"])
 
     def initialize(self, q, p, v):
-        self.q = q
-        self.p = p
-        self.v = v
-        self.P = np.eye(3) * 0.1
+        self.start_state['q'] = q
+        self.start_state['p'] = p
+        self.start_state['v'] = v
+        self.live_state = self.start_state.copy()
         self.initialized = True
-        logger.info("MSCKF (Velocity Only) Initialized")
+        logger.info("Batch VIO Initialized")
+
+    def is_reliable(self):
+        return self.initialized
 
     def propagate(self, gyro, accel, dt):
         if not self.initialized: return
 
-        self.current_time += dt
+        self.imu_buffer.append((gyro, accel, dt))
 
-        # Unbias
-        w = gyro - self.bg
-        a = accel - self.ba
+        # Propagate Live State
+        self._propagate_state(self.live_state, gyro, accel, dt)
 
-        # Rotation (Deterministic)
-        angle = np.linalg.norm(w) * dt
-        axis = w / np.linalg.norm(w) if np.linalg.norm(w) > 1e-6 else np.array([1,0,0])
-        dq = R.from_rotvec(axis * angle).as_quat()
-        r_old = R.from_quat(self.q)
-        self.q = (r_old * R.from_quat(dq)).as_quat()
-        R_mat = r_old.as_matrix()
+        self.time_in_window += dt
+        self.total_time += dt
 
-        # Velocity & Position
-        acc_world = R_mat @ a + self.g
-        self.p = self.p + self.v * dt + 0.5 * acc_world * dt**2
-        self.v = self.v + acc_world * dt
+        if self.time_in_window >= self.window_duration:
+            self._resolve_window()
 
-        # Covariance (Velocity Random Walk)
-        self.P = self.P + self.Qc * dt
-
-        # Log
-        foe = self.predict_foe()
-        foe_u, foe_v = foe if foe else (0, 0)
-        self.csv_writer.writerow([
-            f"{self.current_time:.3f}",
-            f"{self.v[0]:.3f}", f"{self.v[1]:.3f}", f"{self.v[2]:.3f}",
-            f"{foe_u:.1f}", f"{foe_v:.1f}",
-            f"{np.linalg.det(self.P):.6e}",
-            f"{self.last_res_norm:.4f}"
-        ])
-        self.log_file.flush()
-
-    def augment_state(self):
+    def add_observation(self, feature_id, u, v):
+        # Called for each feature point visible in current frame
         if not self.initialized: return
-        r_wb = R.from_quat(self.q).as_matrix()
-        p_cam = self.p + r_wb @ self.p_c2b
-        r_wc = r_wb @ self.R_c2b
-        q_cam = R.from_matrix(r_wc).as_quat()
-
-        self.cam_clones.append({
-            'p': p_cam, 'q': q_cam, 'id': self.next_clone_id, 'ts': self.current_time
+        self.obs_buffer.append({
+            'id': feature_id,
+            'u': u,
+            'v': v,
+            't_rel': self.time_in_window
         })
-        self.next_clone_id += 1
-        if len(self.cam_clones) > self.max_clones:
-            self.cam_clones.pop(0)
+
+    def update_height(self, pz):
+        if not self.initialized: return
+        self.baro_buffer.append((pz, self.time_in_window))
+        # Simple Live Update
+        # self.live_state['p'][2] = pz # Optional: Clamp live Z
 
     def predict_foe(self):
         if not self.initialized: return None
-        r_wb = R.from_quat(self.q).as_matrix()
-        v_b = r_wb.T @ self.v
+        r_wb = R.from_quat(self.live_state['q']).as_matrix()
+        v_b = r_wb.T @ self.live_state['v']
         v_c = self.R_c2b.T @ v_b
 
         if v_c[2] < 0.1: return None
-        # Return normalized coordinates (x/z, y/z)
         u = v_c[0] / v_c[2]
         v = v_c[1] / v_c[2]
         return (u, v)
 
-    def update_height(self, height_meas):
-        # Reset Position Z to avoid drift affecting geometry
-        # height_meas is NED pz (negative altitude)
-        self.p[2] = height_meas
+    def get_velocity(self):
+        return self.live_state['v']
 
-    def update_features(self, tracks):
+    def _propagate_state(self, state, gyro, accel, dt):
+        # Unbias
+        w = gyro - state['bg']
+        a = accel - state['ba']
+
+        # Rotation
+        angle = np.linalg.norm(w) * dt
+        axis = w / np.linalg.norm(w) if np.linalg.norm(w) > 1e-6 else np.array([1,0,0])
+        dq = R.from_rotvec(axis * angle).as_quat()
+        r_old = R.from_quat(state['q'])
+        state['q'] = (r_old * R.from_quat(dq)).as_quat()
+
+        # Velocity & Position
+        R_mat = r_old.as_matrix()
+        acc_world = R_mat @ a + self.g
+
+        state['p'] = state['p'] + state['v'] * dt + 0.5 * acc_world * dt**2
+        state['v'] = state['v'] + acc_world * dt
+
+    def _resolve_window(self):
+        # 1. Re-integrate to generate Poses for all observations
+        # We need pose at each t_rel in obs_buffer
+        # Sort obs by time
+        sorted_obs = sorted(self.obs_buffer, key=lambda x: x['t_rel'])
+
+        temp_state = {k: v.copy() for k, v in self.start_state.items()}
+
+        obs_idx = 0
+        imu_idx = 0
+        current_t = 0.0
+
+        poses = [] # list of (t_rel, R_wb, p_w)
+
+        # Store pose at t=0
+        poses.append((0.0, R.from_quat(temp_state['q']).as_matrix(), temp_state['p'].copy()))
+
+        # Integrate and capture poses
+        for (gyro, accel, dt) in self.imu_buffer:
+            next_t = current_t + dt
+            self._propagate_state(temp_state, gyro, accel, dt)
+            poses.append((next_t, R.from_quat(temp_state['q']).as_matrix(), temp_state['p'].copy()))
+            current_t = next_t
+
+        final_state_prior = temp_state
+
+        # 2. Group Obs by ID
+        features = defaultdict(list)
+        for o in sorted_obs:
+            features[o['id']].append(o)
+
+        # 3. Batch Solve for Correction
+        # We want to correct the Velocity at the START of the window (v0)
+        # or Velocity at END?
+        # Let's estimate Velocity Error (constant bias) over the window.
+        # H matrix: d(residual)/d(v_error).
+
+        # For each feature:
+        # Triangulate using nominal poses.
+        # Compute residuals.
+        # Compute H_v for each residual.
+
         H_list = []
         r_list = []
 
-        for track in tracks:
-            obs = track['obs']
-            if len(obs) < 2: continue
+        for fid, obs_list in features.items():
+            if len(obs_list) < 3: continue
 
-            poses = []
-            measurements = []
-            valid_obs = []
+            # Get poses for these obs (Interpolate if needed, but NN is fine for high rate IMU)
+            # Find closest pose in `poses`
+            feat_poses = []
+            feat_meas = []
 
-            # For Jacobian calculation
-            clone_timestamps = []
+            for o in obs_list:
+                t = o['t_rel']
+                # Find pose closest to t
+                # poses is sorted by time.
+                # Simple search
+                best_pose = min(poses, key=lambda x: abs(x[0] - t))
 
-            for o in obs:
-                # Find clone
-                clone = next((c for c in self.cam_clones if c['id'] == o['clone_idx']), None)
-                if not clone: continue
+                # Transform to Camera Frame
+                R_wb = best_pose[1]
+                p_w = best_pose[2]
 
-                R_wc = R.from_quat(clone['q']).as_matrix()
-                p_wc = clone['p']
+                R_wc = R_wb @ self.R_c2b
+                p_wc = p_w + R_wb @ self.p_c2b
 
-                poses.append((R_wc, p_wc))
-                measurements.append((o['u'], o['v']))
-                valid_obs.append(o)
-                clone_timestamps.append(clone['ts'])
+                feat_poses.append((R_wc, p_wc))
+                feat_meas.append((o['u'], o['v']))
 
-            if len(poses) < 2: continue
-
-            p_feat_w = self._triangulate(poses, measurements)
+            # Triangulate
+            p_feat_w = self._triangulate(feat_poses, feat_meas)
             if p_feat_w is None: continue
 
-            # Residuals & Jacobians
-            H_v_j = np.zeros((2 * len(valid_obs), 3)) # w.r.t Velocity (3)
-            H_f_j = np.zeros((2 * len(valid_obs), 3)) # w.r.t Feature (3)
-            r_j = np.zeros(2 * len(valid_obs))
-
-            for i, o in enumerate(valid_obs):
-                R_wc, p_wc = poses[i]
-                u_meas, v_meas = measurements[i]
-                ts = clone_timestamps[i]
-                dt_i = self.current_time - ts
+            # Compute Residuals & Jacobian
+            for i, (R_wc, p_wc) in enumerate(feat_poses):
+                u_m, v_m = feat_meas[i]
 
                 P_c = R_wc.T @ (p_feat_w - p_wc)
                 if P_c[2] < 0.1: continue
 
-                u_pred = P_c[0] / P_c[2]
-                v_pred = P_c[1] / P_c[2]
+                u_p = P_c[0] / P_c[2]
+                v_p = P_c[1] / P_c[2]
 
-                r_j[2*i] = u_meas - u_pred
-                r_j[2*i+1] = v_meas - v_pred
+                res = np.array([u_m - u_p, v_m - v_p])
 
-                # Jacobians
-                # d(uv)/dP_c
+                # Jacobian w.r.t P_c
                 J_uv_Pc = (1.0/P_c[2]) * np.array([
-                    [1, 0, -u_pred],
-                    [0, 1, -v_pred]
+                    [1, 0, -u_p],
+                    [0, 1, -v_p]
                 ])
 
-                # H_f: d(uv)/dP_w = J_uv_Pc * R_wc.T
-                H_f_j[2*i:2*i+2, :] = J_uv_Pc @ R_wc.T
+                # We want Jacobian w.r.t Velocity Error (dv)
+                # Position Error dp(t) ~ t * dv
+                # P_c = R.T * (P_w - p_w)
+                # dPc/dp_w = -R.T
+                # dPc/dv = dPc/dp_w * dp_w/dv = -R.T * t
 
-                # H_p_clone: d(uv)/dp_clone = J_uv_Pc * (-R_wc.T)
-                H_p_clone = J_uv_Pc @ (-R_wc.T)
+                t_obs = obs_list[i]['t_rel']
+                J_Pc_v = -R_wc.T * t_obs
 
-                # Chain Rule for Velocity: d(uv)/dv = d(uv)/dp_clone * dp_clone/dv
-                # dp_clone/dv = -dt_i (assuming velocity error was constant bias)
-                H_v_block = H_p_clone * (-dt_i)
+                H_block = J_uv_Pc @ J_Pc_v # 2x3
 
-                H_v_j[2*i:2*i+2, :] = H_v_block
+                H_list.append(H_block)
+                r_list.append(res)
 
-            # Null Space Projection to remove Feature dependence
-            try:
-                Q_mat, _ = np.linalg.qr(H_f_j, mode='complete')
-                Q2 = Q_mat[:, 3:] # Left Null Space
+        # Solve
+        if len(H_list) > 0:
+            H_stack = np.vstack(H_list)
+            r_stack = np.hstack(r_list)
 
-                if Q2.shape[1] > 0:
-                    r_proj = Q2.T @ r_j
-                    H_proj = Q2.T @ H_v_j
+            # Damping
+            HTH = H_stack.T @ H_stack
+            HTr = H_stack.T @ r_stack
 
-                    H_list.append(H_proj)
-                    r_list.append(r_proj)
-            except:
-                pass
+            # Prior on v (Velocity Random Walk)
+            # P_inv = 1 / (0.1**2) = 100
+            prior_inf = np.eye(3) * 10.0
 
-        if not H_list: return
+            dv = np.linalg.solve(HTH + prior_inf, HTr)
 
-        self.features_processed = True
-        H_stack = np.vstack(H_list)
-        r_stack = np.hstack(r_list)
+            # Apply Correction to Final State
+            # v_final = v_propagated + dv
+            final_state_prior['v'] += dv
 
-        noise_var = (1.0 / 480.0)**2
-        R_noise = np.eye(len(r_stack)) * noise_var
+            logger.info(f"Resolved Window: t={self.total_time:.2f}, dv={dv}")
 
-        # EKF Update
-        S = H_stack @ self.P @ H_stack.T + R_noise
-        S += np.eye(S.shape[0]) * 1e-6 # Regularization
+            # Log correction
+            self.csv_writer.writerow([
+                f"{self.total_time:.3f}",
+                f"{self.live_state['v'][0]:.3f}", f"{self.live_state['v'][1]:.3f}", f"{self.live_state['v'][2]:.3f}",
+                f"{final_state_prior['v'][0]:.3f}", f"{final_state_prior['v'][1]:.3f}", f"{final_state_prior['v'][2]:.3f}"
+            ])
+            self.log_file.flush()
 
-        try:
-            # Solve K = P H.T S^-1
-            # Or solve S X = H P => X = S^-1 H P => K = X.T
-            # dx = K r
+            # Update State
+            self.start_state = final_state_prior
+            self.live_state = final_state_prior.copy()
 
-            # Using lstsq for stability
-            # S is symmetric positive definite
-            K = (np.linalg.lstsq(S, H_stack @ self.P, rcond=None)[0]).T
-            dx = K @ r_stack
+        else:
+            # No features, just accept IMU propagation
+            self.start_state = final_state_prior
+            self.live_state = final_state_prior.copy()
 
-            self.last_res_norm = np.linalg.norm(r_stack) / np.sqrt(len(r_stack))
-
-            # Apply Correction
-            self.v += dx
-
-            # Update P
-            I = np.eye(3)
-            self.P = (I - K @ H_stack) @ self.P
-        except Exception as e:
-            logger.error(f"VIO Update Error: {e}")
+        # Reset Buffers
+        self.imu_buffer = []
+        self.obs_buffer = []
+        self.baro_buffer = []
+        self.time_in_window = 0.0
 
     def _triangulate(self, poses, measurements):
         A = []
+        B = []
         for (R_wc, p_wc), (u, v) in zip(poses, measurements):
             RT = R_wc.T
             t = -RT @ p_wc
             r1, r2, r3 = RT[0, :], RT[1, :], RT[2, :]
             A.append(u * r3 - r1)
             A.append(v * r3 - r2)
-
-        A_mat = np.array(A)
-
-        B = []
-        for (R_wc, p_wc), (u, v) in zip(poses, measurements):
-            RT = R_wc.T
-            t = -RT @ p_wc
             B.append(t[0] - u * t[2])
             B.append(t[1] - v * t[2])
-        B_vec = np.array(B)
 
         try:
-            res, _, _, _ = np.linalg.lstsq(A_mat, B_vec, rcond=None)
+            res, _, _, _ = np.linalg.lstsq(np.array(A), np.array(B), rcond=None)
             return res
         except:
             return None
-
-    def get_velocity(self):
-        return self.v

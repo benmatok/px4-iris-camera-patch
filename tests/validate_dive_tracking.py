@@ -218,18 +218,20 @@ class DiveValidator:
             # Propagate
             self.msckf.propagate(gyro, accel, DT)
 
-            # Augment
-            self.msckf.augment_state()
+            # Augment (No-op for Batch)
+            # self.msckf.augment_state()
 
             # Features
             # Body Rates
             body_rates = (s['wx'], s['wy'], s['wz'])
-            current_clone_idx = self.msckf.cam_clones[-1]['id'] if self.msckf.cam_clones else 0
+            current_clone_idx = 0
 
-            foe, finished_tracks = self.feature_tracker.update(dpc_state_ned_abs, body_rates, DT, current_clone_idx)
+            _, _, current_obs = self.feature_tracker.update(dpc_state_ned_abs, body_rates, DT, current_clone_idx)
 
-            if finished_tracks:
-                self.msckf.update_features(finished_tracks)
+            for obs in current_obs:
+                self.msckf.add_observation(obs['id'], obs['u'], obs['v'])
+
+            foe = self.msckf.predict_foe()
 
             # Height
             height_meas = dpc_state_ned_abs['pz']

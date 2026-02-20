@@ -41,6 +41,7 @@ class FeatureTracker:
 
         # To store finished tracks this frame
         finished_tracks = []
+        current_obs = []
 
         for pid, pt in self.world_points.items():
             res = self.projector.world_to_normalized(pt[0], pt[1], pt[2], drone_state)
@@ -65,6 +66,7 @@ class FeatureTracker:
                         'u': u_norm,
                         'v': v_norm
                     })
+                    current_obs.append({'id': pid, 'u': u_norm, 'v': v_norm})
 
             # Force finish track if too long to ensure MSCKF update (reduce drift)
             # Threshold must be <= max_clones (5) to ensure clones exist!
@@ -110,7 +112,7 @@ class FeatureTracker:
 
         self.prev_projections = curr_projections
 
-        return foe, finished_tracks
+        return foe, finished_tracks, current_obs
 
     def _calculate_foe(self, curr_projections, body_rates, dt):
         flow_vectors = []

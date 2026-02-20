@@ -322,21 +322,24 @@ class TheShow:
         self.msckf.augment_state()
 
         # 3. Feature Tracking & Update
-        current_clone_idx = self.msckf.cam_clones[-1]['id'] if self.msckf.cam_clones else 0
+        current_clone_idx = 0
 
-        # dpc_state_ned_abs used for generation inside tracker, but we should rely on image content ideally
-        # Here we use synthetic generation
-        foe, finished_tracks = self.feature_tracker.update(dpc_state_ned_abs, body_rates, DT, current_clone_idx)
+        # Define body_rates
+        body_rates = (s['wx'], s['wy'], s['wz'])
 
-        if finished_tracks:
-            self.msckf.update_features(finished_tracks)
+        # Get Current Observations
+        # dpc_state_ned_abs used for generation inside tracker
+        _, _, current_obs = self.feature_tracker.update(dpc_state_ned_abs, body_rates, DT, current_clone_idx)
+
+        # Feed Observations to MSCKF Batch
+        for obs in current_obs:
+            self.msckf.add_observation(obs['id'], obs['u'], obs['v'])
+
+        # Predict FOE from VIO State
+        foe = self.msckf.predict_foe()
 
         # 4. Height Update (Inject Scale)
-        # Measure Altitude (Z-Down, so -pz)
-        # Baro gives us -pz.
-        height_meas = dpc_state_ned_abs['pz'] # NED Pz is negative altitude (e.g. -100)
-        # Wait, if we are at 100m alt, NED Pz is -100.
-        # MSCKF tracks NED position.
+        height_meas = dpc_state_ned_abs['pz']
         self.msckf.update_height(height_meas)
 
         # Get Estimated Velocity
