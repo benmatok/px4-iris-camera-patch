@@ -32,7 +32,7 @@ class MSCKF:
         self.obs_buffer = [] # list of {'id':, 'u':, 'v':, 't_rel':}
         self.baro_buffer = [] # list of (pz, t_rel)
 
-        self.window_duration = 0.5
+        self.window_duration = 1.0
         self.time_in_window = 0.0
         self.total_time = 0.0
 
