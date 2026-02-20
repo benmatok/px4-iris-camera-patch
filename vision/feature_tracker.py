@@ -66,6 +66,20 @@ class FeatureTracker:
                         'v': v_norm
                     })
 
+            # Force finish track if too long to ensure MSCKF update (reduce drift)
+            # Threshold must be <= max_clones (5) to ensure clones exist!
+            if pid in self.active_tracks and len(self.active_tracks[pid]['obs']) >= 4:
+                 track = self.active_tracks[pid]
+                 if len(track['obs']) >= 2:
+                     # We need to send a COPY or just the list?
+                     # The list is in the dict.
+                     # We want to reset the dict in self.active_tracks.
+                     finished_tracks.append(track)
+
+                     # Start new track with current observation as anchor
+                     last_obs = track['obs'][-1]
+                     self.active_tracks[pid] = {'obs': [last_obs]}
+
             if not visible and pid in self.active_tracks:
                 # Feature lost -> Finished Track
                 track = self.active_tracks.pop(pid)

@@ -324,6 +324,13 @@ class DiveValidator:
             else:
                 history['target_est'].append([None, None, None])
 
+        # Print Error Statistics
+        vel_errs = np.array(history['velocity_error'])
+        foe_errs = np.array(history['foe_error'])
+        if len(vel_errs) > 0:
+            logger.info(f"Velocity Error: Mean={np.mean(vel_errs):.4f}, Max={np.max(vel_errs):.4f}")
+            logger.info(f"FOE Error: Mean={np.mean(foe_errs):.4f}, Max={np.max(foe_errs):.4f}")
+
         return history
 
 def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_tracking.png", target_pos=None):

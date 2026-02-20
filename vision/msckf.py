@@ -37,6 +37,7 @@ class MSCKF:
 
         self.initialized = False
         self.features_processed = False
+        self.last_res_norm = 0.0
 
         self.log_file = open("vio_state.csv", "w", newline='')
         self.csv_writer = csv.writer(self.log_file)
@@ -86,7 +87,7 @@ class MSCKF:
             f"{self.v[0]:.3f}", f"{self.v[1]:.3f}", f"{self.v[2]:.3f}",
             f"{foe_u:.1f}", f"{foe_v:.1f}",
             f"{np.linalg.det(self.P):.6e}",
-            "0.0"
+            f"{self.last_res_norm:.4f}"
         ])
         self.log_file.flush()
 
@@ -229,6 +230,8 @@ class MSCKF:
             # S is symmetric positive definite
             K = (np.linalg.lstsq(S, H_stack @ self.P, rcond=None)[0]).T
             dx = K @ r_stack
+
+            self.last_res_norm = np.linalg.norm(r_stack) / np.sqrt(len(r_stack))
 
             # Apply Correction
             self.v += dx
