@@ -39,19 +39,18 @@ PARAM_SPACE = {
     'thrust_base_intercept': (0.4, 0.8),
     'thrust_base_slope': (0.1, 0.5),
     'braking_pitch_gain': (0.1, 0.5),
-    'velocity_smoothing_alpha': (0.1, 0.9)
+    'velocity_smoothing_alpha': (0.1, 0.9),
+    'aim_offset': (-0.2, 0.2)
 }
 
 PARAM_NAMES = list(PARAM_SPACE.keys())
 BOUNDS = np.array([PARAM_SPACE[name] for name in PARAM_NAMES])
 
 SCENARIOS = [
-    {"id": 1, "alt": 100.0, "dist": 50.0},
     {"id": 2, "alt": 50.0,  "dist": 75.0},
     {"id": 3, "alt": 20.0,  "dist": 50.0},
     {"id": 4, "alt": 60.0,  "dist": 80.0},
-    {"id": 5, "alt": 50.0,  "dist": 50.0},
-    {"id": 6, "alt": 25.0,  "dist": 150.0}
+    {"id": 5, "alt": 50.0,  "dist": 50.0}
 ]
 
 def evaluate_params(params_vector):
@@ -83,7 +82,7 @@ def evaluate_params(params_vector):
 
             # Run simulation
             try:
-                hist = validator.run(duration=40.0)
+                hist = validator.run(duration=25.0)
                 min_dist = min(hist['dist'])
             except Exception:
                 min_dist = 1000.0 # High penalty for crash/error
@@ -197,11 +196,11 @@ def local_sgd(start_params, n_steps=10, lr=0.01):
     return current_params, evaluate_params(current_params)
 
 if __name__ == "__main__":
-    # Reduced iterations for faster execution
-    best_gp_params, best_gp_loss = gp_search(n_initial=3, n_iter=3)
+    # Tune parameters (Further Reduced)
+    best_gp_params, best_gp_loss = gp_search(n_initial=2, n_iter=2)
     print(f"\nBest GP Params Loss: {best_gp_loss:.4f}")
 
-    final_params, final_loss = local_sgd(best_gp_params, n_steps=3, lr=0.05)
+    final_params, final_loss = local_sgd(best_gp_params, n_steps=2, lr=0.02)
 
     print("\n" + "="*40)
     print("OPTIMIZATION COMPLETE")

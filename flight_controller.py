@@ -337,7 +337,7 @@ class DPCFlightController:
             # pitch_track = K * (foe_v - v).
             # So Positive K * (foe_v - v).
             # Add small offset to aim slightly above target (compensate gravity drop)
-            aim_offset = -0.05
+            aim_offset = ctrl.aim_offset
             pitch_track = ctrl.k_pitch * (foe_v - (v + aim_offset))
             pitch_track = max(-2.5, min(2.5, pitch_track))
 
