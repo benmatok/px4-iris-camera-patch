@@ -124,7 +124,9 @@ class DiveValidator:
             'target_est': [],
             'dist': [],
             'state': [],
-            'vel_reliable': []
+            'vel_reliable': [],
+            'velocity_error': [],
+            'foe_error': []
         }
 
         logger.info(f"Running Validation (Ground Truth: {self.use_ground_truth}, Blind Mode: {self.use_blind_mode}) for {duration}s...")
@@ -236,6 +238,33 @@ class DiveValidator:
             # Get VIO Output
             vio_vel = self.msckf.get_velocity()
             vel_est = {'vx': vio_vel[0], 'vy': vio_vel[1], 'vz': vio_vel[2]}
+
+            # Calculate Errors
+            v_true = np.array([dpc_state_ned_abs['vx'], dpc_state_ned_abs['vy'], dpc_state_ned_abs['vz']])
+            v_est_arr = np.array(vio_vel)
+            vel_err = np.linalg.norm(v_est_arr - v_true)
+
+            # FOE Error
+            foe_err = 0.0
+            if foe:
+                from scipy.spatial.transform import Rotation as R
+                r = dpc_state_ned_abs['roll']
+                p = dpc_state_ned_abs['pitch']
+                y = dpc_state_ned_abs['yaw']
+                R_wb = R.from_euler('xyz', [r, p, y], degrees=False).as_matrix()
+
+                v_body = R_wb.T @ v_true
+                v_cam = self.projector.R_c2b.T @ v_body
+
+                if v_cam[2] > 0.1:
+                    true_u = v_cam[0] / v_cam[2]
+                    true_v = v_cam[1] / v_cam[2]
+
+                    est_u, est_v = foe
+                    foe_err = np.sqrt((est_u - true_u)**2 + (est_v - true_v)**2)
+
+            history['velocity_error'].append(vel_err)
+            history['foe_error'].append(foe_err)
 
             vel_reliable = self.msckf.is_reliable()
 
@@ -350,45 +379,26 @@ def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_t
     axs[0, 1].legend()
     axs[0, 1].grid(True)
 
-    # 3. Target Estimation Error (Vision Run Only)
-    axs[1, 0].set_title("Target Estimation Error (Vision Run)")
-
-    # Use hist_vis if available, else hist_gt just to show something (or None)
-    ref_hist = hist_vis if hist_vis else hist_gt
-
-    t = np.array(ref_hist['t'])
-    est = ref_hist['target_est']
-    errs = []
-    valid_t = []
-
-    target_true_vec = np.array(target_pos) if target_pos else np.array([150.0, 0.0, 0.0])
-
-    for i, p in enumerate(est):
-        if p[0] is not None:
-            e = np.linalg.norm(np.array(p) - target_true_vec)
-            errs.append(e)
-            valid_t.append(t[i])
-
-    if valid_t:
-        axs[1, 0].plot(valid_t, errs, 'r-', label='Pos Error')
-    else:
-        axs[1, 0].text(0.5, 0.5, "No Tracking Data", ha='center')
-
+    # 3. Velocity Error
+    axs[1, 0].set_title("Velocity Error (Norm)")
+    if hist_vis:
+        axs[1, 0].plot(hist_vis['t'], hist_vis['velocity_error'], 'g--', label='Vision Vel Error')
+    if hist_blind:
+        axs[1, 0].plot(hist_blind['t'], hist_blind['velocity_error'], 'r:', label='Blind Web Vel Error')
     axs[1, 0].set_xlabel("Time (s)")
-    axs[1, 0].set_ylabel("Error (m)")
+    axs[1, 0].set_ylabel("Error (m/s)")
     axs[1, 0].legend()
     axs[1, 0].grid(True)
 
-    # 4. Mission State
-    axs[1, 1].set_title("Mission State")
-    states = ref_hist['state']
-    # Map states to ints
-    state_map = {"TAKEOFF": 0, "SCAN": 1, "HOMING": 2, "STAIRCASE_DESCEND": 3, "STAIRCASE_STABILIZE": 4}
-    y_vals = [state_map.get(s, -1) for s in states]
-    axs[1, 1].plot(ref_hist['t'], y_vals, 'k-')
-    axs[1, 1].set_yticks([0, 1, 2, 3, 4])
-    axs[1, 1].set_yticklabels(["TAKEOFF", "SCAN", "HOMING", "DESCEND", "STABILIZE"])
+    # 4. FOE Error
+    axs[1, 1].set_title("FOE Error (Normalized UV)")
+    if hist_vis:
+        axs[1, 1].plot(hist_vis['t'], hist_vis['foe_error'], 'g--', label='Vision FOE Error')
+    if hist_blind:
+        axs[1, 1].plot(hist_blind['t'], hist_blind['foe_error'], 'r:', label='Blind Web FOE Error')
     axs[1, 1].set_xlabel("Time (s)")
+    axs[1, 1].set_ylabel("Error (Unitless)")
+    axs[1, 1].legend()
     axs[1, 1].grid(True)
 
     plt.tight_layout()
