@@ -67,6 +67,9 @@ class MSCKF:
         self.initialized = False
         self.features_processed = False
 
+        # Scale Injection Gating
+        self.last_scale_injection_pz = None
+
     def is_reliable(self):
         return self.initialized and self.features_processed
 
@@ -268,20 +271,33 @@ class MSCKF:
 
     def update_measurements(self, height_meas, vz_meas, tracks):
         """
-        Updates state with Height, Vz, and Feature tracks in a single step (sequentially).
+        Updates state with Height, Vz, and Feature tracks.
+        Only injects scale (Height/Vz) if significant vertical motion is detected.
         """
         if not self.initialized:
             return
 
-        # 1. Height Update
-        if height_meas is not None:
-            self._update_height_internal(height_meas)
+        # Scale Injection Logic
+        # "only inject scale if delta pz is above 0.5 meter"
+        # We compare current height measurement with the last time we successfully injected scale.
 
-        # 2. Vz Update
-        if vz_meas is not None:
+        inject_scale = False
+        if height_meas is not None:
+            if self.last_scale_injection_pz is None:
+                inject_scale = True
+            elif abs(height_meas - self.last_scale_injection_pz) > 0.5:
+                inject_scale = True
+
+        # 1. Height Update
+        if inject_scale and height_meas is not None:
+            self._update_height_internal(height_meas)
+            self.last_scale_injection_pz = height_meas # Update reference
+
+        # 2. Vz Update (Gate with same logic? Usually good to update Vz if height is updating)
+        if inject_scale and vz_meas is not None:
             self._update_vz_internal(vz_meas)
 
-        # 3. Features Update
+        # 3. Features Update (Always update features)
         if tracks:
             self.update_features(tracks)
 
