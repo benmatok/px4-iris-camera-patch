@@ -126,7 +126,8 @@ class DiveValidator:
             'state': [],
             'vel_reliable': [],
             'velocity_error': [],
-            'foe_error': []
+            'foe_error': [],
+            'real_velocity': []
         }
 
         logger.info(f"Running Validation (Ground Truth: {self.use_ground_truth}, Blind Mode: {self.use_blind_mode}) for {duration}s...")
@@ -245,6 +246,8 @@ class DiveValidator:
             v_true = np.array([dpc_state_ned_abs['vx'], dpc_state_ned_abs['vy'], dpc_state_ned_abs['vz']])
             v_est_arr = np.array(vio_vel)
             vel_err = np.linalg.norm(v_est_arr - v_true)
+
+            history['real_velocity'].append(np.linalg.norm(v_true))
 
             # FOE Error
             foe_err = 0.0
@@ -388,14 +391,15 @@ def plot_results(hist_gt, hist_vis, hist_blind=None, filename="validation_dive_t
     axs[0, 1].legend()
     axs[0, 1].grid(True)
 
-    # 3. Velocity Error
-    axs[1, 0].set_title("Velocity Error (Norm)")
+    # 3. Real Velocity (Magnitude)
+    axs[1, 0].set_title("Real Velocity (Speed)")
+    axs[1, 0].plot(hist_gt['t'], hist_gt['real_velocity'], 'b-', label='Full GT Speed')
     if hist_vis:
-        axs[1, 0].plot(hist_vis['t'], hist_vis['velocity_error'], 'g--', label='Vision Vel Error')
+        axs[1, 0].plot(hist_vis['t'], hist_vis['real_velocity'], 'g--', label='Vision Speed')
     if hist_blind:
-        axs[1, 0].plot(hist_blind['t'], hist_blind['velocity_error'], 'r:', label='Blind Web Vel Error')
+        axs[1, 0].plot(hist_blind['t'], hist_blind['real_velocity'], 'r:', label='Blind Web Speed')
     axs[1, 0].set_xlabel("Time (s)")
-    axs[1, 0].set_ylabel("Error (m/s)")
+    axs[1, 0].set_ylabel("Speed (m/s)")
     axs[1, 0].legend()
     axs[1, 0].grid(True)
 
