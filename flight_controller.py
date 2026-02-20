@@ -41,7 +41,8 @@ class DPCFlightController:
         self.gdpc = GDPCOptimizer(self.config)
 
         # Smoother
-        self.smoother = SplineSmoother(window_size=5, smoothing_factor=0.1)
+        # Minimal lag configuration
+        self.smoother = SplineSmoother(window_size=3, smoothing_factor=0.01)
         self.start_time = time.time()
 
     def reset(self):
@@ -128,17 +129,22 @@ class DPCFlightController:
             py_enu = position_est['px'] # North
             pz_enu = -position_est['pz'] # Up
 
+            # Update Smoother (even if we don't use it for primary control, to keep state)
             t_now = time.time() - self.start_time
             self.smoother.update(t_now, [px_enu, py_enu, pz_enu])
 
-            # Get smoothed velocity
-            _, vel_smooth = self.smoother.get_state(t_now)
+            # Use Raw VIO Velocity for minimal lag if reliable
+            # Spline is used as backup or for smoothing visualization if needed
+            # But user requested 0 lag, so we prefer raw VIO which is already filtered by EKF.
 
-            # Use smoothed velocity instead of raw VIO
-            # Note: Spline velocity is derived from Position, so it inherently respects trajectory continuity
-            self.est_vx = vel_smooth[0]
-            self.est_vy = vel_smooth[1]
-            self.est_vz = vel_smooth[2]
+            vx_enu = velocity_est['vy']
+            vy_enu = velocity_est['vx']
+            vz_enu = -velocity_est['vz']
+
+            self.est_vx = vx_enu
+            self.est_vy = vy_enu
+            self.est_vz = vz_enu
+
         elif velocity_est and is_reliable:
              # Fallback to Raw VIO if Position not provided (shouldn't happen with updated call sites)
              vx_enu = velocity_est['vy']
