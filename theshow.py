@@ -322,6 +322,29 @@ class TheShow:
 
         self.msckf.update_measurements(height_meas, vz_meas, finished_tracks)
 
+        # 3b. Homography Velocity Update
+        if self.projector:
+            # Need to pass camera matrix K to homography?
+            # K is implicitly in projector fx,fy,cx,cy
+            # height_meas is NED Pz (positive down).
+            # Homography needs positive height (distance).
+            # If Pz=100 (down), height = 100? No, Pz is usually negative altitude?
+            # Sim Frame Pz=100 (Up). NED Pz=-100.
+            # Height = -Pz (if Pz is negative).
+            h_est = -dpc_state_ned_abs['pz']
+            if h_est > 1.0:
+                v_body_hom = self.feature_tracker.estimate_homography_velocity(DT, h_est, None)
+                if v_body_hom is not None:
+                    # Rotate Body to NED World: v_w = R_b2w * v_b
+                    # Get current R from MSCKF
+                    from scipy.spatial.transform import Rotation as R
+                    q_curr = self.msckf.q
+                    R_mat = R.from_quat(q_curr).as_matrix()
+                    v_world_hom = R_mat @ v_body_hom
+
+                    # Update MSCKF with this velocity
+                    self.msckf.update_velocity_vector(v_world_hom, noise_std=2.0) # High noise as it relies on H assumption
+
         # 4. Get Estimated State (at T)
         vio_state = self.msckf.get_state_dict()
 

@@ -238,6 +238,18 @@ class DiveValidator:
 
             self.msckf.update_measurements(height_meas, vz_meas, finished_tracks)
 
+            # 3b. Homography Velocity
+            h_est = -dpc_state_ned_abs['pz']
+            if h_est > 1.0:
+                v_body_hom = self.feature_tracker.estimate_homography_velocity(DT, h_est, None)
+                if v_body_hom is not None:
+                    # Rotate Body to NED World
+                    from scipy.spatial.transform import Rotation as R
+                    q_curr = self.msckf.q
+                    R_mat = R.from_quat(q_curr).as_matrix()
+                    v_world_hom = R_mat @ v_body_hom
+                    self.msckf.update_velocity_vector(v_world_hom, noise_std=2.0)
+
             # 4. Get VIO Output (State at T)
             vio_state = self.msckf.get_state_dict()
 
