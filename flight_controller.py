@@ -6,6 +6,65 @@ from flight_controller_gdpc import GDPCOptimizer
 
 logger = logging.getLogger(__name__)
 
+class TargetPredictor:
+    def __init__(self, history_len=10, poly_degree=2):
+        self.history_len = history_len
+        self.poly_degree = poly_degree
+        self.times = []
+        self.u_hist = []
+        self.v_hist = []
+
+        # Last fitted model
+        self.u_coeffs = None
+        self.v_coeffs = None
+        self.last_update_time = 0.0
+
+    def update(self, t, u, v):
+        self.times.append(t)
+        self.u_hist.append(u)
+        self.v_hist.append(v)
+
+        if len(self.times) > self.history_len:
+            self.times.pop(0)
+            self.u_hist.pop(0)
+            self.v_hist.pop(0)
+
+        self.last_update_time = t
+
+        if len(self.times) >= self.poly_degree + 1:
+            try:
+                # Fit polynomial to recent history
+                # Shift time to be relative to last update (t=0 at last update)
+                t_rel = np.array(self.times) - self.times[-1]
+                self.u_coeffs = np.polyfit(t_rel, self.u_hist, self.poly_degree)
+                self.v_coeffs = np.polyfit(t_rel, self.v_hist, self.poly_degree)
+            except Exception as e:
+                logger.warning(f"Polyfit failed: {e}")
+                self.u_coeffs = None
+                self.v_coeffs = None
+
+    def predict(self, t_query):
+        if self.u_coeffs is None or self.v_coeffs is None:
+            return None
+
+        # t_query is absolute time. We need relative time from last update.
+        dt = t_query - self.last_update_time
+
+        # Evaluate polynomial
+        u_pred = np.polyval(self.u_coeffs, dt)
+        v_pred = np.polyval(self.v_coeffs, dt)
+
+        return (u_pred, v_pred)
+
+    def reset(self):
+        self.times = []
+        self.u_hist = []
+        self.v_hist = []
+        self.u_coeffs = None
+        self.v_coeffs = None
+        self.last_update_time = 0.0
+
+
 class DPCFlightController:
     """
     Standard ENU (East-North-Up) Flight Controller.
@@ -35,6 +94,10 @@ class DPCFlightController:
         self.final_mode = False
         self.locked_pitch = 0.0
 
+        # Target Prediction
+        self.predictor = TargetPredictor(history_len=20, poly_degree=2)
+        self.current_time = 0.0
+
         # GDPC
         self.gdpc = GDPCOptimizer(self.config)
 
@@ -52,9 +115,15 @@ class DPCFlightController:
         self.dive_initiated = False
         self.final_mode = False
         self.locked_pitch = 0.0
+
+        self.predictor.reset()
+        self.current_time = 0.0
+
         logger.info(f"DPCFlightController reset.")
 
     def compute_action(self, state_obs, target_cmd, tracking_uv=None, tracking_size=None, extra_yaw_rate=0.0, foe_uv=None, velocity_est=None, velocity_reliable=False):
+        self.current_time += self.dt
+
         # Unpack State
         obs_pz = state_obs.get('pz')
         obs_vz = state_obs.get('vz')
@@ -64,6 +133,21 @@ class DPCFlightController:
 
         ctrl = self.config.control
         vis = self.config.vision
+
+        # Update Prediction Model
+        if tracking_uv:
+            u, v = tracking_uv
+            self.predictor.update(self.current_time, u, v)
+
+        # Use Predicted Target if Actual is Missing (or for smoothing)
+        target_uv = tracking_uv
+        if target_uv is None and self.dive_initiated:
+             pred = self.predictor.predict(self.current_time)
+             if pred:
+                 target_uv = pred
+                 # Clamp to screen bounds roughly (normalized 0-1?) No, normalized usually centered or 0-1?
+                 # Projector uses normalized u=x/z.
+                 # Let's trust prediction for now.
 
         # Blind Mode Logic
         if obs_pz is None:
@@ -103,7 +187,8 @@ class DPCFlightController:
         self.last_tracking_size = tracking_size
 
         # GDPC Logic (Overrides Heuristic if VIO Lock is reliable)
-        if velocity_reliable and velocity_est and hasattr(self.config, 'gdpc'):
+        # DISABLED to force FOE-based control as requested
+        if False and velocity_reliable and velocity_est and hasattr(self.config, 'gdpc'):
              # Update State Estimate (ENU) for Ghost Path Consistency
              # VIO is NED. Convert to ENU.
              # NED North (vx) -> ENU North (vy)
@@ -143,24 +228,10 @@ class DPCFlightController:
              action, traj_enu = self.gdpc.compute_action(gdpc_state, target_pos_relative)
 
              # Apply Action
-             # Note: compute_action returns Body Rates.
-             # We need to ensure we don't invert them if GDPC already handles it.
-             # In flight_controller_gdpc.py, I am using DifferentiableGhostModel.
-             # It uses PyGhostModel conventions.
-             # DPCFlightController normally inverts pitch/yaw rates at the end.
-             # Let's check DPCFlightController end of file:
-             # 'pitch_rate': -pitch_rate_cmd, 'yaw_rate': -yaw_rate_cmd
-
-             # So if GDPC returns positive pitch rate (Nose Up), DPCFlightController will invert it to Negative.
-             # If Sim requires Negative for Nose Up (Inverted ENU), then this is correct.
-             # If GDPC Model uses standard ENU (Positive Nose Up), it returns Positive.
-             # DPCFlightController inverts it. Sim receives Negative. Sim behaves correct.
-             # OK.
-
              self.last_action = {
                  'thrust': action['thrust'],
                  'roll_rate': action['roll_rate'],
-                'pitch_rate': action['pitch_rate'], # Revert: Backwards test failed. Forward test (Positive X) worked with Direct mapping.
+                'pitch_rate': action['pitch_rate'],
                  'yaw_rate': action['yaw_rate']
              }
 
@@ -170,21 +241,6 @@ class DPCFlightController:
              for i in range(len(traj_enu)):
                  path.append({'px': traj_enu[i, 0], 'py': traj_enu[i, 1], 'pz': traj_enu[i, 2]})
              ghost_paths.append(path)
-
-             # We need to return action in the dict format expected by DPCFlightController's invoker
-             # BUT, DPCFlightController modifies action at the end of this method (lines 284+).
-             # It sets self.last_action, but returns `action` constructed from local variables.
-
-             # We should assign to local variables `thrust_cmd`, `roll_rate_cmd`, etc.
-             # And skip the rest of the visual servoing logic.
-             # Or just return immediately?
-             # Returning immediately is safer to avoid interference.
-
-             # BUT: The end of the method does the inversion:
-             # action = { ..., 'pitch_rate': -pitch_rate_cmd, ... }
-             # So we must manually do the inversion if we return early, OR assign to vars and let it flow.
-
-             # Let's return early but format it correctly.
 
              final_action = {
                 'thrust': action['thrust'],
@@ -200,8 +256,15 @@ class DPCFlightController:
         yaw_rate_cmd = 0.0
         thrust_track = 0.6
 
-        if tracking_uv:
-            u, v = tracking_uv
+        # Use Predicted Target UV if available
+        # But we also need 'v' for dive logic
+        u, v = (0.0, 0.0)
+        has_target = False
+
+        if target_uv:
+            u, v = target_uv
+            has_target = True
+
             v_dot = 0.0
             if self.last_tracking_v is not None:
                 v_dot = (v - self.last_tracking_v) / self.dt
@@ -256,16 +319,38 @@ class DPCFlightController:
             pitch_track = 0.0
             thrust_track = 0.55
 
-        if tracking_uv and not self.final_mode and self.dive_initiated:
-            u, v = tracking_uv
+        # FOE Override for Yaw (Horizontal Intercept)
+        # Use target_uv (Predicted or Real)
+        if has_target and foe_uv:
+            u, v = target_uv
+            foe_u, foe_v = foe_uv
+            # Steer Velocity (FOE) to Target (u)
+            # Yaw Rate ~ -(Target - FOE)
+            yaw_rate_cmd = -ctrl.k_yaw * (u - foe_u)
+            yaw_rate_cmd = max(-1.5, min(1.5, yaw_rate_cmd))
+
+        # FOE Override for Pitch (Vertical Intercept) - Only in Dive
+        if has_target and foe_uv and self.dive_initiated:
+            u, v = target_uv
+            foe_u, foe_v = foe_uv
+            # Steer Velocity (FOE) to Target (v)
+            # pitch_track = K * (foe_v - v).
+            # So Positive K * (foe_v - v).
+            # Add small offset to aim slightly above target (compensate gravity drop)
+            aim_offset = -0.05
+            pitch_track = ctrl.k_pitch * (foe_v - (v + aim_offset))
+            pitch_track = max(-2.5, min(2.5, pitch_track))
+
+        if has_target and not self.final_mode and self.dive_initiated:
+            u, v = target_uv
             if v < ctrl.final_mode_v_threshold_low or v > ctrl.final_mode_v_threshold_high:
                 self.final_mode = True
 
         pitch_rate_cmd = pitch_track
         thrust_cmd = thrust_track
 
-        if self.final_mode and tracking_uv:
-            u, v = tracking_uv
+        if self.final_mode and has_target:
+            u, v = target_uv
             yaw_rate_cmd = -ctrl.k_yaw * u * ctrl.final_mode_yaw_gain
             yaw_rate_cmd = max(-ctrl.final_mode_yaw_limit, min(ctrl.final_mode_yaw_limit, yaw_rate_cmd))
 
@@ -279,7 +364,7 @@ class DPCFlightController:
                 thrust_cmd = ctrl.final_mode_overshoot_thrust_base - ctrl.final_mode_overshoot_thrust_gain * (v - ctrl.final_mode_overshoot_v_target)
             thrust_cmd = max(0.1, min(0.95, thrust_cmd))
 
-        elif not tracking_uv:
+        elif not has_target:
             pitch_rate_cmd = 0.0
             thrust_cmd = 0.5
 
