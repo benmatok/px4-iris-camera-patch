@@ -209,36 +209,34 @@ class DiveValidator:
                 r_angle = dpc_state_ned_abs['roll']
                 p_angle = dpc_state_ned_abs['pitch']
                 y_angle = dpc_state_ned_abs['yaw']
-                q_init = R.from_euler('xyz', [r_angle, p_angle, y_angle], degrees=False).as_quat()
+                # Correct Euler sequence: Intrinsic Z-Y-X (Yaw, Pitch, Roll)
+                q_init = R.from_euler('zyx', [y_angle, p_angle, r_angle], degrees=False).as_quat()
 
                 p_init = np.array([dpc_state_ned_abs['px'], dpc_state_ned_abs['py'], dpc_state_ned_abs['pz']])
                 v_init = np.array([dpc_state_ned_abs['vx'], dpc_state_ned_abs['vy'], dpc_state_ned_abs['vz']])
 
                 self.msckf.initialize(q_init, p_init, v_init)
 
-            # Propagate
-            self.msckf.propagate(gyro, accel, DT)
-
-            # Augment
+            # 1. Augment State (Capture Pose at T)
             self.msckf.augment_state()
 
-            # Features
-            # Body Rates (NED for Feature Tracker)
-            # Use the already transformed 'gyro' array
+            # 2. Feature Update (Image at T)
             body_rates_ned = (gyro[0], gyro[1], gyro[2])
             current_clone_idx = self.msckf.cam_clones[-1]['id'] if self.msckf.cam_clones else 0
 
             foe, finished_tracks = self.feature_tracker.update(dpc_state_ned_abs, body_rates_ned, DT, current_clone_idx)
 
-            # Measurement Updates
+            # 3. Measurement Updates
             height_meas = dpc_state_ned_abs['pz']
             vz_meas = dpc_state_ned_abs['vz']
 
-            # Update all measurements including features
             self.msckf.update_measurements(height_meas, vz_meas, finished_tracks)
 
-            # Get VIO Output
+            # 4. Get VIO Output (State at T)
             vio_state = self.msckf.get_state_dict()
+
+            # 5. Propagate (T -> T+DT)
+            self.msckf.propagate(gyro, accel, DT)
             vel_est = {'vx': vio_state['vx'], 'vy': vio_state['vy'], 'vz': vio_state['vz']}
             pos_est = {'px': vio_state['px'], 'py': vio_state['py'], 'pz': vio_state['pz']}
 

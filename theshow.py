@@ -292,59 +292,41 @@ class TheShow:
 
         # --- VIO UPDATE ---
 
-        # 1. IMU Propagation
-        # Get IMU data from Sim State (Sim Frame: Forward-Left-Up)
-        # VIO expects NED Body Frame (Forward-Right-Down)
-        # Transformation: X->X, Y->-Y, Z->-Z
+        # IMU Data
         gyro = np.array([s['wx'], -s['wy'], -s['wz']], dtype=np.float64)
         accel = np.array([s.get('ax_b', 0.0), -s.get('ay_b', 0.0), -s.get('az_b', 9.81)], dtype=np.float64)
 
         # Initialize if needed
         if not self.msckf.initialized:
-            # Init with Truth for now (In real life, static alignment)
-            # q_wb = from rpy
-            # NED Quaternion
             r = dpc_state_ned_abs['roll']
             p = dpc_state_ned_abs['pitch']
             y = dpc_state_ned_abs['yaw']
-
-            # Use scipy to get quat
             from scipy.spatial.transform import Rotation as R
-            q_init = R.from_euler('xyz', [r, p, y], degrees=False).as_quat()
-
+            q_init = R.from_euler('zyx', [y, p, r], degrees=False).as_quat()
             p_init = np.array([dpc_state_ned_abs['px'], dpc_state_ned_abs['py'], dpc_state_ned_abs['pz']])
             v_init = np.array([dpc_state_ned_abs['vx'], dpc_state_ned_abs['vy'], dpc_state_ned_abs['vz']])
-
             self.msckf.initialize(q_init, p_init, v_init)
 
-        self.msckf.propagate(gyro, accel, DT)
-
-        # 2. State Augmentation (Camera Image)
-        # Clone current pose
+        # 1. Augment State (Capture Pose at T)
         self.msckf.augment_state()
 
-        # 3. Feature Tracking & Update
+        # 2. Feature Tracking & Update (Image at T)
         current_clone_idx = self.msckf.cam_clones[-1]['id'] if self.msckf.cam_clones else 0
-
-        # dpc_state_ned_abs used for generation inside tracker, but we should rely on image content ideally
-        # Here we use synthetic generation
-        # Body rates for feature tracker (Sim Frame or NED? Usually NED for unrotation)
-        # Using aligned gyro (NED)
         body_rates_ned = (gyro[0], gyro[1], gyro[2])
 
         foe, finished_tracks = self.feature_tracker.update(dpc_state_ned_abs, body_rates_ned, DT, current_clone_idx)
 
-        if finished_tracks:
-            self.msckf.update_features(finished_tracks)
-
-        # 4. Measurement Updates (Height, Vz, Features)
-        height_meas = dpc_state_ned_abs['pz'] # NED Pz
-        vz_meas = dpc_state_ned_abs['vz'] # NED Vz
+        # 3. Measurement Updates
+        height_meas = dpc_state_ned_abs['pz']
+        vz_meas = dpc_state_ned_abs['vz']
 
         self.msckf.update_measurements(height_meas, vz_meas, finished_tracks)
 
-        # Get Estimated State (Velocity & Position)
+        # 4. Get Estimated State (at T)
         vio_state = self.msckf.get_state_dict()
+
+        # 5. Propagate (T -> T+DT)
+        self.msckf.propagate(gyro, accel, DT)
         vel_est = {'vx': vio_state['vx'], 'vy': vio_state['vy'], 'vz': vio_state['vz']}
         pos_est = {'px': vio_state['px'], 'py': vio_state['py'], 'pz': vio_state['pz']}
         vel_reliable = self.msckf.is_reliable()
