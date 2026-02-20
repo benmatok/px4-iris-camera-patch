@@ -379,14 +379,25 @@ class MSCKF:
         # Legacy wrapper
         self._update_vz_internal(vz_meas, noise_std)
 
-    def update_velocity_vector(self, v_ned_meas, noise_std=0.1):
+    def update_velocity_vector(self, v_ned_meas, noise_std=0.5):
         """
-        Updates state with full 3D velocity measurement (Validation Only).
+        Updates state with full 3D velocity measurement.
         """
         if not self.initialized:
             return
 
+        # Check for NaN/Inf in measurement
+        if not np.all(np.isfinite(v_ned_meas)):
+            logger.warning("Velocity Measurement contains NaN/Inf, skipping update.")
+            return
+
         r = v_ned_meas - self.v
+
+        # Check residual magnitude (Gate huge updates)
+        res_norm = np.linalg.norm(r)
+        if res_norm > 20.0:
+            logger.warning(f"Large Velocity Vector Residual: {res_norm:.2f}m/s. Skipping update.")
+            return
 
         # H is Identity at index 6 (Velocity)
         # 3xN
@@ -404,6 +415,7 @@ class MSCKF:
             self._inject_error(dx)
             I = np.eye(self.P.shape[0])
             self.P = (I - K @ H) @ self.P
+            self._log_state("Post-VelVec")
         except Exception as e:
             logger.error(f"Vel Vector Update Failed: {e}")
 
