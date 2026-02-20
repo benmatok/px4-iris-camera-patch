@@ -225,24 +225,72 @@ class MSCKF:
                 H_list.append(H_block)
                 r_list.append(res)
 
-        # Solve
+        # Solve (Direction Only)
         if len(H_list) > 0:
             H_stack = np.vstack(H_list)
             r_stack = np.hstack(r_list)
 
-            # Damping
-            HTH = H_stack.T @ H_stack
-            HTr = H_stack.T @ r_stack
+            # Current estimated velocity at end of window
+            v_curr = final_state_prior['v']
+            speed = np.linalg.norm(v_curr)
+            if speed < 0.1:
+                # Too slow to determine direction reliably, skip update
+                self.start_state = final_state_prior
+                self.live_state = final_state_prior.copy()
+                # Reset Buffers
+                self.imu_buffer = []
+                self.obs_buffer = []
+                self.baro_buffer = []
+                self.time_in_window = 0.0
+                return
 
-            # Prior on v (Velocity Random Walk)
-            # P_inv = 1 / (0.1**2) = 100
-            prior_inf = np.eye(3) * 10.0
+            # Compute Basis for velocity direction
+            # v = speed * direction
+            # We want to correct direction using angles alpha (azimuth) and beta (elevation)
+            # Let's use a local tangent plane to the velocity vector.
+            # v_dir = v / speed
+            # b1, b2 are orthogonal to v_dir
 
-            dv = np.linalg.solve(HTH + prior_inf, HTr)
+            v_dir = v_curr / speed
 
-            # Apply Correction to Final State
-            # v_final = v_propagated + dv
-            final_state_prior['v'] += dv
+            # Arbitrary vector not parallel to v_dir
+            if abs(v_dir[2]) < 0.9:
+                arb = np.array([0, 0, 1])
+            else:
+                arb = np.array([0, 1, 0])
+
+            b1 = np.cross(v_dir, arb)
+            b1 /= np.linalg.norm(b1)
+            b2 = np.cross(v_dir, b1)
+
+            # Jacobian of v w.r.t local angle perturbations d_theta (2x1)
+            # v_new ~= v_curr + speed * (b1 * d_theta1 + b2 * d_theta2)
+            # dv/d_theta = speed * [b1, b2] (3x2)
+
+            J_v_theta = speed * np.column_stack((b1, b2))
+
+            # Total Jacobian H_theta = H_v * J_v_theta
+            H_theta = H_stack @ J_v_theta # (N x 3) @ (3 x 2) = (N x 2)
+
+            # Solve for d_theta
+            HTH = H_theta.T @ H_theta
+            HTr = H_theta.T @ r_stack
+
+            # Small prior to avoid singularity
+            prior_inf = np.eye(2) * 1.0
+
+            d_theta = np.linalg.solve(HTH + prior_inf, HTr)
+
+            # Update Velocity Direction
+            # v_corr = speed * (b1 * d_theta[0] + b2 * d_theta[1])
+            # v_new = v_curr + v_corr
+            # Renormalize to keep speed constant
+
+            dv = speed * (b1 * d_theta[0] + b2 * d_theta[1])
+            v_new = v_curr + dv
+            v_new = v_new / np.linalg.norm(v_new) * speed
+
+            final_state_prior['v'] = v_new
 
             logger.info(f"Resolved Window: t={self.total_time:.2f}, dv={dv}")
 
