@@ -25,18 +25,24 @@ logger = logging.getLogger(__name__)
 DT = 0.05
 
 class DiveValidator:
-    def __init__(self, use_ground_truth=True, use_blind_mode=False, init_alt=50.0, init_dist=150.0, config: FlightConfig = None):
+    def __init__(self, use_ground_truth=True, use_blind_mode=False, init_alt=50.0, init_dist=150.0, config: FlightConfig = None, sim_config: FlightConfig = None, ctrl_config: FlightConfig = None):
         self.use_ground_truth = use_ground_truth
         self.use_blind_mode = use_blind_mode
+
+        # Base config
         self.config = config or FlightConfig()
+
+        # Specific configs (if provided, otherwise clone base)
+        self.sim_config = sim_config or self.config
+        self.ctrl_config = ctrl_config or self.config
 
         cam = self.config.camera
 
         # Tilt 30.0 (Up) as in theshow.py
         self.projector = Projector(width=cam.width, height=cam.height, fov_deg=cam.fov_deg, tilt_deg=cam.tilt_deg)
 
-        # Scenario / Sim
-        self.sim = SimDroneInterface(self.projector)
+        # Scenario / Sim (Uses sim_config)
+        self.sim = SimDroneInterface(self.projector, config=self.sim_config)
 
         # Target at X=init_dist, Y=0, Z=0
         self.target_pos_sim_world = [init_dist, 0.0, 0.0]
@@ -56,10 +62,10 @@ class DiveValidator:
         self.msckf.initialized = False
 
         # Logic
-        self.mission = MissionManager(target_alt=init_alt, enable_staircase=self.config.mission.enable_staircase, config=self.config)
+        self.mission = MissionManager(target_alt=init_alt, enable_staircase=self.ctrl_config.mission.enable_staircase, config=self.ctrl_config)
 
-        # Control
-        self.controller = DPCFlightController(dt=DT, config=self.config)
+        # Control (Uses ctrl_config)
+        self.controller = DPCFlightController(dt=DT, config=self.ctrl_config)
 
     def calculate_initial_orientation(self, drone_pos, target_pos):
         dx = target_pos[0] - drone_pos[0]
