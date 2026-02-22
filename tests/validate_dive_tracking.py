@@ -12,7 +12,7 @@ from vision.projection import Projector
 from sim_interface import SimDroneInterface
 from visual_tracker import VisualTracker
 from vision.msckf import MSCKF
-from vision.feature_tracker import FeatureTracker
+from vision.vio_system import VIOSystem
 from flight_controller import DPCFlightController
 from mission_manager import MissionManager
 from flight_config import FlightConfig
@@ -57,9 +57,7 @@ class DiveValidator:
         self.tracker = VisualTracker(self.projector)
 
         # VIO
-        self.msckf = MSCKF(self.projector)
-        self.feature_tracker = FeatureTracker(self.projector)
-        self.msckf.initialized = False
+        self.vio_system = VIOSystem(self.projector)
 
         # Logic
         self.mission = MissionManager(target_alt=init_alt, enable_staircase=self.ctrl_config.mission.enable_staircase, config=self.ctrl_config)
@@ -200,65 +198,37 @@ class DiveValidator:
                 tracking_norm = self.projector.pixel_to_normalized(center[0], center[1])
                 tracking_size_norm = radius / 480.0
 
-            # --- VIO UPDATE ---
+            # --- VIO UPDATE (BA System) ---
 
             # IMU Data
-            # s has ax_b, ay_b, az_b in Sim Frame (Forward-Left-Up)
-            # VIO expects NED Body Frame (Forward-Right-Down)
-            # Transformation: X->X, Y->-Y, Z->-Z
             gyro = np.array([s['wx'], -s['wy'], -s['wz']], dtype=np.float64)
             accel = np.array([s.get('ax_b', 0.0), -s.get('ay_b', 0.0), -s.get('az_b', 9.81)], dtype=np.float64)
 
             # Init VIO if needed (Ground Truth Init)
-            if not self.msckf.initialized:
+            if not self.vio_system.initialized:
                 from scipy.spatial.transform import Rotation as R
                 r_angle = dpc_state_ned_abs['roll']
                 p_angle = dpc_state_ned_abs['pitch']
                 y_angle = dpc_state_ned_abs['yaw']
-                # Correct Euler sequence: Intrinsic Z-Y-X (Yaw, Pitch, Roll)
                 q_init = R.from_euler('zyx', [y_angle, p_angle, r_angle], degrees=False).as_quat()
-
                 p_init = np.array([dpc_state_ned_abs['px'], dpc_state_ned_abs['py'], dpc_state_ned_abs['pz']])
                 v_init = np.array([dpc_state_ned_abs['vx'], dpc_state_ned_abs['vy'], dpc_state_ned_abs['vz']])
+                self.vio_system.initialize(q_init, p_init, v_init)
 
-                self.msckf.initialize(q_init, p_init, v_init)
+            # Propagate (Buffer IMU)
+            self.vio_system.propagate(gyro, accel, DT)
 
-            # 1. Augment State (Capture Pose at T)
-            self.msckf.augment_state()
-
-            # 2. Feature Update (Image at T)
-            body_rates_ned = (gyro[0], gyro[1], gyro[2])
-            current_clone_idx = self.msckf.cam_clones[-1]['id'] if self.msckf.cam_clones else 0
-
-            foe, finished_tracks = self.feature_tracker.update(dpc_state_ned_abs, body_rates_ned, DT, current_clone_idx)
-
-            # 3. Measurement Updates
+            # Update Measurements (Keyframe)
             height_meas = dpc_state_ned_abs['pz']
             vz_meas = dpc_state_ned_abs['vz']
 
-            self.msckf.update_measurements(height_meas, vz_meas, finished_tracks)
+            self.vio_system.update_measurements(height_meas, vz_meas, None)
 
-            # 3b. Homography Velocity
-            h_est = -dpc_state_ned_abs['pz']
-            if h_est > 1.0:
-                v_body_hom = self.feature_tracker.estimate_homography_velocity(DT, h_est, None)
-                if v_body_hom is not None:
-                    # Rotate Body to NED World
-                    from scipy.spatial.transform import Rotation as R
-                    q_curr = self.msckf.q
-                    R_mat = R.from_quat(q_curr).as_matrix()
-                    v_world_hom = R_mat @ v_body_hom
-                    self.msckf.update_velocity_vector(v_world_hom, noise_std=2.0)
-
-            # 4. Get VIO Output (State at T)
-            vio_state = self.msckf.get_state_dict()
-
-            # 5. Propagate (T -> T+DT)
-            self.msckf.propagate(gyro, accel, DT)
+            # Get State
+            vio_state = self.vio_system.get_state_dict()
             vel_est = {'vx': vio_state['vx'], 'vy': vio_state['vy'], 'vz': vio_state['vz']}
             pos_est = {'px': vio_state['px'], 'py': vio_state['py'], 'pz': vio_state['pz']}
-
-            vel_reliable = self.msckf.is_reliable()
+            vel_reliable = self.vio_system.is_reliable()
 
             # Use VIO velocity for controller
             action_out, ghost_paths = self.controller.compute_action(
