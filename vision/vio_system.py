@@ -12,7 +12,8 @@ class VIOSystem:
 
         # Components
         self.tracker = FeatureTracker(projector, config)
-        self.estimator = SlidingWindowEstimator(window_size=5)
+        # Larger window for 5s horizon (15 frames: 3 dense + 12 sparse * 0.4s = 4.8s + buffer)
+        self.estimator = SlidingWindowEstimator(window_size=15)
 
         self.initialized = False
         self.imu_buffer = [] # Buffer for current interval

@@ -87,24 +87,43 @@ class SlidingWindowEstimator:
 
         # Marginalize/Slide if full (Dual Window / Keyframe Strategy)
         if len(self.frames) > self.window_size:
-            # Check if second newest frame (frames[-2]) is "too close" to third newest (frames[-3])
-            # If so, drop it (Sparsify recent history to keep older context).
-            # Else, drop the oldest (Slide window).
+            # Strategy: Maintain dense recent history (last 3 frames) and sparse long-term history (older frames).
+            # Goal: Capture ~5 seconds window.
+            # If window_size=15, we want older frames spaced by ~0.4s.
 
-            # Note: frames[-1] is the one just added.
-            # Compare frames[-2] and frames[-3].
+            drop_idx = 0
 
-            drop_idx = 0 # Default: Drop oldest (Slide)
+            # 1. Protect recent dense buffer (last 3 frames: -1, -2, -3)
+            # We look for candidates to drop from index 1 to N-3.
+            # We want to drop a frame 'i' if it is too close to 'i-1', to enforce sparsity.
+            # Target spacing for sparse region: 0.4s
 
-            if len(self.frames) >= 3:
-                t_mid = self.frames[-2]['t']
-                t_prev = self.frames[-3]['t']
+            best_drop_score = 1e9
 
-                # If frames are closer than 0.2s (approx 4 frames @ 20Hz), drop the intermediate one.
-                # This enforces a spacing of at least 0.2s in the window history,
-                # effectively keeping frames [t, t-dt, t-0.2, t-0.4, ...].
-                if (t_mid - t_prev) < 0.2:
-                    drop_idx = len(self.frames) - 2
+            # Iterate through mutable frames (1 to len-3)
+            # Frame 0 is fixed (oldest keyframe).
+            # Frame N-1, N-2 are recent buffer.
+
+            candidates = range(1, len(self.frames) - 2)
+
+            found_merge = False
+            for i in candidates:
+                t_prev = self.frames[i-1]['t']
+                t_curr = self.frames[i]['t']
+                t_next = self.frames[i+1]['t']
+
+                dt = t_curr - t_prev
+
+                # If gap is small (< 0.4s), this frame is a candidate to merge into i-1
+                if dt < 0.4:
+                    # Drop 'i'.
+                    drop_idx = i
+                    found_merge = True
+                    break # Greedily drop the oldest violation to push sparsity from left to right
+
+            if not found_merge:
+                # If all internal frames are well-spaced, we slide (drop oldest).
+                drop_idx = 0
 
             if drop_idx > 0:
                 # Merge IMU constraints across the dropped frame

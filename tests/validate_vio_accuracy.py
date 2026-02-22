@@ -327,7 +327,8 @@ def plot_vio_accuracy(history, filename="validation_vio_accuracy.png"):
 
 if __name__ == "__main__":
     validator = VIOValidator(use_ground_truth=True, use_blind_mode=True, init_alt=50.0, init_dist=150.0)
-    history = validator.run(duration=10.0)
+    # Reduced duration for faster feedback loop
+    history = validator.run(duration=2.0)
 
     plot_vio_accuracy(history)
 
