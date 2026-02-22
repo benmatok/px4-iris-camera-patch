@@ -21,7 +21,6 @@ try:
     from sim_interface import SimDroneInterface
     from visual_tracker import VisualTracker
     from vision.feature_tracker import FeatureTracker
-    from vision.msckf import MSCKF
     from vision.vio_system import VIOSystem
     from flight_controller import DPCFlightController
     from mission_manager import MissionManager

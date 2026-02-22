@@ -10,7 +10,7 @@ from tests.validate_dive_tracking import DiveValidator
 from flight_config import FlightConfig
 
 # Configure Logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("ScenarioValidator")
 
 def run_scenarios():
@@ -60,7 +60,7 @@ def run_scenarios():
         target_pos = [dist, 0.0, 0.0]
 
         plot_filename = f"scenario_{sid}.png"
-        plot_results(hist, hist, hist, filename=plot_filename, target_pos=target_pos)
+        plot_results(None, None, hist_blind=hist, filename=plot_filename, target_pos=target_pos)
         logger.info(f"Generated plot: {plot_filename}")
 
         # Prediction Error Analysis
@@ -107,8 +107,8 @@ def run_scenarios():
         min_dist = min(hist['dist'])
 
         # Check Success
-        # Standard: Distance < 5.0m (Collision/Flyby)
-        success = min_dist < 5.0
+        # Standard: Distance < 1.0m (Precision Hit)
+        success = min_dist < 1.0
 
         res_str = "PASS" if success else "FAIL"
         if not success:

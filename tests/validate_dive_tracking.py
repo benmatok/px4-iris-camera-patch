@@ -11,14 +11,13 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from vision.projection import Projector
 from sim_interface import SimDroneInterface
 from visual_tracker import VisualTracker
-from vision.msckf import MSCKF
 from vision.vio_system import VIOSystem
 from flight_controller import DPCFlightController
 from mission_manager import MissionManager
 from flight_config import FlightConfig
 
 # Configure Logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # Constants
