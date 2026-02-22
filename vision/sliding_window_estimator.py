@@ -85,22 +85,75 @@ class SlidingWindowEstimator:
                 self.points[pid] = {'p': None, 'obs': []}
             self.points[pid]['obs'].append((curr_frame_idx, uv[0], uv[1]))
 
-        # Marginalize/Slide if full
+        # Marginalize/Slide if full (Dual Window / Keyframe Strategy)
         if len(self.frames) > self.window_size:
-            # Simple strategy: Fix first frame (Prior) or drop it?
-            # ICE-BA marginalizes. Here we just drop and fix the new oldest frame (Keyframe-based).
-            # To keep it simple: Just pop(0) and delete points observed only in 0.
+            # Check if second newest frame (frames[-2]) is "too close" to third newest (frames[-3])
+            # If so, drop it (Sparsify recent history to keep older context).
+            # Else, drop the oldest (Slide window).
 
-            # Note: A proper marginalization prior is hard to implement quickly.
-            # We will assume "Fixed Lag Smoother" where we just optimize the window and discard history.
-            removed_frame = self.frames.pop(0)
+            # Note: frames[-1] is the one just added.
+            # Compare frames[-2] and frames[-3].
 
-            # Shift observation indices
+            drop_idx = 0 # Default: Drop oldest (Slide)
+
+            if len(self.frames) >= 3:
+                t_mid = self.frames[-2]['t']
+                t_prev = self.frames[-3]['t']
+
+                # If frames are closer than 0.2s (approx 4 frames @ 20Hz), drop the intermediate one.
+                # This enforces a spacing of at least 0.2s in the window history,
+                # effectively keeping frames [t, t-dt, t-0.2, t-0.4, ...].
+                if (t_mid - t_prev) < 0.2:
+                    drop_idx = len(self.frames) - 2
+
+            if drop_idx > 0:
+                # Merge IMU constraints across the dropped frame
+                # dropping 'i'. merging (i-1 -> i) and (i -> i+1) into (i-1 -> i+1).
+                # preint at 'i' is (i-1 -> i). preint at 'i+1' is (i -> i+1).
+                # Target: preint at 'i+1' becomes (i-1 -> i+1).
+
+                c1 = self.frames[drop_idx]['imu_preint'] # i-1 -> i
+                c2 = self.frames[drop_idx+1]['imu_preint'] # i -> i+1
+
+                # Merge logic
+                # R_i = R_{i-1} * dq1
+                # v_i = v_{i-1} + g*dt1 + R_{i-1} * dv1
+                # p_i = p_{i-1} + v_{i-1}*dt1 + 0.5*g*dt1^2 + R_{i-1} * dp1
+
+                # We need c_merged such that:
+                # p_{i+1} = p_{i-1} + v_{i-1}*dt_total + ... + R_{i-1} * dp_merged
+
+                # Derived Merge Rule (Pos/Vel in Body Frame of i-1):
+                # dt_m = dt1 + dt2
+                # dq_m = dq1 * dq2
+                # dv_m = dv1 + dq1.apply(dv2)
+                # dp_m = dp1 + dv1 * dt2 + dq1.apply(dp2)
+
+                c_merged = {
+                    'dt': c1['dt'] + c2['dt'],
+                    'dq': c1['dq'] * c2['dq'],
+                    'dv': c1['dv'] + c1['dq'].apply(c2['dv']),
+                    'dp': c1['dp'] + c1['dv'] * c2['dt'] + c1['dq'].apply(c2['dp'])
+                }
+
+                self.frames[drop_idx+1]['imu_preint'] = c_merged
+
+            # Remove frame
+            self.frames.pop(drop_idx)
+
+            # Shift observation indices for points
+            # If obs frame_idx < drop_idx: no change.
+            # If obs frame_idx == drop_idx: remove observation.
+            # If obs frame_idx > drop_idx: decrement frame_idx.
+
             for pid in list(self.points.keys()):
                 new_obs = []
                 for (fidx, u, v) in self.points[pid]['obs']:
-                    if fidx > 0:
+                    if fidx < drop_idx:
+                        new_obs.append((fidx, u, v))
+                    elif fidx > drop_idx:
                         new_obs.append((fidx - 1, u, v))
+                    # else: dropped
                 self.points[pid]['obs'] = new_obs
                 if not new_obs:
                     del self.points[pid]
