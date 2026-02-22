@@ -90,6 +90,8 @@ class DPCFlightController:
         # Cruise / Dive State
         self.dive_initiated = False
         self.dive_trigger_time = 0.0
+        self.flare_active = False
+        self.flare_start_time = None
 
         # Final Mode State
         self.final_mode = False
@@ -115,6 +117,8 @@ class DPCFlightController:
 
         self.dive_initiated = False
         self.dive_trigger_time = 0.0
+        self.flare_active = False
+        self.flare_start_time = None
         self.final_mode = False
         self.locked_pitch = 0.0
 
@@ -147,9 +151,10 @@ class DPCFlightController:
              pred = self.predictor.predict(self.current_time)
              if pred:
                  target_uv = pred
-                 # Clamp to screen bounds roughly (normalized 0-1?) No, normalized usually centered or 0-1?
-                 # Projector uses normalized u=x/z.
-                 # Let's trust prediction for now.
+                 # Clamp to screen bounds
+                 u_clamped = max(-1.0, min(1.0, pred[0])) # Assuming normalized coordinates roughly
+                 v_clamped = max(-1.0, min(1.0, pred[1]))
+                 target_uv = (u_clamped, v_clamped)
 
         # Blind Mode Logic
         if obs_pz is None:
@@ -188,75 +193,22 @@ class DPCFlightController:
         self.rer_smoothed = (1.0 - alpha_rer) * self.rer_smoothed + alpha_rer * raw_rer
         self.last_tracking_size = tracking_size
 
-        # GDPC Logic (Overrides Heuristic if VIO Lock is reliable)
-        # DISABLED to force FOE-based control as requested
-        if False and velocity_reliable and velocity_est and hasattr(self.config, 'gdpc'):
-             # Update State Estimate (ENU) for Ghost Path Consistency
-             # VIO is NED. Convert to ENU.
-             # NED North (vx) -> ENU North (vy)
-             # NED East (vy) -> ENU East (vx)
-             # NED Down (vz) -> ENU Up (-vz)
+        # TTC Calculation
+        ttc = 100.0 # Default High
+        if self.rer_smoothed > 0.01:
+             ttc = 1.0 / self.rer_smoothed
 
-             vx_enu = velocity_est['vy'] # East (VIO vy) -> ENU vx
-             vy_enu = velocity_est['vx'] # North (VIO vx) -> ENU vy
-             vz_enu = -velocity_est['vz'] # Down (VIO vz) -> ENU -vz
+        # Flare Trigger
+        if self.dive_initiated and not self.flare_active:
+             if ttc < ctrl.flare_trigger_ttc:
+                 logger.info(f"FLARE TRIGGERED! TTC={ttc:.2f}, RER={self.rer_smoothed:.2f}")
+                 self.flare_active = True
+                 self.flare_start_time = self.current_time
 
-             alpha_vel = ctrl.velocity_smoothing_alpha
-             self.est_vx = alpha_vel * vx_enu + (1-alpha_vel) * self.est_vx
-             self.est_vy = alpha_vel * vy_enu + (1-alpha_vel) * self.est_vy
-             self.est_vz = alpha_vel * vz_enu + (1-alpha_vel) * self.est_vz
-
-             # Construct Relative ENU State for GDPC
-             # We ignore absolute position to satisfy "local coordinates" requirement.
-             # Drone is at 0,0,0. Target is at [dx, dy, dz] (Relative Vector).
-             gdpc_state = {
-                 'px': 0.0,
-                 'py': 0.0,
-                 'pz': 0.0,
-                 'vx': self.est_vx,
-                 'vy': self.est_vy,
-                 'vz': self.est_vz,
-                 'roll': roll,
-                 'pitch': pitch,
-                 'yaw': yaw,
-                 'wx': state_obs.get('wx', 0.0),
-                 'wy': state_obs.get('wy', 0.0),
-                 'wz': state_obs.get('wz', 0.0)
-             }
-
-             # Target is simply the relative command
-             target_pos_relative = target_cmd
-
-             action, traj_enu = self.gdpc.compute_action(gdpc_state, target_pos_relative)
-
-             # Apply Action
-             self.last_action = {
-                 'thrust': action['thrust'],
-                 'roll_rate': action['roll_rate'],
-                'pitch_rate': action['pitch_rate'],
-                 'yaw_rate': action['yaw_rate']
-             }
-
-             # Ghost Paths (Already ENU)
-             ghost_paths = []
-             path = []
-             for i in range(len(traj_enu)):
-                 path.append({'px': traj_enu[i, 0], 'py': traj_enu[i, 1], 'pz': traj_enu[i, 2]})
-             ghost_paths.append(path)
-
-             final_action = {
-                'thrust': action['thrust'],
-                'roll_rate': action['roll_rate'],
-                'pitch_rate': action['pitch_rate'],
-                'yaw_rate': action['yaw_rate']
-             }
-             return final_action, ghost_paths
-
-        # ... (Rest of the Heuristic Controller) ...
         # 2. Tracking Control (Visual Servoing)
         pitch_track = 0.0
         yaw_rate_cmd = 0.0
-        thrust_track = 0.6
+        thrust_cmd = 0.55 # Default Cruise Thrust
 
         # Use Predicted Target UV if available
         # But we also need 'v' for dive logic
@@ -281,6 +233,7 @@ class DPCFlightController:
                     self.dive_initiated = True
                     self.dive_trigger_time = self.current_time
 
+            # Normal Cruise Logic (Pre-Dive)
             yaw_rate_cmd = -ctrl.k_yaw * u
             yaw_rate_cmd = max(-1.5, min(1.5, yaw_rate_cmd))
 
@@ -288,85 +241,74 @@ class DPCFlightController:
                 vz_err = 0.0 - self.est_vz
                 pitch_track = ctrl.cruise_pitch_gain * vz_err
                 pitch_track = max(-1.0, min(1.0, pitch_track))
-                thrust_track = 0.55
-            else:
-                # Tent Function for Pitch Bias (Flare)
-                dt_dive = self.current_time - self.dive_trigger_time
-                tent_bias = 0.0
-                if dt_dive < ctrl.tent_duration:
-                    if dt_dive < ctrl.tent_peak_time:
-                        tent_bias = ctrl.tent_peak_pitch_rate * (dt_dive / ctrl.tent_peak_time)
-                    else:
-                        ramp_down_duration = ctrl.tent_duration - ctrl.tent_peak_time
-                        if ramp_down_duration > 0:
-                            progress = (dt_dive - ctrl.tent_peak_time) / ramp_down_duration
-                            tent_bias = ctrl.tent_peak_pitch_rate * (1.0 - progress)
-
-                pitch_bias = ctrl.pitch_bias_intercept + ctrl.pitch_bias_slope * pitch
-                pitch_bias = max(ctrl.pitch_bias_min, min(ctrl.pitch_bias_max, pitch_bias))
-
-                if pitch < ctrl.v_target_pitch_threshold:
-                     v_target = ctrl.v_target_intercept + ctrl.v_target_slope_steep * (pitch - ctrl.v_target_pitch_threshold)
-                else:
-                     v_target = ctrl.v_target_intercept + ctrl.v_target_slope_shallow * (pitch - ctrl.v_target_pitch_threshold)
-                v_target = max(0.1, v_target)
-
-                # Add Tent Bias to pitch tracking
-                pitch_track = -ctrl.k_pitch * (v - v_target) + pitch_bias + tent_bias
-                pitch_track = max(-2.5, min(2.5, pitch_track))
-
-                thrust_base = ctrl.thrust_base_intercept + ctrl.thrust_base_slope * pitch
-                thrust_base = max(ctrl.thrust_min, min(ctrl.thrust_max, thrust_base))
-
-                effective_k_rer = ctrl.k_rer * (abs(pitch) ** 2)
-                thrust_correction = max(0.0, effective_k_rer * (self.rer_smoothed - ctrl.rer_target))
-                thrust_track = thrust_base - thrust_correction
-
-                if v < v_target - 0.2:
-                    thrust_track += -(v - v_target) * 2.0
-                thrust_track = max(0.1, min(0.95, thrust_track))
-
-                if self.rer_smoothed > ctrl.rer_target + ctrl.flare_threshold_offset:
-                    flare_pitch = ctrl.flare_gain * (self.rer_smoothed - (ctrl.rer_target + ctrl.flare_threshold_offset))
-                    pitch_track += flare_pitch
+                thrust_cmd = 0.55
 
         else:
             yaw_rate_cmd = 0.0
             pitch_track = 0.0
-            thrust_track = 0.55
+            thrust_cmd = 0.55
 
-        # FOE Override for Yaw (Horizontal Intercept)
-        # Use target_uv (Predicted or Real)
-        if has_target and foe_uv:
-            u, v = target_uv
-            foe_u, foe_v = foe_uv
-            # Steer Velocity (FOE) to Target (u)
-            # Yaw Rate ~ -(Target - FOE)
+        # --- UNIFIED DIVE GUIDANCE ---
+        # Adaptive Aim Offset (Loft Control)
+        # 0.0 for Steep Dives (pitch ~ -1.5)
+        # -0.6 for Shallow Dives (pitch ~ 0.0)
+        pitch_mag = abs(pitch)
+        max_offset = -0.6 # Strong Loft
+        vertical_pitch = 1.5
+        aim_offset = max_offset * (1.0 - min(1.0, pitch_mag / vertical_pitch))
+
+        aim_offset_debug = aim_offset
+
+        if self.dive_initiated and has_target:
+            # Yaw is always pure pursuit (horizontal intercept)
+            # If FOE is available, we use it. If not, we rely on Center (0.0).
+            foe_u = foe_uv[0] if foe_uv else 0.0
+            foe_v = foe_uv[1] if foe_uv else 0.0 # Assume FOE is centered if unknown
+
             yaw_rate_cmd = -ctrl.k_yaw * (u - foe_u)
             yaw_rate_cmd = max(-1.5, min(1.5, yaw_rate_cmd))
 
-        # FOE Override for Pitch (Vertical Intercept) - Only in Dive
-        if has_target and foe_uv and self.dive_initiated:
-            u, v = target_uv
-            foe_u, foe_v = foe_uv
+            # Pitch Logic
+            # Pitch Bias (Gravity Compensation Feedforward)
+            pitch_bias = ctrl.pitch_bias_intercept + ctrl.pitch_bias_slope * pitch
+            pitch_bias = max(ctrl.pitch_bias_min, min(ctrl.pitch_bias_max, pitch_bias))
 
-            # Recalculate Tent Bias
-            dt_dive = self.current_time - self.dive_trigger_time
-            tent_bias = 0.0
-            if dt_dive < ctrl.tent_duration:
-                if dt_dive < ctrl.tent_peak_time:
-                    tent_bias = ctrl.tent_peak_pitch_rate * (dt_dive / ctrl.tent_peak_time)
-                else:
-                    ramp_down_duration = ctrl.tent_duration - ctrl.tent_peak_time
-                    if ramp_down_duration > 0:
-                        progress = (dt_dive - ctrl.tent_peak_time) / ramp_down_duration
-                        tent_bias = ctrl.tent_peak_pitch_rate * (1.0 - progress)
+            if self.flare_active:
+                # Stage 2: Tent Flare
+                dt_flare = self.current_time - self.flare_start_time
+                tent_bias = 0.0
+                if dt_flare < ctrl.tent_duration:
+                    if dt_flare < ctrl.tent_peak_time:
+                        tent_bias = ctrl.tent_peak_pitch_rate * (dt_flare / ctrl.tent_peak_time)
+                    else:
+                        ramp_down_duration = ctrl.tent_duration - ctrl.tent_peak_time
+                        if ramp_down_duration > 0:
+                            progress = (dt_flare - ctrl.tent_peak_time) / ramp_down_duration
+                            tent_bias = ctrl.tent_peak_pitch_rate * (1.0 - progress)
 
-            # Steer Velocity (FOE) to Target (v) with Tent Bias
-            aim_offset = ctrl.aim_offset
-            base_cmd = ctrl.k_pitch * (foe_v - (v + aim_offset))
-            pitch_track = base_cmd + tent_bias
+                guidance_attenuation = 0.1
+                base_cmd = ctrl.k_pitch * (foe_v - (v + aim_offset))
+                pitch_track = (base_cmd * guidance_attenuation) + tent_bias + (pitch_bias * 0.5)
+
+            else:
+                # Stage 1: Approach (Loft Guidance)
+                base_cmd = ctrl.k_pitch * (foe_v - (v + aim_offset))
+                pitch_track = base_cmd + pitch_bias
+
             pitch_track = max(-2.5, min(2.5, pitch_track))
+
+            # Thrust Logic
+            thrust_base = ctrl.thrust_base_intercept + ctrl.thrust_base_slope * pitch
+            thrust_base = max(ctrl.thrust_min, min(ctrl.thrust_max, thrust_base))
+
+            effective_k_rer = ctrl.k_rer * (abs(pitch) ** 2)
+            thrust_correction = max(0.0, effective_k_rer * (self.rer_smoothed - ctrl.rer_target))
+            thrust_track = thrust_base - thrust_correction
+
+            thrust_cmd = max(0.55, thrust_track)
+
+            if self.flare_active:
+                thrust_cmd = 0.4 # Reduce thrust during flare
 
         if has_target and not self.final_mode and self.dive_initiated:
             u, v = target_uv
@@ -374,26 +316,7 @@ class DPCFlightController:
                 self.final_mode = True
 
         pitch_rate_cmd = pitch_track
-        thrust_cmd = thrust_track
-
-        if self.final_mode and has_target:
-            u, v = target_uv
-            yaw_rate_cmd = -ctrl.k_yaw * u * ctrl.final_mode_yaw_gain
-            yaw_rate_cmd = max(-ctrl.final_mode_yaw_limit, min(ctrl.final_mode_yaw_limit, yaw_rate_cmd))
-
-            if v < 0.1:
-                target_pitch_final = ctrl.final_mode_undershoot_pitch_target
-                pitch_rate_cmd = ctrl.final_mode_undershoot_pitch_gain * (target_pitch_final - pitch)
-                thrust_cmd = ctrl.final_mode_undershoot_thrust_base - ctrl.final_mode_undershoot_thrust_gain * v
-            else:
-                target_pitch_final = ctrl.final_mode_overshoot_pitch_target
-                pitch_rate_cmd = ctrl.final_mode_overshoot_pitch_gain * (target_pitch_final - pitch)
-                thrust_cmd = ctrl.final_mode_overshoot_thrust_base - ctrl.final_mode_overshoot_thrust_gain * (v - ctrl.final_mode_overshoot_v_target)
-            thrust_cmd = max(0.1, min(0.95, thrust_cmd))
-
-        elif not has_target:
-            pitch_rate_cmd = 0.0
-            thrust_cmd = 0.5
+        # thrust_cmd already set
 
         # Speed Limiting (Drag Simulation)
         if velocity_reliable and velocity_est:
@@ -402,16 +325,10 @@ class DPCFlightController:
 
              limit = ctrl.velocity_limit
              if speed > limit:
-                 # Brake
                  excess = speed - limit
-
-                 # Reduce Thrust
                  thrust_cmd = max(ctrl.thrust_min, thrust_cmd - 0.05 * excess)
-
-                 # Pitch Up (Flare)
                  brake_rate = ctrl.braking_pitch_gain * excess
                  brake_rate = min(brake_rate, ctrl.max_braking_pitch_rate)
-
                  pitch_rate_cmd += brake_rate
 
         if pitch < -1.45 and pitch_rate_cmd < 0.0:
@@ -428,6 +345,12 @@ class DPCFlightController:
             'yaw_rate': -yaw_rate_cmd
         }
         self.last_action = action
+
+        # DEBUG LOGGING (Reduced frequency to minimize log noise, but kept for audit)
+        if self.dive_initiated and self.current_time % 1.0 < self.dt:
+             v_dbg = target_uv[1] if target_uv else 0.0
+             foe_dbg = foe_uv[1] if foe_uv else 0.0
+             logger.debug(f"CTRL DEBUG: T={self.current_time:.2f} P={pitch:.2f} V={v_dbg:.2f} Off={aim_offset_debug:.2f} TH={thrust_cmd:.2f} PR={pitch_rate_cmd:.2f} FOE={foe_dbg:.2f}")
 
         # Ghost Paths (Viz)
         sim_vx = self.est_vx

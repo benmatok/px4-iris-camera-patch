@@ -39,10 +39,10 @@ class ControlConfig:
     v_target_pitch_threshold: float = -1.2
 
     # Thrust
-    thrust_base_intercept: float = 0.69
-    thrust_base_slope: float = 0.39
+    thrust_base_intercept: float = 0.80 # Boosted for speed
+    thrust_base_slope: float = 0.15
     thrust_min: float = 0.15
-    thrust_max: float = 0.5 # Base max
+    thrust_max: float = 0.85 # Increased max
 
     rer_target: float = 0.25
     k_rer: float = 1.12
@@ -69,18 +69,20 @@ class ControlConfig:
     final_mode_overshoot_v_target: float = 0.24
 
     # Velocity Estimation & Speed Limiting
-    velocity_limit: float = 25.0 # Realistic dive speed limit
+    # DISABLE SPEED LIMITING (Set high limit)
+    velocity_limit: float = 100.0
     braking_pitch_gain: float = 0.14
     max_braking_pitch_rate: float = 1.5
     velocity_smoothing_alpha: float = 0.49
 
     # FOE Control
-    aim_offset: float = 0.03 # Restored optimized value
+    aim_offset: float = -0.1 # Default, overridden by adaptive
 
     # Two-Stage Tent Logic
-    tent_duration: float = 5.0
-    tent_peak_pitch_rate: float = 0.2 # Reduced peak
-    tent_peak_time: float = 2.5
+    flare_trigger_ttc: float = 4.0
+    tent_duration: float = 3.0
+    tent_peak_pitch_rate: float = 0.6
+    tent_peak_time: float = 1.5
 
 @dataclass
 class GDPCConfig:
@@ -89,12 +91,12 @@ class GDPCConfig:
     lr: float = 0.05
 
     # Weights for Loss Function (Damping Focus)
-    w_pos: float = 1.0  # Reduced significantly
-    w_vel: float = 5.0  # Increased damping
+    w_pos: float = 1.0
+    w_vel: float = 5.0
     w_att: float = 0.0
 
     w_thrust: float = 0.001
-    w_roll: float = 100.0 # Strict attitude control
+    w_roll: float = 100.0
     w_pitch: float = 100.0
     w_yaw: float = 20.0
 
