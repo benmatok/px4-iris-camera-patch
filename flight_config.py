@@ -69,9 +69,9 @@ class ControlConfig:
     final_mode_overshoot_v_target: float = 0.24
 
     # Velocity Estimation & Speed Limiting
-    velocity_limit: float = 15.0 # Slow down
+    velocity_limit: float = 25.0 # Realistic dive speed limit
     braking_pitch_gain: float = 0.14
-    max_braking_pitch_rate: float = 1.0
+    max_braking_pitch_rate: float = 1.5
     velocity_smoothing_alpha: float = 0.49
 
     # FOE Control

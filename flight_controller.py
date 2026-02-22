@@ -368,6 +368,25 @@ class DPCFlightController:
             pitch_rate_cmd = 0.0
             thrust_cmd = 0.5
 
+        # Speed Limiting (Drag Simulation)
+        if velocity_reliable and velocity_est:
+             vx, vy, vz = velocity_est['vx'], velocity_est['vy'], velocity_est['vz']
+             speed = math.sqrt(vx**2 + vy**2 + vz**2)
+
+             limit = ctrl.velocity_limit
+             if speed > limit:
+                 # Brake
+                 excess = speed - limit
+
+                 # Reduce Thrust
+                 thrust_cmd = max(ctrl.thrust_min, thrust_cmd - 0.05 * excess)
+
+                 # Pitch Up (Flare)
+                 brake_rate = ctrl.braking_pitch_gain * excess
+                 brake_rate = min(brake_rate, ctrl.max_braking_pitch_rate)
+
+                 pitch_rate_cmd += brake_rate
+
         if pitch < -1.45 and pitch_rate_cmd < 0.0:
              pitch_rate_cmd = 0.0
         if pitch > 0.8 and pitch_rate_cmd > 0.0:
