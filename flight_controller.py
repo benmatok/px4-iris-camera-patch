@@ -64,6 +64,10 @@ class DPCFlightController:
         logger.info(f"DPCFlightController reset.")
 
     def compute_action(self, state_obs, target_cmd, tracking_uv=None, tracking_size=None, extra_yaw_rate=0.0, foe_uv=None, velocity_est=None, position_est=None, velocity_reliable=False):
+        if velocity_est:
+             v_mag = math.sqrt(velocity_est['vx']**2 + velocity_est['vy']**2 + velocity_est['vz']**2)
+             # logger.debug(f"CTRL INPUT: V_est={v_mag:.2f} ({velocity_est}), Reliable={velocity_reliable}")
+
         # Unpack State
         obs_pz = state_obs.get('pz')
         obs_vz = state_obs.get('vz')
@@ -320,6 +324,25 @@ class DPCFlightController:
         elif not tracking_uv:
             pitch_rate_cmd = 0.0
             thrust_cmd = 0.5
+
+        # Enforce Speed Limit (Active Braking) - Override
+        # Only brake if we trust the estimate (sanity check: < 30.0m/s or marked reliable)
+        # Note: If speed > limit, it might be marked unreliable for GDPC, but we need to check the raw flag from VIO
+        # or just gate it by a sanity threshold.
+        if velocity_est:
+             v_mag_est = math.sqrt(velocity_est['vx']**2 + velocity_est['vy']**2 + velocity_est['vz']**2)
+
+             # Sanity check: If VIO reports > 200m/s (impossible), ignore it to prevent spin-of-death
+             if v_mag_est > ctrl.velocity_limit and v_mag_est < 200.0:
+                  excess = v_mag_est - ctrl.velocity_limit
+                  # Pitch Up to brake (Positive Pitch Rate Cmd)
+                  # Stronger braking gain
+                  pitch_rate_cmd += 1.5 * excess
+
+                  # Reduce Thrust immediately
+                  thrust_cmd = 0.1
+
+                  logger.debug(f"ACTIVE BRAKING: v={v_mag_est:.2f}, pitch_cmd={pitch_rate_cmd:.2f}, thrust={thrust_cmd:.2f}")
 
         if pitch < -1.45 and pitch_rate_cmd < 0.0:
              pitch_rate_cmd = 0.0

@@ -237,8 +237,13 @@ class GDPCOptimizer:
             rates = u[:, 1:]
             rate_penalty = np.mean(np.sum(rates**2, axis=1)) * 0.01
 
+            # Speed Limit Penalty
+            v_norm_traj = np.sqrt(np.sum(vel_traj**2, axis=1))
+            excess_v = np.maximum(0, v_norm_traj - self.config.control.velocity_limit)
+            loss_limit = np.sum(excess_v**2) * 100.0
+
             # Total Loss
-            total_loss = loss_pos + loss_vel + loss_roll + loss_pitch + loss_thrust + loss_smooth + loss_terminal + loss_terminal_vel + rate_penalty
+            total_loss = loss_pos + loss_vel + loss_roll + loss_pitch + loss_thrust + loss_smooth + loss_terminal + loss_terminal_vel + rate_penalty + loss_limit
 
             # Check for NaN/Inf
             if not np.isfinite(total_loss):
