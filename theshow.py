@@ -22,6 +22,7 @@ try:
     from visual_tracker import VisualTracker
     from vision.feature_tracker import FeatureTracker
     from vision.msckf import MSCKF
+    from vision.vio_system import VIOSystem
     from flight_controller import DPCFlightController
     from mission_manager import MissionManager
 except ImportError as e:
@@ -50,8 +51,11 @@ class TheShow:
 
             # Perception
             self.tracker = VisualTracker(self.projector)
-            self.feature_tracker = FeatureTracker(self.projector)
-            self.msckf = MSCKF(self.projector)
+            # Use VIO System (replaces separate FeatureTracker/MSCKF init)
+            self.vio_system = VIOSystem(self.projector)
+
+            # Legacy refs for compatibility if needed (but we should replace usages)
+            # self.msckf = self.vio_system # Interface match?
 
             # Logic
             self.mission = MissionManager()
@@ -134,9 +138,7 @@ class TheShow:
                 self.controller.reset()
 
                 # Reset VIO
-                self.msckf = MSCKF(self.projector)
-                self.feature_tracker = FeatureTracker(self.projector)
-                self.msckf.initialized = False
+                self.vio_system = VIOSystem(self.projector)
 
                 self.prediction_history = []
                 self.loops = 0
@@ -290,14 +292,14 @@ class TheShow:
 
         mission_state, dpc_target, extra_yaw = self.mission.update(sim_state_rel, (center, target_wp_sim))
 
-        # --- VIO UPDATE ---
+        # --- VIO UPDATE (BA System) ---
 
         # IMU Data
         gyro = np.array([s['wx'], -s['wy'], -s['wz']], dtype=np.float64)
         accel = np.array([s.get('ax_b', 0.0), -s.get('ay_b', 0.0), -s.get('az_b', 9.81)], dtype=np.float64)
 
         # Initialize if needed
-        if not self.msckf.initialized:
+        if not self.vio_system.initialized:
             r = dpc_state_ned_abs['roll']
             p = dpc_state_ned_abs['pitch']
             y = dpc_state_ned_abs['yaw']
@@ -305,55 +307,26 @@ class TheShow:
             q_init = R.from_euler('zyx', [y, p, r], degrees=False).as_quat()
             p_init = np.array([dpc_state_ned_abs['px'], dpc_state_ned_abs['py'], dpc_state_ned_abs['pz']])
             v_init = np.array([dpc_state_ned_abs['vx'], dpc_state_ned_abs['vy'], dpc_state_ned_abs['vz']])
-            self.msckf.initialize(q_init, p_init, v_init)
+            self.vio_system.initialize(q_init, p_init, v_init)
 
-        # 1. Augment State (Capture Pose at T)
-        self.msckf.augment_state()
+        # Propagate (Buffer IMU)
+        self.vio_system.propagate(gyro, accel, DT)
 
-        # 2. Feature Tracking & Update (Image at T)
-        current_clone_idx = self.msckf.cam_clones[-1]['id'] if self.msckf.cam_clones else 0
-        body_rates_ned = (gyro[0], gyro[1], gyro[2])
-
-        foe, finished_tracks = self.feature_tracker.update(dpc_state_ned_abs, body_rates_ned, DT, current_clone_idx)
-
-        # 3. Measurement Updates
+        # Update Measurements (Keyframe)
+        # Pass Height/Vz and let System handle Feature Tracking
         height_meas = dpc_state_ned_abs['pz']
         vz_meas = dpc_state_ned_abs['vz']
 
-        self.msckf.update_measurements(height_meas, vz_meas, finished_tracks)
+        # Note: update_measurements triggers tracking and optimization
+        self.vio_system.update_measurements(height_meas, vz_meas, None) # Tracks handled internally
 
-        # 3b. Homography Velocity Update
-        if self.projector:
-            # Need to pass camera matrix K to homography?
-            # K is implicitly in projector fx,fy,cx,cy
-            # height_meas is NED Pz (positive down).
-            # Homography needs positive height (distance).
-            # If Pz=100 (down), height = 100? No, Pz is usually negative altitude?
-            # Sim Frame Pz=100 (Up). NED Pz=-100.
-            # Height = -Pz (if Pz is negative).
-            h_est = -dpc_state_ned_abs['pz']
-            if h_est > 1.0:
-                v_body_hom = self.feature_tracker.estimate_homography_velocity(DT, h_est, None)
-                if v_body_hom is not None:
-                    # Rotate Body to NED World: v_w = R_b2w * v_b
-                    # Get current R from MSCKF
-                    from scipy.spatial.transform import Rotation as R
-                    q_curr = self.msckf.q
-                    R_mat = R.from_quat(q_curr).as_matrix()
-                    v_world_hom = R_mat @ v_body_hom
-
-                    # Update MSCKF with this velocity
-                    self.msckf.update_velocity_vector(v_world_hom, noise_std=2.0) # High noise as it relies on H assumption
-
-        # 4. Get Estimated State (at T)
-        vio_state = self.msckf.get_state_dict()
-
-        # 5. Propagate (T -> T+DT)
-        self.msckf.propagate(gyro, accel, DT)
+        # Get State
+        vio_state = self.vio_system.get_state_dict()
         vel_est = {'vx': vio_state['vx'], 'vy': vio_state['vy'], 'vz': vio_state['vz']}
         pos_est = {'px': vio_state['px'], 'py': vio_state['py'], 'pz': vio_state['pz']}
-        vel_reliable = self.msckf.is_reliable()
+        vel_reliable = self.vio_system.is_reliable()
 
+        foe = None # Tracker handled internally
         foe_px = None
         if foe:
             u_norm, v_norm = foe
