@@ -319,7 +319,7 @@ class TheShow:
 
         # 2. State Augmentation (Camera Image)
         # Clone current pose
-        self.msckf.augment_state()
+        # self.msckf.augment_state() # Disabled for Batch VIO
 
         # 3. Feature Tracking & Update
         current_clone_idx = 0

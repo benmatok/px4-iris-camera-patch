@@ -250,11 +250,11 @@ class DPCFlightController:
 
         # --- UNIFIED DIVE GUIDANCE ---
         # Adaptive Aim Offset (Loft Control)
-        # 0.0 for Steep Dives (pitch ~ -1.5)
-        # -0.6 for Shallow Dives (pitch ~ 0.0)
         pitch_mag = abs(pitch)
-        max_offset = -0.6 # Strong Loft
-        vertical_pitch = 1.5
+        max_offset = ctrl.adaptive_aim_max_offset
+        vertical_pitch = ctrl.adaptive_aim_pitch_threshold
+
+        # Linear interpolation based on pitch
         aim_offset = max_offset * (1.0 - min(1.0, pitch_mag / vertical_pitch))
 
         aim_offset_debug = aim_offset

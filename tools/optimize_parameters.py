@@ -25,32 +25,29 @@ logging.getLogger("sim_interface").setLevel(logging.WARNING)
 logging.getLogger("vision.projection").setLevel(logging.WARNING)
 logging.getLogger("flight_controller").setLevel(logging.WARNING)
 logging.getLogger("mission_manager").setLevel(logging.WARNING)
+logging.getLogger("vision.msckf").setLevel(logging.WARNING)
 
 
 # Parameters to optimize and their bounds
+# Focused on Adaptive Aim Logic and Two-Stage Flare
 PARAM_SPACE = {
-    'k_pitch': (1.0, 8.0),
-    'k_yaw': (1.0, 5.0),
-    'dive_trigger_rer': (0.05, 0.3),
-    'dive_trigger_v_threshold': (0.2, 0.5),
-    'cruise_pitch_gain': (0.1, 0.5),
-    'k_rer': (1.0, 4.0),
-    'flare_gain': (1.0, 4.0),
-    'thrust_base_intercept': (0.4, 0.8),
-    'thrust_base_slope': (0.1, 0.5),
-    'braking_pitch_gain': (0.1, 0.5),
-    'velocity_smoothing_alpha': (0.1, 0.9),
-    'aim_offset': (-0.2, 0.2)
+    'adaptive_aim_max_offset': (-1.0, 0.0),
+    'adaptive_aim_pitch_threshold': (0.5, 2.0),
+    'flare_trigger_ttc': (2.0, 5.0),
+    'tent_peak_pitch_rate': (0.0, 1.0),
+    'thrust_base_intercept': (0.5, 0.95),
 }
 
 PARAM_NAMES = list(PARAM_SPACE.keys())
 BOUNDS = np.array([PARAM_SPACE[name] for name in PARAM_NAMES])
 
+# Optimizing over diverse scenarios to ensure robustness
 SCENARIOS = [
-    {"id": 2, "alt": 50.0,  "dist": 75.0},
-    {"id": 3, "alt": 20.0,  "dist": 50.0},
-    {"id": 4, "alt": 60.0,  "dist": 80.0},
-    {"id": 5, "alt": 50.0,  "dist": 50.0}
+    {"id": 2, "alt": 50.0,  "dist": 75.0}, # Steep-ish
+    {"id": 3, "alt": 20.0,  "dist": 50.0}, # Shallow
+    {"id": 4, "alt": 60.0,  "dist": 80.0}, # High/Long
+    {"id": 5, "alt": 50.0,  "dist": 50.0}, # 1:1
+    {"id": 6, "alt": 25.0,  "dist": 150.0} # Very Shallow (Long Glide)
 ]
 
 def evaluate_params(params_vector):
@@ -69,26 +66,35 @@ def evaluate_params(params_vector):
     total_loss = 0.0
 
     # Suppress stdout/stderr
-    f = io.StringIO()
-    with contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
-        for sc in SCENARIOS:
-            validator = DiveValidator(
-                use_ground_truth=True,
-                use_blind_mode=True, # Validate against strict blind mode constraint
-                init_alt=sc['alt'],
-                init_dist=sc['dist'],
-                config=config
-            )
+    # f = io.StringIO()
+    # with contextlib.redirect_stdout(f), contextlib.redirect_stderr(f):
+    for sc in SCENARIOS:
+        validator = DiveValidator(
+            use_ground_truth=True,
+            use_blind_mode=True, # Validate against strict blind mode constraint
+            init_alt=sc['alt'],
+            init_dist=sc['dist'],
+            config=config
+        )
 
-            # Run simulation
-            try:
-                hist = validator.run(duration=25.0)
-                min_dist = min(hist['dist'])
-            except Exception:
-                min_dist = 1000.0 # High penalty for crash/error
+        # Run simulation
+        try:
+            hist = validator.run(duration=40.0)
+            min_dist = min(hist['dist'])
 
-            # Loss: Sum of sqrt(min_dist)
-            total_loss += np.sqrt(min_dist)
+            # Check if landed (z ~ 0) or crashed early
+            final_z = hist['drone_pos'][-1][2]
+
+            # Penalize if it didn't reach ground (timeout)
+            if final_z > 5.0:
+                min_dist += (final_z * 2.0) # Penalty for hovering high
+
+        except Exception as e:
+            print(f"Run failed: {e}")
+            min_dist = 1000.0 # High penalty for crash/error
+
+        # Loss: Sum of min_dist directly (Mean Absolute Error style)
+        total_loss += min_dist
 
     return total_loss
 
@@ -116,10 +122,6 @@ def gp_search(n_initial=10, n_iter=20):
     for i in range(n_iter):
         gp.fit(X, y)
 
-        # Acquisition Function: Expected Improvement (EI)
-        # We want to MINIMIZE y, so standard EI for maximization of -y
-        # Or EI for minimization: EI(x) = (y_min - mu(x) - xi) * Phi(Z) + sigma(x) * phi(Z)
-
         def acquisition(x_candidates):
             mu, sigma = gp.predict(x_candidates, return_std=True)
             y_min = np.min(y)
@@ -134,7 +136,6 @@ def gp_search(n_initial=10, n_iter=20):
             return -ei # Minimize negative EI -> Maximize EI
 
         # Optimize Acquisition Function
-        # Random search for acquisition max (simple)
         candidates = np.random.uniform(BOUNDS[:, 0], BOUNDS[:, 1], size=(1000, len(PARAM_NAMES)))
         acq_values = acquisition(candidates)
         best_idx = np.argmin(acq_values)
@@ -170,11 +171,7 @@ def local_sgd(start_params, n_steps=10, lr=0.01):
 
             grad[i] = (loss_plus - base_loss) / epsilon
 
-        # Update
-        # Normalize gradient to avoid huge steps?
-        # Or use adaptive LR?
-        # Let's try simple update with decay
-
+        # Update with decay
         step_lr = lr / (1 + step * 0.1)
 
         # Clamp update to bounds
@@ -188,19 +185,17 @@ def local_sgd(start_params, n_steps=10, lr=0.01):
         if new_loss < base_loss:
             current_params = next_params
         else:
-            # Backtrack / Reduce LR
-            print("    Loss increased, reducing step size.")
             # Simple backtrack: Don't update
             pass
 
     return current_params, evaluate_params(current_params)
 
 if __name__ == "__main__":
-    # Tune parameters (Further Reduced)
-    best_gp_params, best_gp_loss = gp_search(n_initial=2, n_iter=2)
+    # Reduced iterations to fit within execution time limits
+    best_gp_params, best_gp_loss = gp_search(n_initial=3, n_iter=5)
     print(f"\nBest GP Params Loss: {best_gp_loss:.4f}")
 
-    final_params, final_loss = local_sgd(best_gp_params, n_steps=2, lr=0.02)
+    final_params, final_loss = local_sgd(best_gp_params, n_steps=3, lr=0.01)
 
     print("\n" + "="*40)
     print("OPTIMIZATION COMPLETE")

@@ -39,10 +39,11 @@ class ControlConfig:
     v_target_pitch_threshold: float = -1.2
 
     # Thrust
-    thrust_base_intercept: float = 0.80 # Boosted for speed
+    # Optimized values
+    thrust_base_intercept: float = 0.81
     thrust_base_slope: float = 0.15
     thrust_min: float = 0.15
-    thrust_max: float = 0.85 # Increased max
+    thrust_max: float = 0.95
 
     rer_target: float = 0.25
     k_rer: float = 1.12
@@ -75,13 +76,17 @@ class ControlConfig:
     max_braking_pitch_rate: float = 1.5
     velocity_smoothing_alpha: float = 0.49
 
-    # FOE Control
-    aim_offset: float = -0.1 # Default, overridden by adaptive
+    # FOE Control (Default, overridden by adaptive)
+    aim_offset: float = -0.1
 
-    # Two-Stage Tent Logic
-    flare_trigger_ttc: float = 4.0
+    # Adaptive Aim Logic (Optimized)
+    adaptive_aim_max_offset: float = -0.0003 # Effectively zero (Pure Pursuit)
+    adaptive_aim_pitch_threshold: float = 0.61
+
+    # Two-Stage Tent Logic (Optimized)
+    flare_trigger_ttc: float = 3.2
     tent_duration: float = 3.0
-    tent_peak_pitch_rate: float = 0.6
+    tent_peak_pitch_rate: float = 0.83 # Very Aggressive
     tent_peak_time: float = 1.5
 
 @dataclass
