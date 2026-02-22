@@ -89,6 +89,7 @@ class DPCFlightController:
 
         # Cruise / Dive State
         self.dive_initiated = False
+        self.dive_trigger_time = 0.0
 
         # Final Mode State
         self.final_mode = False
@@ -113,6 +114,7 @@ class DPCFlightController:
         self.rer_smoothed = 0.0
 
         self.dive_initiated = False
+        self.dive_trigger_time = 0.0
         self.final_mode = False
         self.locked_pitch = 0.0
 
@@ -277,6 +279,7 @@ class DPCFlightController:
                 if trigger_rer or trigger_v_pos:
                     logger.info(f"DIVE INITIATED! RER={self.rer_smoothed:.2f}, v={v:.2f}")
                     self.dive_initiated = True
+                    self.dive_trigger_time = self.current_time
 
             yaw_rate_cmd = -ctrl.k_yaw * u
             yaw_rate_cmd = max(-1.5, min(1.5, yaw_rate_cmd))
@@ -287,6 +290,18 @@ class DPCFlightController:
                 pitch_track = max(-1.0, min(1.0, pitch_track))
                 thrust_track = 0.55
             else:
+                # Tent Function for Pitch Bias (Flare)
+                dt_dive = self.current_time - self.dive_trigger_time
+                tent_bias = 0.0
+                if dt_dive < ctrl.tent_duration:
+                    if dt_dive < ctrl.tent_peak_time:
+                        tent_bias = ctrl.tent_peak_pitch_rate * (dt_dive / ctrl.tent_peak_time)
+                    else:
+                        ramp_down_duration = ctrl.tent_duration - ctrl.tent_peak_time
+                        if ramp_down_duration > 0:
+                            progress = (dt_dive - ctrl.tent_peak_time) / ramp_down_duration
+                            tent_bias = ctrl.tent_peak_pitch_rate * (1.0 - progress)
+
                 pitch_bias = ctrl.pitch_bias_intercept + ctrl.pitch_bias_slope * pitch
                 pitch_bias = max(ctrl.pitch_bias_min, min(ctrl.pitch_bias_max, pitch_bias))
 
@@ -296,7 +311,8 @@ class DPCFlightController:
                      v_target = ctrl.v_target_intercept + ctrl.v_target_slope_shallow * (pitch - ctrl.v_target_pitch_threshold)
                 v_target = max(0.1, v_target)
 
-                pitch_track = -ctrl.k_pitch * (v - v_target) + pitch_bias
+                # Add Tent Bias to pitch tracking
+                pitch_track = -ctrl.k_pitch * (v - v_target) + pitch_bias + tent_bias
                 pitch_track = max(-2.5, min(2.5, pitch_track))
 
                 thrust_base = ctrl.thrust_base_intercept + ctrl.thrust_base_slope * pitch
@@ -333,12 +349,23 @@ class DPCFlightController:
         if has_target and foe_uv and self.dive_initiated:
             u, v = target_uv
             foe_u, foe_v = foe_uv
-            # Steer Velocity (FOE) to Target (v)
-            # pitch_track = K * (foe_v - v).
-            # So Positive K * (foe_v - v).
-            # Add small offset to aim slightly above target (compensate gravity drop)
+
+            # Recalculate Tent Bias
+            dt_dive = self.current_time - self.dive_trigger_time
+            tent_bias = 0.0
+            if dt_dive < ctrl.tent_duration:
+                if dt_dive < ctrl.tent_peak_time:
+                    tent_bias = ctrl.tent_peak_pitch_rate * (dt_dive / ctrl.tent_peak_time)
+                else:
+                    ramp_down_duration = ctrl.tent_duration - ctrl.tent_peak_time
+                    if ramp_down_duration > 0:
+                        progress = (dt_dive - ctrl.tent_peak_time) / ramp_down_duration
+                        tent_bias = ctrl.tent_peak_pitch_rate * (1.0 - progress)
+
+            # Steer Velocity (FOE) to Target (v) with Tent Bias
             aim_offset = ctrl.aim_offset
-            pitch_track = ctrl.k_pitch * (foe_v - (v + aim_offset))
+            base_cmd = ctrl.k_pitch * (foe_v - (v + aim_offset))
+            pitch_track = base_cmd + tent_bias
             pitch_track = max(-2.5, min(2.5, pitch_track))
 
         if has_target and not self.final_mode and self.dive_initiated:

@@ -75,7 +75,12 @@ class ControlConfig:
     velocity_smoothing_alpha: float = 0.49
 
     # FOE Control
-    aim_offset: float = 0.03
+    aim_offset: float = 0.03 # Restored optimized value
+
+    # Two-Stage Tent Logic
+    tent_duration: float = 5.0
+    tent_peak_pitch_rate: float = 0.2 # Reduced peak
+    tent_peak_time: float = 2.5
 
 @dataclass
 class GDPCConfig:
