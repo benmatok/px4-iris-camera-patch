@@ -27,12 +27,13 @@ class SlidingWindowEstimator:
         self.g = np.array([0, 0, 9.81])
 
         # Config
-        self.w_vis = 1.0
+        self.w_vis = 2.0 # Moderate
         self.w_imu = 10.0
         self.w_baro = 20.0
         self.w_prior = 1.0
+        self.w_vel_prior = 1.0 # Weak prior until debugged
 
-    def add_frame(self, t, p_prior, q_prior, v_prior, imu_data, image_obs):
+    def add_frame(self, t, p_prior, q_prior, v_prior, imu_data, image_obs, vel_prior=None, baro=None):
         """
         Add a new frame to the window.
         imu_data: list of (dt, acc, gyro) since last frame.
@@ -59,7 +60,8 @@ class SlidingWindowEstimator:
                 'bg': last['bg'].copy(),
                 'ba': last['ba'].copy(),
                 'imu_preint': imu_constraint,
-                'baro': -p_prior[2] if p_prior is not None else 0.0 # Store measured altitude (Z-down Pz is -Alt)
+                'baro': baro if baro is not None else (last['baro'] if 'baro' in last else 0.0),
+                'vel_prior': vel_prior # [vx, vy, vz] or None
             }
         else:
             # First frame
@@ -71,7 +73,8 @@ class SlidingWindowEstimator:
                 'bg': np.zeros(3),
                 'ba': np.zeros(3),
                 'imu_preint': None,
-                'baro': 50.0 # Default start
+                'baro': baro if baro is not None else 50.0,
+                'vel_prior': vel_prior
             }
 
         self.frames.append(frame)
@@ -178,25 +181,42 @@ class SlidingWindowEstimator:
                     del self.points[pid]
 
     def _preintegrate_imu(self, imu_data):
-        # Simplified Pre-integration
+        # RK4 Pre-integration
         # Returns {dp, dv, dq, dt} in Body frame of Frame i
-        # Using simple integration for guess
         dp = np.zeros(3)
         dv = np.zeros(3)
         dq = R.identity()
         total_dt = 0
 
         for dt, acc, gyro in imu_data:
-            # R_k is current rotation in integration
-            # acc is in body. R_k * acc is in "i" frame (since R_i is identity for preint)
+            # RK4 Integration steps
+            # k1
+            acc_k1 = dq.apply(acc)
+            rot_k1 = gyro
 
-            acc_i = dq.apply(acc)
+            # k2 (midpoint)
+            # dq_mid = dq * exp(rot_k1 * dt/2)
+            dq_mid = dq * R.from_rotvec(rot_k1 * dt * 0.5)
+            # acc is constant over step in this data format (zero-order hold),
+            # but rotation changes.
+            acc_k2 = dq_mid.apply(acc)
+            rot_k2 = gyro # Gyro constant over step
 
-            dp += dv * dt + 0.5 * acc_i * dt**2
-            dv += acc_i * dt
+            # k3 (midpoint)
+            dq_mid2 = dq * R.from_rotvec(rot_k2 * dt * 0.5)
+            acc_k3 = dq_mid2.apply(acc)
+
+            # k4 (end)
+            dq_end = dq * R.from_rotvec(rot_k2 * dt)
+            acc_k4 = dq_end.apply(acc)
+
+            # Average Acceleration
+            acc_avg = (acc_k1 + 2*acc_k2 + 2*acc_k3 + acc_k4) / 6.0
+
+            dp += dv * dt + 0.5 * acc_avg * dt**2
+            dv += acc_avg * dt
 
             # Update rotation
-            # Exp map for gyro
             d_rot = R.from_rotvec(gyro * dt)
             dq = dq * d_rot
 
@@ -370,11 +390,19 @@ class SlidingWindowEstimator:
                 # Assuming frame['baro'] is -Pz.
 
                 baro_val = self.frames[i].get('baro', 0.0)
-                # If we stored actual baro reading (Pos Up):
-                # Pz_est (Down) should be -baro_val
+                # baro_val is positive altitude (e.g. 50m).
+                # Pz is NED (negative up, e.g. -50m).
+                # Target Pz = -baro_val
 
                 err_z = curr_frames[i]['p'][2] - (-baro_val)
                 res.append(err_z * self.w_baro)
+
+                # Velocity Prior
+                v_prior = self.frames[i].get('vel_prior')
+                if v_prior is not None:
+                    # v_prior is [vx, vy, vz] in World Frame
+                    err_v = curr_frames[i]['v'] - v_prior
+                    res.extend(err_v * self.w_vel_prior)
 
             return np.array(res)
 

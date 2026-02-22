@@ -37,10 +37,53 @@ class VIOSystem:
 
     def propagate(self, gyro, accel, dt):
         """
-        Buffer IMU data.
+        Buffer IMU data and propagate state cache.
         """
         if not self.initialized: return
         self.imu_buffer.append((dt, accel, gyro))
+
+        # Simple Propagate State Cache for high-rate feedback
+        # This is "blind" propagation until next optimization
+        # NED Gravity
+        g = np.array([0, 0, 9.81])
+
+        from scipy.spatial.transform import Rotation as R
+        if 'q' not in self.state_cache:
+            last = self.estimator.get_latest_state()
+            if last:
+                self.state_cache['q'] = last['q']
+            else:
+                return
+
+        # Propagate Cache
+        q_curr = self.state_cache.get('q', np.array([0,0,0,1]))
+        v_curr = np.array([self.state_cache['vx'], self.state_cache['vy'], self.state_cache['vz']])
+        p_curr = np.array([self.state_cache['px'], self.state_cache['py'], self.state_cache['pz']])
+
+        # Accel in world
+        R_curr = R.from_quat(q_curr)
+        acc_w = R_curr.apply(accel) + g
+
+        v_next = v_curr + acc_w * dt
+        p_next = p_curr + v_curr * dt + 0.5 * acc_w * dt**2
+
+        dq = R.from_rotvec(gyro * dt)
+        q_next = (R_curr * dq).as_quat()
+
+        self.state_cache.update({
+            'px': p_next[0], 'py': p_next[1], 'pz': p_next[2],
+            'vx': v_next[0], 'vy': v_next[1], 'vz': v_next[2],
+            'q': q_next
+        })
+
+    def track_features(self, state_ned, body_rates, dt):
+        """
+        Wrapper for tracker update.
+        """
+        if not self.initialized: return
+        # Mock clone_idx for tracker (backend doesn't use it in this mode, but tracker expects it)
+        clone_idx = 0
+        self.tracker.update(state_ned, body_rates, dt, clone_idx)
 
         # Simple Propagate State Cache for high-rate feedback
         # This is "blind" propagation until next optimization
@@ -65,23 +108,15 @@ class VIOSystem:
         v_curr = np.array([self.state_cache['vx'], self.state_cache['vy'], self.state_cache['vz']])
         p_curr = np.array([self.state_cache['px'], self.state_cache['py'], self.state_cache['pz']])
 
-        # Accel in world
-        R_curr = R.from_quat(q_curr)
-        acc_w = R_curr.apply(accel) + g
+        # Simple Propagate State Cache for high-rate feedback was corrupted here.
+        # We should not propagate in track_features() unless we have accel.
+        # track_features receives body_rates but NOT accel.
+        # So we cannot propagate position/velocity here.
+        # We should rely on propagate() for prediction.
+        # And track_features just updates the tracker.
+        pass
 
-        v_next = v_curr + acc_w * dt
-        p_next = p_curr + v_curr * dt + 0.5 * acc_w * dt**2
-
-        dq = R.from_rotvec(gyro * dt)
-        q_next = (R_curr * dq).as_quat()
-
-        self.state_cache.update({
-            'px': p_next[0], 'py': p_next[1], 'pz': p_next[2],
-            'vx': v_next[0], 'vy': v_next[1], 'vz': v_next[2],
-            'q': q_next
-        })
-
-    def update_measurements(self, height_meas, vz_meas, tracks):
+    def update_measurements(self, height_meas, vz_meas, tracks, velocity_prior=None):
         """
         In BA system, we treat this as "Keyframe Arrival".
         1. Process Tracks -> Observations
@@ -115,27 +150,24 @@ class VIOSystem:
 
         # But we need to pass Barometer.
         # height_meas is NED Pz.
-        # We handle this by injecting it into the frame struct inside `add_frame`.
-        # Wait, `add_frame` API needs updating to accept baro?
-        # Yes, I implemented `frame['baro']` in `add_frame` but didn't pass it as arg?
-        # Check `add_frame`: `p_prior` is passed.
-        # We can pass `p_prior` as `[None, None, height_meas]`.
-        # `add_frame` uses `p_prior[2]` for baro if `p_prior` is not None.
+        # Baro is Altitude = -Pz.
 
-        p_prior = None
+        baro_val = None
         if height_meas is not None:
-            # We construct a partial prior?
-            # Or just hack: pass a full vector with 0s for X/Y?
-            # Estimator uses `baro = -p_prior[2]`.
-            p_prior = np.array([0.0, 0.0, height_meas])
+            baro_val = -height_meas
+
+        # We let p_prior be None (Estimator propagates)
+        # We pass baro_val explicitly
 
         self.estimator.add_frame(
             t_now,
-            p_prior, # Used for baro
+            None, # p_prior (None -> propagate)
             None, # q_prior
             None, # v_prior
             self.imu_buffer,
-            image_obs
+            image_obs,
+            vel_prior=velocity_prior,
+            baro=baro_val
         )
 
         # Clear Buffer

@@ -194,11 +194,33 @@ class VIOValidator:
             # Propagate (Buffer IMU)
             self.vio_system.propagate(gyro, accel, DT)
 
+            # Track Features (Simulated)
+            body_rates_ned = (gyro[0], gyro[1], gyro[2])
+            self.vio_system.track_features(dpc_state_ned_abs, body_rates_ned, DT)
+
             # Update Measurements (Keyframe)
             height_meas = dpc_state_ned_abs['pz']
             vz_meas = dpc_state_ned_abs['vz']
 
-            self.vio_system.update_measurements(height_meas, vz_meas, None)
+            # Estimate Homography Velocity
+            vel_prior = None
+            if self.projector:
+                h_est = -dpc_state_ned_abs['pz']
+                if h_est > 1.0:
+                    v_body_hom = self.vio_system.tracker.estimate_homography_velocity(DT, h_est, None)
+                    if v_body_hom is not None:
+                        # Rotate to World NED
+                        from scipy.spatial.transform import Rotation as R
+                        q_curr = self.vio_system.state_cache.get('q', np.array([0,0,0,1]))
+                        R_mat = R.from_quat(q_curr).as_matrix()
+                        vel_prior = R_mat @ v_body_hom
+
+            if vel_prior is not None:
+                vp_err = np.linalg.norm(vel_prior - np.array(gt_vel))
+                if i % 10 == 0:
+                    print(f"T={t:.2f} VelPrior Err: {vp_err:.2f} m/s")
+
+            self.vio_system.update_measurements(height_meas, vz_meas, None, velocity_prior=vel_prior)
 
             # Get State
             vio_state = self.vio_system.get_state_dict()
