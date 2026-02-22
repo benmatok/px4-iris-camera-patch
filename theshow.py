@@ -312,6 +312,10 @@ class TheShow:
         # Propagate (Buffer IMU)
         self.vio_system.propagate(gyro, accel, DT)
 
+        # Track Features
+        body_rates_ned = (gyro[0], gyro[1], gyro[2])
+        self.vio_system.track_features(dpc_state_ned_abs, body_rates_ned, DT)
+
         # Update Measurements (Keyframe)
         # Pass Height/Vz and let System handle Feature Tracking
         height_meas = dpc_state_ned_abs['pz']
