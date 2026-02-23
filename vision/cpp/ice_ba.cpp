@@ -242,10 +242,10 @@ void IceBA::optimize() {
 
     int max_iter = 10;
     Vec3 g_grav(0, 0, 9.81);
-    double w_imu = 200.0;
-    double w_rot = 10000.0; // Strong Rotation constraint
-    double w_vis = 80.0;
-    double w_bias = 10000.0; // Very Strong Bias constraint to prevent divergence
+    double w_imu = 5.0; // Extremely weak IMU constraints
+    double w_rot = 5000.0; // Strong Rotation to fix pitch divergence
+    double w_vis = 100.0; // Moderate vision
+    double w_bias = 5000.0; // Lock bias to prevent runaway
 
     last_imu_cost = 0;
     last_vis_cost = 0;
