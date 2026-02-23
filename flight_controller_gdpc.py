@@ -225,7 +225,15 @@ class GDPCOptimizer:
                 dist_sq = np.clip(dist_sq, 0, 1e6)
                 loss_pos = np.mean(dist_sq) * self.gdpc_cfg.w_pos
 
-                v_sq = np.sum(vel_traj**2, axis=1)
+                # Velocity Tracking (5.0 m/s)
+                v_norm_sq = np.sum(vel_traj**2, axis=1)
+                v_norm = np.sqrt(v_norm_sq + 1e-6)
+                loss_vel_track = np.mean((v_norm - 5.0)**2) * 20.0 # Hardcoded weight for now
+
+                # Stability (Pitch ~ -0.1 rad for glide)
+                loss_pitch_stab = np.mean((att_traj[:, 1] - (-0.1))**2) * 50.0
+
+                v_sq = v_norm_sq
                 v_sq = np.clip(v_sq, 0, 1e6)
                 loss_vel = np.mean(v_sq) * self.gdpc_cfg.w_vel
 
@@ -253,7 +261,7 @@ class GDPCOptimizer:
                 excess_v = np.maximum(0, v_norm_traj - self.config.control.velocity_limit)
                 loss_limit = np.sum(excess_v**2) * 100.0
 
-                total_cost_ensemble += (loss_pos + loss_vel + loss_roll + loss_pitch + loss_thrust + loss_smooth + loss_terminal + loss_terminal_vel + rate_penalty + loss_limit)
+                total_cost_ensemble += (loss_pos + loss_vel + loss_roll + loss_pitch + loss_thrust + loss_smooth + loss_terminal + loss_terminal_vel + rate_penalty + loss_limit + loss_vel_track + loss_pitch_stab)
 
             avg_cost = total_cost_ensemble / len(self.models)
 

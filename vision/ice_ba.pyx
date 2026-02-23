@@ -14,7 +14,7 @@ cdef extern from "cpp/ice_ba.hpp":
     cdef cppclass IceBA:
         IceBA()
         void add_frame(int id, double t, double* p, double* q, double* v, double* bg, double* ba,
-                       const vector[ImuMeas]& imu_data)
+                       const vector[ImuMeas]& imu_data, double baro_alt, bool has_baro, double* vel_prior, bool has_vel_prior)
         void add_obs(int frame_id, int pt_id, double u, double v)
         void solve()
         void get_frame_state(int id, double* p, double* q, double* v, double* bg, double* ba)
@@ -30,7 +30,7 @@ cdef class PyIceBA:
     def __dealloc__(self):
         del self.c_ba
 
-    def add_frame(self, int id, double t, list p, list q, list v, list bg, list ba, list imu_data):
+    def add_frame(self, int id, double t, list p, list q, list v, list bg, list ba, list imu_data, baro=None, vel_prior=None):
         cdef double c_p[3]
         cdef double c_q[4]
         cdef double c_v[3]
@@ -57,7 +57,23 @@ cdef class PyIceBA:
                 m.gyro.data[2] = item[2][2]
                 c_imu.push_back(m)
 
-        self.c_ba.add_frame(id, t, c_p, c_q, c_v, c_bg, c_ba, c_imu)
+        cdef double c_baro = 0.0
+        cdef bool has_baro = False
+        if baro is not None:
+            c_baro = baro
+            has_baro = True
+
+        cdef double c_vp[3]
+        cdef double* p_vp = NULL
+        cdef bool has_vp = False
+        if vel_prior is not None:
+            c_vp[0] = vel_prior[0]
+            c_vp[1] = vel_prior[1]
+            c_vp[2] = vel_prior[2]
+            p_vp = c_vp
+            has_vp = True
+
+        self.c_ba.add_frame(id, t, c_p, c_q, c_v, c_bg, c_ba, c_imu, c_baro, has_baro, p_vp, has_vp)
 
     def add_obs(self, int frame_id, int pt_id, double u, double v):
         self.c_ba.add_obs(frame_id, pt_id, u, v)

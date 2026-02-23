@@ -99,7 +99,7 @@ void IMUPreint::repropagate(const Vec3& ba, const Vec3& bg) {
 IceBA::IceBA() : last_imu_cost(0), last_vis_cost(0) {}
 
 void IceBA::add_frame(int id, double t, double* p, double* q, double* v, double* bg, double* ba,
-                      const std::vector<ImuMeas>& imu_data) {
+                      const std::vector<ImuMeas>& imu_data, double baro_alt, bool has_baro, double* vel_prior, bool has_vel_prior) {
     Frame f;
     f.id = id;
     f.t = t;
@@ -108,6 +108,15 @@ void IceBA::add_frame(int id, double t, double* p, double* q, double* v, double*
     f.v = Vec3(v[0], v[1], v[2]);
     f.bg = Vec3(bg[0], bg[1], bg[2]);
     f.ba = Vec3(ba[0], ba[1], ba[2]);
+
+    f.baro_alt = baro_alt;
+    f.has_baro = has_baro;
+    if(vel_prior) {
+        f.vel_prior = Vec3(vel_prior[0], vel_prior[1], vel_prior[2]);
+        f.has_vel_prior = has_vel_prior;
+    } else {
+        f.has_vel_prior = false;
+    }
 
     // Integrate IMU from PREVIOUS frame to THIS frame
     // We assume imu_data is [t_prev, t_curr]
@@ -246,11 +255,16 @@ void IceBA::optimize() {
     double w_rot = 5000.0; // Strong Rotation to fix pitch divergence
     double w_vis = 100.0; // Moderate vision
     double w_bias = 5000.0; // Lock bias to prevent runaway
+    double w_baro = 20.0; // Barometer constraint
+    double w_vp = 10.0; // Velocity Prior constraint
 
     last_imu_cost = 0;
     last_vis_cost = 0;
 
     for(int iter=0; iter<max_iter; ++iter) {
+        // Reset costs for this iteration (accumulation)
+        double current_imu_cost = 0;
+        double current_vis_cost = 0;
 
         // 1. Structure
         optimize_points();
@@ -286,6 +300,9 @@ void IceBA::optimize() {
                     Vec3 r_p = f.p - p_pred;
                     Vec3 r_v = f.v - v_pred;
 
+                    // Accumulate Cost
+                    for(int k=0; k<3; ++k) current_imu_cost += 0.5 * w_imu * (r_p[k]*r_p[k] + r_v[k]*r_v[k]);
+
                     // Jacobian w.r.t f (frame i)
                     // d(rp)/dp_i = I
                     // d(rv)/dv_i = I
@@ -302,6 +319,9 @@ void IceBA::optimize() {
                     Vec3 r_bg = f.bg - prev.bg;
                     Vec3 r_ba = f.ba - prev.ba;
 
+                    // Accumulate Cost
+                    for(int k=0; k<3; ++k) current_imu_cost += 0.5 * w_bias * (r_bg[k]*r_bg[k] + r_ba[k]*r_ba[k]);
+
                     // d(r_bg)/dbg_i = I
                     for(int k=0; k<3; ++k) {
                         H[k+9][k+9] += w_bias;  // BG 9-11
@@ -317,6 +337,10 @@ void IceBA::optimize() {
                     Quat q_pred = prev.q * f.preint.dq_curr;
                     Quat q_err = q_pred.conj() * f.q;
                     Vec3 r_theta(2.0*q_err.data[0], 2.0*q_err.data[1], 2.0*q_err.data[2]);
+
+                    // Accumulate Cost
+                    for(int k=0; k<3; ++k) current_imu_cost += 0.5 * w_rot * r_theta[k]*r_theta[k];
+
                     // If scalar is last (data[3]), vector part is 0,1,2.
                     // Jacobian J = I
                     for(int k=0; k<3; ++k) {
@@ -429,6 +453,9 @@ void IceBA::optimize() {
                     Quat q_err = q_pred.conj() * next.q;
                     Vec3 r_theta(2.0*q_err.data[0], 2.0*q_err.data[1], 2.0*q_err.data[2]);
 
+                    // Accumulate Cost (Forward Rotation)
+                    for(int k=0; k<3; ++k) current_imu_cost += 0.5 * w_rot * r_theta[k]*r_theta[k];
+
                     // Jacobian J = - R_{dq}^T
                     // R_{dq} is rotation of dq
                     double R_dq[3][3];
@@ -508,6 +535,9 @@ void IceBA::optimize() {
                             double weight = w_vis;
                             if(abs_res > huber_k) weight *= (huber_k / abs_res);
 
+                            // Accumulate Cost (Vision)
+                            current_vis_cost += 0.5 * weight * resid * resid;
+
                             double J_row[15] = {0};
                             for(int k=0; k<3; ++k) J_row[k] = J_pos[r][k];
                             for(int k=0; k<3; ++k) J_row[3+k] = J_theta[r][k];
@@ -518,6 +548,34 @@ void IceBA::optimize() {
                             }
                         }
                     }
+                }
+            }
+
+            // --- Priors ---
+            // Barometer (Z constraint)
+            if(f.has_baro) {
+                // pz + baro = 0 => pz = -baro
+                double res = f.p[2] + f.baro_alt; // NED Pz is negative altitude
+
+                // Accumulate Cost
+                current_imu_cost += 0.5 * w_baro * res * res;
+
+                // J_pz = 1. Index 2.
+                H[2][2] += w_baro;
+                b[2] -= w_baro * res;
+            }
+
+            // Velocity Prior
+            if(f.has_vel_prior) {
+                Vec3 r_vp = f.v - f.vel_prior;
+
+                // Accumulate Cost
+                for(int k=0; k<3; ++k) current_imu_cost += 0.5 * w_vp * r_vp[k]*r_vp[k];
+
+                // J_v = I. Indices 6-8.
+                for(int k=0; k<3; ++k) {
+                    H[6+k][6+k] += w_vp;
+                    b[6+k] -= w_vp * r_vp[k];
                 }
             }
 
@@ -542,6 +600,10 @@ void IceBA::optimize() {
                 for(int k=0; k<3; ++k) f.ba[k] += dx[12+k] * 0.1;
             }
         }
+
+        // Update total costs
+        last_imu_cost = current_imu_cost;
+        last_vis_cost = current_vis_cost;
     }
 }
 
