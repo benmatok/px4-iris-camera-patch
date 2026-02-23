@@ -18,7 +18,7 @@ class VisionConfig:
 @dataclass
 class ControlConfig:
     k_yaw: float = 3.31
-    k_pitch: float = 0.5 # Greatly reduced to prevent overshoot
+    k_pitch: float = 0.8 # Slightly increased for responsiveness
 
     # Cruise / Dive Logic
     dive_trigger_rer: float = 0.23
@@ -26,7 +26,7 @@ class ControlConfig:
     cruise_pitch_gain: float = 0.34
 
     # Pitch Bias Logic: bias = A + B * pitch
-    pitch_bias_intercept: float = 0.40
+    pitch_bias_intercept: float = 0.50 # Aim slightly higher (Loft)
     pitch_bias_slope: float = 0.33
     pitch_bias_min: float = -0.1
     pitch_bias_max: float = 0.3
@@ -105,7 +105,7 @@ class MissionConfig:
 @dataclass
 class PhysicsConfig:
     mass: float = 1.0
-    drag_coeff: float = 0.1
+    drag_coeff: float = 0.2 # Increased drag for better speed control
     thrust_coeff: float = 1.0
     tau: float = 0.1
     g: float = 9.81

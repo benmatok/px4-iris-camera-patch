@@ -381,6 +381,24 @@ class DPCFlightController:
 
         # If Pitch < -1.0 (Too Nose Down)
         # We want Nose Up (Positive rate).
+        # Safety Floor / Auto-Flare (Heuristic)
+        # If Altitude is low (< 10m) and descending fast (< -2 m/s), force Pitch Up.
+        # This prevents ground impact short of target.
+        if obs_pz is not None and obs_pz < 10.0 and self.est_vz < -2.0:
+             # Calculate required acceleration to stop at z=0 (or z=1.0 safety)
+             # v^2 = 2 * a * d  => a = v^2 / 2d
+             dist_to_floor = obs_pz - 1.0
+             if dist_to_floor > 0.1:
+                 req_accel = (self.est_vz**2) / (2.0 * dist_to_floor)
+                 # Converting accel to pitch effort approx (1g = 9.81)
+                 # Pitch ~ accel / 20.0 (Max Thrust Accel) roughly?
+                 # Just add a bias proportional to urgency.
+                 flare_bias = 0.1 * req_accel
+                 pitch_rate_cmd += flare_bias
+                 # Also increase thrust to arrest descent
+                 thrust_cmd = max(thrust_cmd, 0.6)
+                 logger.debug(f"SAFETY FLOOR: pz={obs_pz:.1f}, vz={self.est_vz:.1f}, flare={flare_bias:.2f}")
+
         if pitch < -1.0 and pitch_rate_cmd < 0.0:
              pitch_rate_cmd = 0.0
 
