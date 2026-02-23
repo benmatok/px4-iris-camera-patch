@@ -159,16 +159,38 @@ class GDPCOptimizer:
         self.config = config
         self.gdpc_cfg = config.gdpc
 
-        # Initialize Model with Physics Config
+        # Initialize Ensemble Models (Particle Ghosts)
         phy = config.physics
-        self.model = NumPyGhostModel(
-            mass=phy.mass,
-            drag_coeff=phy.drag_coeff,
-            thrust_coeff=phy.thrust_coeff,
-            tau=phy.tau,
-            g=phy.g,
-            max_thrust_base=phy.max_thrust_base
-        )
+
+        # Nominal
+        self.models = []
+        self.models.append(NumPyGhostModel(
+            mass=phy.mass, drag_coeff=phy.drag_coeff, thrust_coeff=phy.thrust_coeff,
+            tau=phy.tau, g=phy.g, max_thrust_base=phy.max_thrust_base
+        ))
+
+        # Perturbed (Mass +/- 5%, Drag +/- 10%)
+        # Heavy High Drag
+        self.models.append(NumPyGhostModel(
+            mass=phy.mass * 1.05, drag_coeff=phy.drag_coeff * 1.1, thrust_coeff=phy.thrust_coeff,
+            tau=phy.tau, g=phy.g, max_thrust_base=phy.max_thrust_base
+        ))
+        # Light Low Drag
+        self.models.append(NumPyGhostModel(
+            mass=phy.mass * 0.95, drag_coeff=phy.drag_coeff * 0.9, thrust_coeff=phy.thrust_coeff,
+            tau=phy.tau, g=phy.g, max_thrust_base=phy.max_thrust_base
+        ))
+        # Nominal High Drag
+        self.models.append(NumPyGhostModel(
+            mass=phy.mass, drag_coeff=phy.drag_coeff * 1.2, thrust_coeff=phy.thrust_coeff,
+            tau=phy.tau, g=phy.g, max_thrust_base=phy.max_thrust_base
+        ))
+        # Nominal Low Drag
+        self.models.append(NumPyGhostModel(
+            mass=phy.mass, drag_coeff=phy.drag_coeff * 0.8, thrust_coeff=phy.thrust_coeff,
+            tau=phy.tau, g=phy.g, max_thrust_base=phy.max_thrust_base
+        ))
+
         self.u_seq = None # Shape (H, 4)
 
     def reset(self):
@@ -176,79 +198,68 @@ class GDPCOptimizer:
 
     def compute_action(self, state_obs, target_pos_world):
         """
-        Uses SciPy Optimize to find the best action sequence.
+        Uses SciPy Optimize to find the best action sequence minimizing expected cost over ghosts.
         """
         H = self.gdpc_cfg.horizon
 
-        # Initialize u_seq if needed
         if self.u_seq is None or self.u_seq.shape[0] != H:
             self.u_seq = np.zeros((H, 4))
-            self.u_seq[:, 0] = 0.55 # Hover thrust approx
+            self.u_seq[:, 0] = 0.55
         else:
-            # Shift
             self.u_seq[:-1] = self.u_seq[1:]
-            self.u_seq[-1] = self.u_seq[-2] # Repeat last action
+            self.u_seq[-1] = self.u_seq[-2]
 
-        # Optimization Function
-        # target_pos_world is actually RELATIVE target position
         def cost_fn(u_flat):
             u = u_flat.reshape((H, 4))
-            traj = self.model.rollout(state_obs, u)
 
-            pos_traj = traj[:, 0:3]
-            vel_traj = traj[:, 3:6]
-            att_traj = traj[:, 6:9] # roll, pitch, yaw
+            total_cost_ensemble = 0.0
 
-            # Target cost (Distance)
-            # Expand target to match H if necessary, or just compute distance to target point for all steps
-            dist_sq = np.sum((pos_traj - target_pos_world)**2, axis=1)
-            # Prevent overflow by clamping
-            dist_sq = np.clip(dist_sq, 0, 1e6)
-            loss_pos = np.mean(dist_sq) * self.gdpc_cfg.w_pos
+            for model in self.models:
+                traj = model.rollout(state_obs, u)
 
-            # Velocity cost (Damping)
-            v_sq = np.sum(vel_traj**2, axis=1)
-            v_sq = np.clip(v_sq, 0, 1e6)
-            loss_vel = np.mean(v_sq) * self.gdpc_cfg.w_vel
+                pos_traj = traj[:, 0:3]
+                vel_traj = traj[:, 3:6]
+                att_traj = traj[:, 6:9]
 
-            # Attitude cost (Roll/Pitch penalty)
-            loss_roll = np.mean(att_traj[:, 0]**2) * self.gdpc_cfg.w_roll
-            loss_pitch = np.mean(att_traj[:, 1]**2) * self.gdpc_cfg.w_pitch
+                dist_sq = np.sum((pos_traj - target_pos_world)**2, axis=1)
+                dist_sq = np.clip(dist_sq, 0, 1e6)
+                loss_pos = np.mean(dist_sq) * self.gdpc_cfg.w_pos
 
-            # Control Input cost
-            loss_thrust = np.mean((u[:, 0] - 0.5)**2) * self.gdpc_cfg.w_thrust
+                v_sq = np.sum(vel_traj**2, axis=1)
+                v_sq = np.clip(v_sq, 0, 1e6)
+                loss_vel = np.mean(v_sq) * self.gdpc_cfg.w_vel
 
-            # Smoothness
-            u_delta = u[1:] - u[:-1]
-            loss_smooth = np.mean(np.sum(u_delta**2, axis=1)) * self.gdpc_cfg.w_smoothness
+                loss_roll = np.mean(att_traj[:, 0]**2) * self.gdpc_cfg.w_roll
+                loss_pitch = np.mean(att_traj[:, 1]**2) * self.gdpc_cfg.w_pitch
 
-            # Terminal Cost (Encourage getting closer at the end)
-            final_pos = pos_traj[-1]
-            final_dist_sq = np.sum((final_pos - target_pos_world)**2)
-            final_dist_sq = np.clip(final_dist_sq, 0, 1e6)
-            loss_terminal = final_dist_sq * self.gdpc_cfg.w_terminal
+                loss_thrust = np.mean((u[:, 0] - 0.5)**2) * self.gdpc_cfg.w_thrust
 
-            # Terminal Velocity Cost (Stop at the end)
-            final_vel = vel_traj[-1]
-            loss_terminal_vel = np.sum(final_vel**2) * self.gdpc_cfg.w_terminal_vel
-            loss_terminal_vel = np.clip(loss_terminal_vel, 0, 1e6)
+                u_delta = u[1:] - u[:-1]
+                loss_smooth = np.mean(np.sum(u_delta**2, axis=1)) * self.gdpc_cfg.w_smoothness
 
-            # Penalty for excessive Roll/Pitch Rate (Constraint Softening)
-            rates = u[:, 1:]
-            rate_penalty = np.mean(np.sum(rates**2, axis=1)) * 0.01
+                final_pos = pos_traj[-1]
+                final_dist_sq = np.sum((final_pos - target_pos_world)**2)
+                final_dist_sq = np.clip(final_dist_sq, 0, 1e6)
+                loss_terminal = final_dist_sq * self.gdpc_cfg.w_terminal
 
-            # Speed Limit Penalty
-            v_norm_traj = np.sqrt(np.sum(vel_traj**2, axis=1))
-            excess_v = np.maximum(0, v_norm_traj - self.config.control.velocity_limit)
-            loss_limit = np.sum(excess_v**2) * 100.0
+                final_vel = vel_traj[-1]
+                loss_terminal_vel = np.sum(final_vel**2) * self.gdpc_cfg.w_terminal_vel
+                loss_terminal_vel = np.clip(loss_terminal_vel, 0, 1e6)
 
-            # Total Loss
-            total_loss = loss_pos + loss_vel + loss_roll + loss_pitch + loss_thrust + loss_smooth + loss_terminal + loss_terminal_vel + rate_penalty + loss_limit
+                rates = u[:, 1:]
+                rate_penalty = np.mean(np.sum(rates**2, axis=1)) * 0.01
 
-            # Check for NaN/Inf
-            if not np.isfinite(total_loss):
-                return 1e12 # Return huge cost if exploded
-            return total_loss
+                v_norm_traj = np.sqrt(np.sum(vel_traj**2, axis=1))
+                excess_v = np.maximum(0, v_norm_traj - self.config.control.velocity_limit)
+                loss_limit = np.sum(excess_v**2) * 100.0
+
+                total_cost_ensemble += (loss_pos + loss_vel + loss_roll + loss_pitch + loss_thrust + loss_smooth + loss_terminal + loss_terminal_vel + rate_penalty + loss_limit)
+
+            avg_cost = total_cost_ensemble / len(self.models)
+
+            if not np.isfinite(avg_cost):
+                return 1e12
+            return avg_cost
 
         # Bounds
         bounds = []
@@ -258,24 +269,23 @@ class GDPCOptimizer:
             bounds.append((-2.5, 2.5))    # Pitch Rate
             bounds.append((-2.5, 2.5))    # Yaw Rate
 
-        # Initial Guess
         x0 = self.u_seq.flatten()
 
-        # Optimize (Using L-BFGS-B)
-        # Reduce maxiter for speed
         res = minimize(cost_fn, x0, method='L-BFGS-B', bounds=bounds, options={'maxiter': self.gdpc_cfg.opt_steps, 'disp': False})
 
-        if res.success or res.message: # Just use result even if not converged fully
+        if res.success or res.message:
              self.u_seq = res.x.reshape((H, 4))
 
         action_np = self.u_seq[0]
 
-        # Generate final trajectory for visualization
-        final_traj = self.model.rollout(state_obs, self.u_seq)
+        # Generate ALL trajectories for visualization
+        ghost_trajs = []
+        for model in self.models:
+            ghost_trajs.append(model.rollout(state_obs, self.u_seq))
 
         return {
             'thrust': float(action_np[0]),
             'roll_rate': float(action_np[1]),
             'pitch_rate': float(action_np[2]),
             'yaw_rate': float(action_np[3])
-        }, final_traj
+        }, ghost_trajs

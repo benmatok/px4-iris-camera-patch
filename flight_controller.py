@@ -182,36 +182,31 @@ class DPCFlightController:
              # Target is simply the relative command
              target_pos_relative = target_cmd
 
-             action, traj_enu = self.gdpc.compute_action(gdpc_state, target_pos_relative)
-
-             # Apply Action
-             # Note: compute_action returns Body Rates.
-             # We need to ensure we don't invert them if GDPC already handles it.
-             # In flight_controller_gdpc.py, I am using DifferentiableGhostModel.
-             # It uses PyGhostModel conventions.
-             # DPCFlightController normally inverts pitch/yaw rates at the end.
-             # Let's check DPCFlightController end of file:
-             # 'pitch_rate': -pitch_rate_cmd, 'yaw_rate': -yaw_rate_cmd
-
-             # So if GDPC returns positive pitch rate (Nose Up), DPCFlightController will invert it to Negative.
-             # If Sim requires Negative for Nose Up (Inverted ENU), then this is correct.
-             # If GDPC Model uses standard ENU (Positive Nose Up), it returns Positive.
-             # DPCFlightController inverts it. Sim receives Negative. Sim behaves correct.
-             # OK.
+             action, trajs_enu = self.gdpc.compute_action(gdpc_state, target_pos_relative)
 
              self.last_action = {
                  'thrust': action['thrust'],
                  'roll_rate': action['roll_rate'],
-                'pitch_rate': action['pitch_rate'], # Revert: Backwards test failed. Forward test (Positive X) worked with Direct mapping.
+                 'pitch_rate': action['pitch_rate'],
                  'yaw_rate': action['yaw_rate']
              }
 
              # Ghost Paths (Already ENU)
              ghost_paths = []
-             path = []
-             for i in range(len(traj_enu)):
-                 path.append({'px': traj_enu[i, 0], 'py': traj_enu[i, 1], 'pz': traj_enu[i, 2]})
-             ghost_paths.append(path)
+
+             # trajs_enu is a list of numpy arrays (Ensemble)
+             if isinstance(trajs_enu, list):
+                 for traj in trajs_enu:
+                     path = []
+                     for i in range(len(traj)):
+                         path.append({'px': traj[i, 0], 'py': traj[i, 1], 'pz': traj[i, 2]})
+                     ghost_paths.append(path)
+             else:
+                 # Legacy single trajectory
+                 path = []
+                 for i in range(len(trajs_enu)):
+                     path.append({'px': trajs_enu[i, 0], 'py': trajs_enu[i, 1], 'pz': trajs_enu[i, 2]})
+                 ghost_paths.append(path)
 
              # We need to return action in the dict format expected by DPCFlightController's invoker
              # BUT, DPCFlightController modifies action at the end of this method (lines 284+).
