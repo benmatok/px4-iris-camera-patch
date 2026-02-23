@@ -332,35 +332,44 @@ class DPCFlightController:
             thrust_cmd = max(0.1, min(0.95, thrust_cmd))
 
         elif not tracking_uv:
-            pitch_rate_cmd = 0.0
-            thrust_cmd = 0.5
+            # Blind Recovery Mode
+            # If tracking is lost and we don't have reliable velocity, level out.
+            if not is_reliable:
+                 # Command Pitch to 0
+                 pitch_rate_cmd = 1.0 * (0.0 - pitch) # Proportional P-gain
+                 pitch_rate_cmd = max(-1.0, min(1.0, pitch_rate_cmd))
+                 thrust_cmd = 0.55 # Hover thrust
+                 logger.info(f"BLIND RECOVERY: Pitching Level. Pitch={pitch:.2f}")
+            else:
+                 # If we have reliable velocity but lost tracking, hold current course or drift?
+                 # Default to level for safety.
+                 pitch_rate_cmd = 1.0 * (0.0 - pitch)
+                 thrust_cmd = 0.5
 
-        # Enforce Speed Limit (Smooth Active Braking)
+        # Enforce Speed Limit (Hard Active Braking)
         if velocity_est:
              v_mag_est = math.sqrt(velocity_est['vx']**2 + velocity_est['vy']**2 + velocity_est['vz']**2)
 
              # Sanity check: Only use VIO for braking if it is believable (< 15.0 m/s)
-             # If VIO diverges (e.g. 100 m/s), ignoring it is safer than panic braking.
              if v_mag_est < 15.0:
-                  limit = self.config.control.velocity_limit
+                  limit = 6.0 # Hard limit as requested
 
-                  # Soft Thrust Reduction
-                  if v_mag_est > limit - 2.0:
-                      ratio = (v_mag_est - (limit - 2.0)) / 2.0
-                      ratio = max(0.0, min(1.0, ratio))
-                      thrust_cmd = 0.1 + (thrust_cmd - 0.1) * (1.0 - ratio)
-
-                  # Pitch Braking (If exceeding limit)
+                  # If velocity exceeds limit, override control completely
                   if v_mag_est > limit:
+                      # Max Braking
+                      thrust_cmd = 0.0 # Cut throttle
+
+                      # Pitch Up (Flare) proportional to excess speed
                       excess = v_mag_est - limit
-                      # Gentle pitch up (Nose Up) to airbrake
-                      pitch_brake = 0.5 * excess
-                      pitch_rate_cmd += pitch_brake
+                      pitch_brake = 1.0 * excess # Strong gain
 
-                      # Clamp to prevent violent maneuvers
-                      pitch_rate_cmd = max(-1.0, min(1.0, pitch_rate_cmd))
+                      # Add to existing command but prioritize braking
+                      pitch_rate_cmd = max(pitch_rate_cmd, pitch_brake)
 
-                      logger.debug(f"SMOOTH BRAKING: v={v_mag_est:.2f}, brake={pitch_brake:.2f}, thrust={thrust_cmd:.2f}")
+                      # Clamp to prevent stalls/loops
+                      pitch_rate_cmd = min(2.0, pitch_rate_cmd)
+
+                      logger.info(f"HARD LIMIT ACTIVATED: v={v_mag_est:.2f} > {limit}. Braking pitch={pitch_brake:.2f}")
              elif v_mag_est > 15.0:
                   logger.warning(f"VIO Divergence Detected (v={v_mag_est:.2f} > 15.0). Ignoring for control.")
 

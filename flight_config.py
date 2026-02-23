@@ -105,7 +105,7 @@ class MissionConfig:
 @dataclass
 class PhysicsConfig:
     mass: float = 1.0
-    drag_coeff: float = 0.2 # Increased drag for better speed control
+    drag_coeff: float = 0.5 # Increased drag for robust speed control
     thrust_coeff: float = 1.0
     tau: float = 0.1
     g: float = 9.81

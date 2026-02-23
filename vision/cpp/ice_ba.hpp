@@ -47,6 +47,13 @@ struct Frame {
 
     IMUPreint preint; // Constraint from Previous to Current
     bool has_preint;
+
+    // Priors
+    double baro_alt;
+    bool has_baro;
+
+    Vec3 vel_prior;
+    bool has_vel_prior;
 };
 
 struct PointObs {
@@ -67,7 +74,7 @@ public:
 
     // Updated Interface: Pass Raw IMU
     void add_frame(int id, double t, double* p, double* q, double* v, double* bg, double* ba,
-                   const std::vector<ImuMeas>& imu_data);
+                   const std::vector<ImuMeas>& imu_data, double baro_alt, bool has_baro, double* vel_prior, bool has_vel_prior);
 
     void add_obs(int frame_id, int pt_id, double u, double v);
     void solve();

@@ -28,7 +28,7 @@ class SlidingWindowEstimator:
         try:
             with open('residuals.csv', 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(['timestamp', 'type', 'residual_norm', 'velocity_mag'])
+                writer.writerow(['timestamp', 'type', 'total_cost', 'imu_cost', 'vis_cost', 'v_mag', 'bg_norm', 'ba_norm', 'num_frames'])
         except Exception as e:
             logger.error(f"Failed to init residuals.csv: {e}")
 
@@ -87,7 +87,8 @@ class SlidingWindowEstimator:
                 fid, t,
                 frame['p'].tolist(), frame['q'].tolist(), frame['v'].tolist(),
                 frame['bg'].tolist(), frame['ba'].tolist(),
-                imu_data
+                imu_data,
+                baro=baro, vel_prior=vel_prior
             )
 
             # Add Observations
@@ -187,7 +188,14 @@ class SlidingWindowEstimator:
             with open('residuals.csv', 'a', newline='') as f:
                 writer = csv.writer(f)
                 v_mag = np.linalg.norm(last['v'])
-                writer.writerow([last['t'], 'OPTIM', imu_cost + vis_cost, v_mag])
+                bg_norm = np.linalg.norm(last['bg'])
+                ba_norm = np.linalg.norm(last['ba'])
+                # Log: t, type, total_cost, imu_cost, vis_cost, v_mag, bg, ba, num_frames
+                writer.writerow([
+                    last['t'], 'OPTIM',
+                    imu_cost + vis_cost, imu_cost, vis_cost,
+                    v_mag, bg_norm, ba_norm, len(self.frames)
+                ])
         except Exception as e:
             pass # Ignore logging errors
 

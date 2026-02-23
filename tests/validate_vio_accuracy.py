@@ -77,6 +77,10 @@ class VIOValidator:
 
     def sim_to_ned(self, sim_state):
         # Maps Sim (ENU) to NED (Right-Handed)
+        # Sim: X=East, Y=North, Z=Up
+        # NED: X=North, Y=East, Z=Down
+        # So: NED.x = Sim.y, NED.y = Sim.x, NED.z = -Sim.z
+
         ned = sim_state.copy()
         ned['px'] = sim_state['py']
         ned['py'] = sim_state['px']
