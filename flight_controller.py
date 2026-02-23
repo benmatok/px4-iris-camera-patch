@@ -344,8 +344,9 @@ class DPCFlightController:
         if velocity_est:
              v_mag_est = math.sqrt(velocity_est['vx']**2 + velocity_est['vy']**2 + velocity_est['vz']**2)
 
-             # Sanity check
-             if v_mag_est < 200.0:
+             # Sanity check: Only use VIO for braking if it is believable (< 15.0 m/s)
+             # If VIO diverges (e.g. 100 m/s), ignoring it is safer than panic braking.
+             if v_mag_est < 15.0:
                   limit = self.config.control.velocity_limit
 
                   # Soft Thrust Reduction
@@ -365,6 +366,8 @@ class DPCFlightController:
                       pitch_rate_cmd = max(-1.0, min(1.0, pitch_rate_cmd))
 
                       logger.debug(f"SMOOTH BRAKING: v={v_mag_est:.2f}, brake={pitch_brake:.2f}, thrust={thrust_cmd:.2f}")
+             elif v_mag_est > 15.0:
+                  logger.warning(f"VIO Divergence Detected (v={v_mag_est:.2f} > 15.0). Ignoring for control.")
 
         # Safety Clamps
         # Sim Pitch Positive = Nose Up.
