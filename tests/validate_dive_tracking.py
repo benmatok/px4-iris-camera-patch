@@ -267,7 +267,17 @@ class DiveValidator:
             history['drone_pos'].append([s['px'], s['py'], s['pz']])
             if i % 20 == 0:
                 uv_str = f"UV=({center[0]:.2f}, {center[1]:.2f})" if center else "UV=None"
+                sim_v = np.sqrt(s['vx']**2 + s['vy']**2 + s['vz']**2)
+                vio_v = np.sqrt(vel_est['vx']**2 + vel_est['vy']**2 + vel_est['vz']**2)
+
+                # Get Bias from VIO
+                ba_str = "N/A"
+                if hasattr(self.vio_system.estimator, 'frames') and self.vio_system.estimator.frames:
+                     ba = self.vio_system.estimator.frames[-1]['ba']
+                     ba_str = f"[{ba[0]:.2f}, {ba[1]:.2f}, {ba[2]:.2f}]"
+
                 print(f"T={t:.2f} State={mission_state} Dist={dist:.2f} Pos=({s['px']:.1f}, {s['py']:.1f}, {s['pz']:.1f}) {uv_str}")
+                print(f"      SimV={sim_v:.2f} VioV={vio_v:.2f} BA={ba_str}")
 
             # Terminate if collision (close enough)
             if dist < 2.0: # Close collision (Relaxed)

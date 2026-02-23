@@ -3,13 +3,23 @@
 from libcpp.vector cimport vector
 
 cdef extern from "cpp/ice_ba.hpp":
+    cdef struct Vec3:
+        double data[3]
+
+    cdef struct ImuMeas:
+        double dt
+        Vec3 acc
+        Vec3 gyro
+
     cdef cppclass IceBA:
         IceBA()
         void add_frame(int id, double t, double* p, double* q, double* v, double* bg, double* ba,
-                       double dt_pre, double* dp_pre, double* dq_pre, double* dv_pre)
+                       const vector[ImuMeas]& imu_data)
         void add_obs(int frame_id, int pt_id, double u, double v)
         void solve()
         void get_frame_state(int id, double* p, double* q, double* v, double* bg, double* ba)
+        void slide_window(int max_size)
+        void get_costs(double* imu_cost, double* vis_cost)
 
 cdef class PyIceBA:
     cdef IceBA* c_ba
@@ -20,16 +30,12 @@ cdef class PyIceBA:
     def __dealloc__(self):
         del self.c_ba
 
-    def add_frame(self, int id, double t, list p, list q, list v, list bg, list ba,
-                  double dt_pre, list dp_pre, list dq_pre, list dv_pre):
+    def add_frame(self, int id, double t, list p, list q, list v, list bg, list ba, list imu_data):
         cdef double c_p[3]
         cdef double c_q[4]
         cdef double c_v[3]
         cdef double c_bg[3]
         cdef double c_ba[3]
-        cdef double c_dp[3]
-        cdef double c_dq[4]
-        cdef double c_dv[3]
 
         for i in range(3): c_p[i] = p[i]
         for i in range(4): c_q[i] = q[i]
@@ -37,14 +43,21 @@ cdef class PyIceBA:
         for i in range(3): c_bg[i] = bg[i]
         for i in range(3): c_ba[i] = ba[i]
 
-        if dp_pre is not None:
-            for i in range(3): c_dp[i] = dp_pre[i]
-            for i in range(4): c_dq[i] = dq_pre[i]
-            for i in range(3): c_dv[i] = dv_pre[i]
-        else:
-            dt_pre = 0.0 # Flag
+        cdef vector[ImuMeas] c_imu
+        cdef ImuMeas m
+        if imu_data is not None:
+            for item in imu_data:
+                # item: (dt, acc_np, gyro_np)
+                m.dt = item[0]
+                m.acc.data[0] = item[1][0]
+                m.acc.data[1] = item[1][1]
+                m.acc.data[2] = item[1][2]
+                m.gyro.data[0] = item[2][0]
+                m.gyro.data[1] = item[2][1]
+                m.gyro.data[2] = item[2][2]
+                c_imu.push_back(m)
 
-        self.c_ba.add_frame(id, t, c_p, c_q, c_v, c_bg, c_ba, dt_pre, c_dp, c_dq, c_dv)
+        self.c_ba.add_frame(id, t, c_p, c_q, c_v, c_bg, c_ba, c_imu)
 
     def add_obs(self, int frame_id, int pt_id, double u, double v):
         self.c_ba.add_obs(frame_id, pt_id, u, v)
@@ -68,3 +81,12 @@ cdef class PyIceBA:
             'bg': [c_bg[0], c_bg[1], c_bg[2]],
             'ba': [c_ba[0], c_ba[1], c_ba[2]]
         }
+
+    def slide_window(self, int max_size):
+        self.c_ba.slide_window(max_size)
+
+    def get_costs(self):
+        cdef double imu_cost
+        cdef double vis_cost
+        self.c_ba.get_costs(&imu_cost, &vis_cost)
+        return imu_cost, vis_cost

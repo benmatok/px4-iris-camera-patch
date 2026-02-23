@@ -235,7 +235,7 @@ class SimDroneInterface:
         self.thrust_coeffs = [self.thrust_coeff]
         self.dd = {'drag_coeffs': [self.drag_coeff]}
 
-        logger.info("SimDroneInterface initialized with PyGhostModel (Inlined).")
+        logger.info(f"SimDroneInterface initialized with PyGhostModel. Drag={self.drag_coeff}, Mass={self.mass}")
 
     def reset_to_scenario(self, name, **kwargs):
         if name == "Blind Dive":

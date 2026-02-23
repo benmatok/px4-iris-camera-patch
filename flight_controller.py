@@ -269,13 +269,28 @@ class DPCFlightController:
                 pitch_bias = ctrl.pitch_bias_intercept + ctrl.pitch_bias_slope * pitch
                 pitch_bias = max(ctrl.pitch_bias_min, min(ctrl.pitch_bias_max, pitch_bias))
 
-                if pitch < ctrl.v_target_pitch_threshold:
-                     v_target = ctrl.v_target_intercept + ctrl.v_target_slope_steep * (pitch - ctrl.v_target_pitch_threshold)
-                else:
-                     v_target = ctrl.v_target_intercept + ctrl.v_target_slope_shallow * (pitch - ctrl.v_target_pitch_threshold)
-                v_target = max(0.1, v_target)
+                # Simplified Speed Control
+                # Target speed slightly below limit to allow headroom
+                v_target = ctrl.velocity_limit - 1.0
 
-                pitch_track = -ctrl.k_pitch * (v - v_target) + pitch_bias
+                # Positive Pitch Rate (Nose Up) slows down.
+                # If v > v_target, term (v-v_target) is positive.
+                # We want Pitch Up. So sign must be POSITIVE.
+                pitch_track = +ctrl.k_pitch * (v - v_target) + pitch_bias
+
+                # Limit Dive Angle (Sim Pitch Positive = Nose Down)
+                # If Sim Pitch > 0.3 (17 deg), don't pitch down further (Negative Rate)
+                # Wait, pitch_track is Rate. Positive = Nose Up.
+                # If pitch_track < 0 (Nose Down) and pitch > 0.3 (Already Steep)
+                # Clamp to 0.
+                # BUT, earlier I said Sim Pitch Negative = Nose Down?
+                # "Scenario 6 Start: pitch = -39.5 deg".
+                # So Negative is Nose Down.
+                # If pitch < -0.3 (-17 deg). And pitch_track < 0 (Nose Down rate).
+                # Clamp.
+                if pitch < -0.3 and pitch_track < 0.0:
+                     pitch_track = 0.0
+
                 pitch_track = max(-2.5, min(2.5, pitch_track))
 
                 thrust_base = ctrl.thrust_base_intercept + ctrl.thrust_base_slope * pitch
@@ -325,28 +340,45 @@ class DPCFlightController:
             pitch_rate_cmd = 0.0
             thrust_cmd = 0.5
 
-        # Enforce Speed Limit (Active Braking) - Override
-        # Only brake if we trust the estimate (sanity check: < 30.0m/s or marked reliable)
-        # Note: If speed > limit, it might be marked unreliable for GDPC, but we need to check the raw flag from VIO
-        # or just gate it by a sanity threshold.
+        # Enforce Speed Limit (Smooth Active Braking)
         if velocity_est:
              v_mag_est = math.sqrt(velocity_est['vx']**2 + velocity_est['vy']**2 + velocity_est['vz']**2)
 
-             # Sanity check: If VIO reports > 200m/s (impossible), ignore it to prevent spin-of-death
-             if v_mag_est > ctrl.velocity_limit and v_mag_est < 200.0:
-                  excess = v_mag_est - ctrl.velocity_limit
-                  # Pitch Up to brake (Positive Pitch Rate Cmd)
-                  # Stronger braking gain
-                  pitch_rate_cmd += 1.5 * excess
+             # Sanity check
+             if v_mag_est < 200.0:
+                  limit = self.config.control.velocity_limit
 
-                  # Reduce Thrust immediately
-                  thrust_cmd = 0.1
+                  # Soft Thrust Reduction
+                  if v_mag_est > limit - 2.0:
+                      ratio = (v_mag_est - (limit - 2.0)) / 2.0
+                      ratio = max(0.0, min(1.0, ratio))
+                      thrust_cmd = 0.1 + (thrust_cmd - 0.1) * (1.0 - ratio)
 
-                  logger.debug(f"ACTIVE BRAKING: v={v_mag_est:.2f}, pitch_cmd={pitch_rate_cmd:.2f}, thrust={thrust_cmd:.2f}")
+                  # Pitch Braking (If exceeding limit)
+                  if v_mag_est > limit:
+                      excess = v_mag_est - limit
+                      # Gentle pitch up (Nose Up) to airbrake
+                      pitch_brake = 0.5 * excess
+                      pitch_rate_cmd += pitch_brake
 
-        if pitch < -1.45 and pitch_rate_cmd < 0.0:
+                      # Clamp to prevent violent maneuvers
+                      pitch_rate_cmd = max(-1.0, min(1.0, pitch_rate_cmd))
+
+                      logger.debug(f"SMOOTH BRAKING: v={v_mag_est:.2f}, brake={pitch_brake:.2f}, thrust={thrust_cmd:.2f}")
+
+        # Safety Clamps
+        # Sim Pitch Positive = Nose Up.
+        # Max Pitch Up = 0.2 rad (~11 deg) to avoid stalling/backward flight.
+        # Max Pitch Down = -1.0 rad (~57 deg) to avoid overspeed.
+
+        # If Pitch > 0.0 (Horizon). Prevent further Nose Up to avoid backward flight.
+        # pitch_rate_cmd Positive = Nose Up command.
+        if pitch > 0.0 and pitch_rate_cmd > 0.0:
              pitch_rate_cmd = 0.0
-        if pitch > 0.8 and pitch_rate_cmd > 0.0:
+
+        # If Pitch < -1.0 (Too Nose Down)
+        # We want Nose Up (Positive rate).
+        if pitch < -1.0 and pitch_rate_cmd < 0.0:
              pitch_rate_cmd = 0.0
 
         roll_rate_cmd = 4.0 * (0.0 - roll)
