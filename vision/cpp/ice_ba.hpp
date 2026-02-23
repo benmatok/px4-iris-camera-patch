@@ -50,6 +50,7 @@ private:
 
     // Helpers
     void triangulate();
+    void optimize_points();
     void optimize(); // Gauss-Newton
 };
 
