@@ -1,6 +1,8 @@
 #include "ice_ba.hpp"
 #include <iostream>
 #include <cmath>
+#include <vector>
+#include <algorithm>
 
 IceBA::IceBA() {}
 
@@ -25,7 +27,6 @@ void IceBA::add_frame(int id, double t, double* p, double* q, double* v, double*
         f.has_preint = false;
     }
 
-    // Check if update or new
     bool found = false;
     for(auto& fr : frames) {
         if(fr.id == id) {
@@ -48,99 +49,213 @@ void IceBA::add_obs(int frame_id, int pt_id, double u, double v) {
 }
 
 void IceBA::triangulate() {
-    // Simple linear triangulation
     for(auto& kv : points) {
         Point& pt = kv.second;
         if(pt.obs.size() < 2) continue;
-        if(pt.initialized) continue; // Keep old estimate
+        if(pt.initialized) continue;
 
-        // Use first two obs
-        // Very rough depth est: 5.0m in front of camera 1
-        // Better: Solve linear system?
-        // We lack linear solver here.
-        // Heuristic: Project from first cam at d=10.0
-
-        // Find Frame
         int f_idx = -1;
-        for(int i=0; i<frames.size(); ++i) if(frames[i].id == pt.obs[0].frame_id) f_idx = i;
+        for(size_t i=0; i<frames.size(); ++i) if(frames[i].id == pt.obs[0].frame_id) f_idx = i;
 
         if(f_idx >= 0) {
             Frame& f = frames[f_idx];
-            // Ray in body
             double u = pt.obs[0].u;
             double v = pt.obs[0].v;
-            Vec3 ray_c(u, v, 1.0);
-            // World
+            double depth = 5.0;
+            Vec3 ray_c(u * depth, v * depth, depth);
             Vec3 ray_w = f.q.rotate(ray_c);
-            pt.p_world = f.p + ray_w * 10.0; // Init Depth
+            pt.p_world = f.p + ray_w;
             pt.initialized = true;
         }
     }
 }
 
+// Minimal solver for 9x9 symmetric positive definite system Hx = b
+// Uses Cholesky LDLT or Gaussian
+bool solve9x9(double H[9][9], double b[9], double x[9]) {
+    // Cholesky L * L^T = H
+    double L[9][9] = {0};
+    for (int i = 0; i < 9; i++) {
+        for (int j = 0; j <= i; j++) {
+            double sum = 0;
+            for (int k = 0; k < j; k++) sum += L[i][k] * L[j][k];
+
+            if (i == j) {
+                double val = H[i][i] - sum;
+                if (val <= 0) return false; // Not PD
+                L[i][j] = sqrt(val);
+            } else {
+                L[i][j] = (H[i][j] - sum) / L[j][j];
+            }
+        }
+    }
+
+    // Forward substitution L * y = b
+    double y[9];
+    for (int i = 0; i < 9; i++) {
+        double sum = 0;
+        for (int k = 0; k < i; k++) sum += L[i][k] * y[k];
+        y[i] = (b[i] - sum) / L[i][i];
+    }
+
+    // Backward substitution L^T * x = y
+    for (int i = 8; i >= 0; i--) {
+        double sum = 0;
+        for (int k = i + 1; k < 9; k++) sum += L[k][i] * x[k];
+        x[i] = (y[i] - sum) / L[i][i];
+    }
+    return true;
+}
+
 void IceBA::optimize() {
-    // 1. Triangulate
     triangulate();
 
-    // 2. Simple Iterative Optimization (Gradient Descent-ish)
-    // We update Frames to satisfy IMU and Vision
-
-    double step = 0.01;
+    int max_iter = 10;
     Vec3 g_grav(0, 0, 9.81);
 
-    for(int iter=0; iter<5; ++iter) {
-        // IMU Constraints (Sequential)
-        for(size_t i=0; i<frames.size()-1; ++i) {
-            Frame& f1 = frames[i];
-            Frame& f2 = frames[i+1];
+    for(int iter=0; iter<max_iter; ++iter) {
 
-            if(!f2.has_preint) continue;
+        for(size_t i=0; i<frames.size(); ++i) {
+            Frame& f = frames[i];
+            if(i == 0) continue;
 
-            // Predict f2 from f1
-            // p2 = p1 + v1*dt + 0.5*g*dt^2 + R1*dp
-            double dt = f2.dt_pre;
-            Vec3 p_pred = f1.p + f1.v * dt + g_grav * (0.5 * dt * dt) + f1.q.rotate(f2.dp_pre);
-            Vec3 v_pred = f1.v + g_grav * dt + f1.q.rotate(f2.dv_pre);
+            // Build Normal Equation for Frame i: H (9x9), b (9)
+            // State order: dp (0-2), dtheta (3-5), dv (6-8)
+            double H[9][9] = {0};
+            double b[9] = {0};
 
-            // Residual
-            Vec3 rp = f2.p - p_pred;
-            Vec3 rv = f2.v - v_pred;
+            // 1. IMU Factor
+            if(i > 0) {
+                Frame& prev = frames[i-1];
+                if(f.has_preint) {
+                    double dt = f.dt_pre;
 
-            // Correction (Backprop-ish)
-            // Move f2 towards pred
-            f2.p = f2.p - rp * 0.5;
-            f2.v = f2.v - rv * 0.5;
+                    // Residuals
+                    Vec3 p_pred = prev.p + prev.v * dt + g_grav * (0.5 * dt * dt) + prev.q.rotate(f.dp_pre);
+                    Vec3 v_pred = prev.v + g_grav * dt + prev.q.rotate(f.dv_pre);
 
-            // Also update f1? (Forward prop)
-            // Let's assume f1 is more trusted (sliding window root)
-        }
+                    Vec3 r_p = f.p - p_pred;
+                    Vec3 r_v = f.v - v_pred;
 
-        // Vision Constraints
-        // For each point, pull frames towards correct ray
-        for(auto& kv : points) {
-            Point& pt = kv.second;
-            if(!pt.initialized) continue;
+                    // TODO: Orientation residual
+                    // R_err = (R_pred^T * R_curr)
+                    // R_pred = R_prev * R_preint
 
-            for(auto& obs : pt.obs) {
-                // Find frame
-                Frame* f = nullptr;
-                for(auto& fr : frames) if(fr.id == obs.frame_id) f = &fr;
-                if(!f) continue;
+                    double w_imu = 100.0;
 
-                // Proj
-                Vec3 p_local = f->q.conj().rotate(pt.p_world - f->p);
-                if(p_local[2] < 0.1) continue;
+                    // Pos/Vel Diagonal fill
+                    for(int k=0; k<3; ++k) {
+                        H[k][k] += w_imu;
+                        b[k] -= w_imu * r_p[k];
 
-                double u_pred = p_local[0] / p_local[2];
-                double v_pred = p_local[1] / p_local[2];
+                        H[k+6][k+6] += w_imu;
+                        b[k+6] -= w_imu * r_v[k];
+                    }
+                }
+            }
 
-                double du = u_pred - obs.u;
-                double dv = v_pred - obs.v;
+            // 2. Vision Factors
+            double w_vis = 50.0;
 
-                // Gradients?
-                // Just rudimentary nudging
-                // Nudge Point
-                // pt.p_world ...?
+            for(auto& kv : points) {
+                Point& pt = kv.second;
+                if(!pt.initialized) continue;
+
+                for(auto& obs : pt.obs) {
+                    if(obs.frame_id == f.id) {
+                        Vec3 Pc = f.q.conj().rotate(pt.p_world - f.p);
+                        if(Pc[2] < 0.1) continue;
+
+                        double u = Pc[0]/Pc[2];
+                        double v = Pc[1]/Pc[2];
+                        double r_u = u - obs.u;
+                        double r_v = v - obs.v;
+
+                        // Jacobians
+                        double z_inv = 1.0 / Pc[2];
+                        double z2_inv = z_inv * z_inv;
+
+                        // d(uv)/dPc
+                        double J_proj[2][3];
+                        J_proj[0][0] = z_inv; J_proj[0][1] = 0; J_proj[0][2] = -Pc[0]*z2_inv;
+                        J_proj[1][0] = 0; J_proj[1][1] = z_inv; J_proj[1][2] = -Pc[1]*z2_inv;
+
+                        // dPc/dp = -R^T
+                        // dPc/dtheta = [Pc]x
+
+                        double R_T[3][3];
+                        f.q.conj().to_matrix(R_T); // This is R^T
+
+                        // J_pos = J_proj * (-R^T) (2x3)
+                        double J_pos[2][3];
+                        for(int r=0; r<2; ++r) {
+                            for(int c=0; c<3; ++c) {
+                                J_pos[r][c] = 0;
+                                for(int k=0; k<3; ++k) {
+                                    J_pos[r][c] += J_proj[r][k] * (-R_T[k][c]);
+                                }
+                            }
+                        }
+
+                        // J_theta = J_proj * [Pc]x (2x3)
+                        // [Pc]x = [ 0  -z   y]
+                        //         [ z   0  -x]
+                        //         [-y   x   0]
+                        double J_theta[2][3];
+                        // u row
+                        J_theta[0][0] = J_proj[0][1]*Pc[2] - J_proj[0][2]*Pc[1];
+                        J_theta[0][1] = J_proj[0][2]*Pc[0] - J_proj[0][0]*Pc[2];
+                        J_theta[0][2] = J_proj[0][0]*Pc[1] - J_proj[0][1]*Pc[0];
+                        // v row
+                        J_theta[1][0] = J_proj[1][1]*Pc[2] - J_proj[1][2]*Pc[1];
+                        J_theta[1][1] = J_proj[1][2]*Pc[0] - J_proj[1][0]*Pc[2];
+                        J_theta[1][2] = J_proj[1][0]*Pc[1] - J_proj[1][1]*Pc[0];
+
+                        // Accumulate H, b
+                        // J = [J_pos, J_theta, 0] (2x9)
+                        // r = [r_u, r_v]
+                        // H += J^T * W * J
+                        // b -= J^T * W * r
+
+                        for(int r=0; r<2; ++r) { // u, v
+                            double weight = w_vis;
+                            double resid = (r==0) ? r_u : r_v;
+
+                            // Fill J_full (length 9)
+                            double J_row[9];
+                            for(int k=0; k<3; ++k) J_row[k] = J_pos[r][k];
+                            for(int k=0; k<3; ++k) J_row[3+k] = J_theta[r][k];
+                            for(int k=0; k<3; ++k) J_row[6+k] = 0.0;
+
+                            for(int k=0; k<9; ++k) {
+                                for(int l=0; l<9; ++l) {
+                                    H[k][l] += weight * J_row[k] * J_row[l];
+                                }
+                                b[k] -= weight * J_row[k] * resid;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Regularization (Levenberg-Marquardt damping)
+            for(int k=0; k<9; ++k) H[k][k] += 1e-3;
+
+            // Solve H dx = b
+            double dx[9];
+            if(solve9x9(H, b, dx)) {
+                // Update State
+                // Pos
+                for(int k=0; k<3; ++k) f.p[k] += dx[k];
+
+                // Theta (Exp map)
+                Quat dq(dx[3]*0.5, dx[4]*0.5, dx[5]*0.5, 1.0);
+                double nq = std::sqrt(dq.data[0]*dq.data[0] + dq.data[1]*dq.data[1] + dq.data[2]*dq.data[2] + dq.data[3]*dq.data[3]);
+                dq.data[0]/=nq; dq.data[1]/=nq; dq.data[2]/=nq; dq.data[3]/=nq;
+                f.q = f.q * dq;
+
+                // Vel
+                for(int k=0; k<3; ++k) f.v[k] += dx[6+k];
             }
         }
     }
