@@ -24,9 +24,10 @@ logger = logging.getLogger(__name__)
 DT = 0.05
 
 class DiveValidator:
-    def __init__(self, use_ground_truth=True, use_blind_mode=False, init_alt=50.0, init_dist=150.0, config: FlightConfig = None, sim_config: FlightConfig = None, ctrl_config: FlightConfig = None):
+    def __init__(self, use_ground_truth=True, use_blind_mode=False, init_alt=50.0, init_dist=150.0, config: FlightConfig = None, sim_config: FlightConfig = None, ctrl_config: FlightConfig = None, control_use_gt=False):
         self.use_ground_truth = use_ground_truth
         self.use_blind_mode = use_blind_mode
+        self.control_use_gt = control_use_gt
 
         # Base config
         self.config = config or FlightConfig()
@@ -225,9 +226,26 @@ class DiveValidator:
 
             # Get State
             vio_state = self.vio_system.get_state_dict()
-            vel_est = {'vx': vio_state['vx'], 'vy': vio_state['vy'], 'vz': vio_state['vz']}
-            pos_est = {'px': vio_state['px'], 'py': vio_state['py'], 'pz': vio_state['pz']}
-            vel_reliable = self.vio_system.is_reliable()
+
+            if self.control_use_gt:
+                # Use Ground Truth Sim State (converted to NED Velocity for compatibility if controller expects NED or ENU?)
+                # Controller expects ENU velocity if passed as 'velocity_est' because DPCFlightController converts VIO (NED) to ENU inside?
+                # Let's check flight_controller.py.
+                # "vx_enu = velocity_est['vy']; vy_enu = velocity_est['vx']; vz_enu = -velocity_est['vz']"
+                # It expects VIO dictionary in NED Frame.
+                # Sim State s['vx'] is ENU world velocity.
+                # So we must pass Sim Velocity converted to NED for the controller to re-convert it to ENU?
+                # Or we can modify controller to accept ENU.
+                # But to minimally change controller, let's construct a "Fake VIO State" in NED.
+                # Sim (ENU): vx, vy, vz
+                # NED: vx_n = sim_vy, vy_n = sim_vx, vz_n = -sim_vz
+                vel_est = {'vx': s['vy'], 'vy': s['vx'], 'vz': -s['vz']}
+                pos_est = {'px': s['py'], 'py': s['px'], 'pz': -s['pz']}
+                vel_reliable = True
+            else:
+                vel_est = {'vx': vio_state['vx'], 'vy': vio_state['vy'], 'vz': vio_state['vz']}
+                pos_est = {'px': vio_state['px'], 'py': vio_state['py'], 'pz': vio_state['pz']}
+                vel_reliable = self.vio_system.is_reliable()
 
             # Use VIO velocity for controller
             action_out, ghost_paths = self.controller.compute_action(

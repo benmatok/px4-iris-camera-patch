@@ -105,7 +105,7 @@ class MissionConfig:
 @dataclass
 class PhysicsConfig:
     mass: float = 1.0
-    drag_coeff: float = 1.0 # High drag to enable steep descent at low speed
+    drag_coeff: float = 0.1
     thrust_coeff: float = 1.0
     tau: float = 0.1
     g: float = 9.81
