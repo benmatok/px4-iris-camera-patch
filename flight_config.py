@@ -18,7 +18,7 @@ class VisionConfig:
 @dataclass
 class ControlConfig:
     k_yaw: float = 3.31
-    k_pitch: float = 4.52
+    k_pitch: float = 0.5 # Greatly reduced to prevent overshoot
 
     # Cruise / Dive Logic
     dive_trigger_rer: float = 0.23
@@ -39,8 +39,8 @@ class ControlConfig:
     v_target_pitch_threshold: float = -1.2
 
     # Thrust
-    thrust_base_intercept: float = 0.64
-    thrust_base_slope: float = 0.40
+    thrust_base_intercept: float = 0.60
+    thrust_base_slope: float = 0.60 # Steeper slope to cut thrust in dives
     thrust_min: float = 0.15
     thrust_max: float = 0.5 # Base max
 
@@ -105,7 +105,7 @@ class MissionConfig:
 @dataclass
 class PhysicsConfig:
     mass: float = 1.0
-    drag_coeff: float = 0.1
+    drag_coeff: float = 1.0 # High drag to enable steep descent at low speed
     thrust_coeff: float = 1.0
     tau: float = 0.1
     g: float = 9.81

@@ -80,33 +80,36 @@ class SlidingWindowEstimator:
             self.points[pid]['obs'].append((curr_frame_idx, uv[0], uv[1]))
 
         if self.use_cpp:
-            # Prepare Data for C++
-            dp = [0.0]*3; dq=[0.0]*4; dv=[0.0]*3; dt=0.0
-            if frame['imu_preint']:
-                c = frame['imu_preint']
-                dt = c['dt']
-                dp = c['dp'].tolist()
-                dv = c['dv'].tolist()
-                dq = c['dq'].as_quat().tolist()
+            # Prepare Data for C++ (Raw IMU)
+            # imu_data format: list of (dt, acc, gyro)
 
             self.ba_solver.add_frame(
                 fid, t,
                 frame['p'].tolist(), frame['q'].tolist(), frame['v'].tolist(),
                 frame['bg'].tolist(), frame['ba'].tolist(),
-                dt, dp, dq, dv
+                imu_data
             )
 
             # Add Observations
             for pid, uv in image_obs.items():
                 self.ba_solver.add_obs(fid, pid, uv[0], uv[1])
 
-        # Marginalization (Simplified: Just keep window in python consistent, C++ handles its own list or we just rely on C++ to accumulate)
-        # Note: The C++ implementation in ice_ba.cpp is a simple list. We are not removing old frames in C++ explicitly in this simplified version.
-        # Ideally we should remove from C++ too.
-        # But given time, let's let C++ grow (small memory leak for short validation) or assume it handles it.
-        # My C++ code does NOT implement marginalization. It just optimizes all.
-        # This will get slow.
-        # I should assume `validate_scenarios.py` runs for 40s (800 frames). This is acceptable for simple gradient descent in C++.
+        # Marginalization
+        if self.use_cpp:
+            # Slide window in C++
+            # We keep a slightly larger buffer in C++ or sync?
+            # Let's keep strict window size.
+            if len(self.frames) > self.window_size:
+                self.ba_solver.slide_window(self.window_size)
+                # Sync Python list (remove oldest)
+                # But wait, frames list is used for init of next frame.
+                # Removing oldest is fine.
+                while len(self.frames) > self.window_size:
+                    self.frames.pop(0)
+        else:
+            # Python marginalization (simplified truncation)
+            if len(self.frames) > self.window_size:
+                self.frames.pop(0)
 
     def _preintegrate_imu(self, imu_data):
         # RK4 Pre-integration
@@ -177,6 +180,16 @@ class SlidingWindowEstimator:
         last['v'] = np.array(s['v'])
         last['bg'] = np.array(s['bg'])
         last['ba'] = np.array(s['ba'])
+
+        # Log Residuals
+        try:
+            imu_cost, vis_cost = self.ba_solver.get_costs()
+            with open('residuals.csv', 'a', newline='') as f:
+                writer = csv.writer(f)
+                v_mag = np.linalg.norm(last['v'])
+                writer.writerow([last['t'], 'OPTIM', imu_cost + vis_cost, v_mag])
+        except Exception as e:
+            pass # Ignore logging errors
 
     def _solve_python(self):
         if len(self.frames) < 2: return
