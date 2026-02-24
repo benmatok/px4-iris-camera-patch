@@ -42,12 +42,14 @@ def run_scenarios():
         # Instantiate Validator matching TheShow configuration
         # use_ground_truth=True (Perfect Tracking)
         # use_blind_mode=True (No VZ sensor)
+        # control_use_gt=True (Use GT State for Control to validate GDPC logic)
         validator = DiveValidator(
             use_ground_truth=True,
             use_blind_mode=True,
             init_alt=alt,
             init_dist=dist,
-            config=config
+            config=config,
+            control_use_gt=True
         )
 
         # Run for 40 seconds to accommodate 5 m/s speed limit
