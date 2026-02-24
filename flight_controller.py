@@ -160,76 +160,8 @@ class DPCFlightController:
              self.est_vy = alpha_vel * vy_enu + (1-alpha_vel) * self.est_vy
              self.est_vz = alpha_vel * vz_enu + (1-alpha_vel) * self.est_vz
 
-        if is_reliable and hasattr(self.config, 'gdpc'):
-             # Construct Relative ENU State for GDPC
-             # We ignore absolute position to satisfy "local coordinates" requirement.
-             # Drone is at 0,0,0. Target is at [dx, dy, dz] (Relative Vector).
-             gdpc_state = {
-                 'px': 0.0,
-                 'py': 0.0,
-                 'pz': 0.0,
-                 'vx': self.est_vx,
-                 'vy': self.est_vy,
-                 'vz': self.est_vz,
-                 'roll': roll,
-                 'pitch': pitch,
-                 'yaw': yaw,
-                 'wx': state_obs.get('wx', 0.0),
-                 'wy': state_obs.get('wy', 0.0),
-                 'wz': state_obs.get('wz', 0.0)
-             }
-
-             # Target is simply the relative command
-             target_pos_relative = target_cmd
-
-             action, trajs_enu = self.gdpc.compute_action(gdpc_state, target_pos_relative)
-
-             self.last_action = {
-                 'thrust': action['thrust'],
-                 'roll_rate': action['roll_rate'],
-                 'pitch_rate': action['pitch_rate'],
-                 'yaw_rate': action['yaw_rate']
-             }
-
-             # Ghost Paths (Already ENU)
-             ghost_paths = []
-
-             # trajs_enu is a list of numpy arrays (Ensemble)
-             if isinstance(trajs_enu, list):
-                 for traj in trajs_enu:
-                     path = []
-                     for i in range(len(traj)):
-                         path.append({'px': traj[i, 0], 'py': traj[i, 1], 'pz': traj[i, 2]})
-                     ghost_paths.append(path)
-             else:
-                 # Legacy single trajectory
-                 path = []
-                 for i in range(len(trajs_enu)):
-                     path.append({'px': trajs_enu[i, 0], 'py': trajs_enu[i, 1], 'pz': trajs_enu[i, 2]})
-                 ghost_paths.append(path)
-
-             # We need to return action in the dict format expected by DPCFlightController's invoker
-             # BUT, DPCFlightController modifies action at the end of this method (lines 284+).
-             # It sets self.last_action, but returns `action` constructed from local variables.
-
-             # We should assign to local variables `thrust_cmd`, `roll_rate_cmd`, etc.
-             # And skip the rest of the visual servoing logic.
-             # Or just return immediately?
-             # Returning immediately is safer to avoid interference.
-
-             # BUT: The end of the method does the inversion:
-             # action = { ..., 'pitch_rate': -pitch_rate_cmd, ... }
-             # So we must manually do the inversion if we return early, OR assign to vars and let it flow.
-
-             # Let's return early but format it correctly.
-
-             final_action = {
-                'thrust': action['thrust'],
-                'roll_rate': action['roll_rate'],
-                'pitch_rate': action['pitch_rate'],
-                'yaw_rate': action['yaw_rate']
-             }
-             return final_action, ghost_paths
+        # if is_reliable and hasattr(self.config, 'gdpc'):
+             # GDPC DISABLED PER REQUEST - Switched to Heuristic FOE Controller
 
         # ... (Rest of the Heuristic Controller) ...
         # 2. Tracking Control (Visual Servoing)
@@ -252,7 +184,18 @@ class DPCFlightController:
                     logger.info(f"DIVE INITIATED! RER={self.rer_smoothed:.2f}, v={v:.2f}")
                     self.dive_initiated = True
 
-            yaw_rate_cmd = -ctrl.k_yaw * u
+            # Use FOE if available for Yaw Control
+            if foe_uv:
+                 # Steer Target (u, v) towards FOE (foe_u, foe_v)
+                 # Or steer to center? No, user said "tracking the target into foe".
+                 # This means we want u_target = u_foe.
+                 # Error = u_target - u_foe.
+                 u_err = u - foe_uv[0]
+                 yaw_rate_cmd = -ctrl.k_yaw * u_err
+            else:
+                 # Fallback to centering
+                 yaw_rate_cmd = -ctrl.k_yaw * u
+
             yaw_rate_cmd = max(-1.5, min(1.5, yaw_rate_cmd))
 
             if not self.dive_initiated:
@@ -261,28 +204,30 @@ class DPCFlightController:
                 pitch_track = max(-1.0, min(1.0, pitch_track))
                 thrust_track = 0.55
             else:
-                pitch_bias = ctrl.pitch_bias_intercept + ctrl.pitch_bias_slope * pitch
-                pitch_bias = max(ctrl.pitch_bias_min, min(ctrl.pitch_bias_max, pitch_bias))
+                # Use FOE for Pitch Control?
+                # We want v_target = v_foe.
+                # But Pitch also controls speed.
+                # If we assume speed is controlled by Drag/Thrust balance...
+                # Let's keep existing Dive Logic but bias with FOE?
 
-                # Simplified Speed Control
-                # Target speed slightly below limit to allow headroom
-                v_target = ctrl.velocity_limit - 1.0
+                if foe_uv:
+                    v_err = v - foe_uv[1]
+                    # If target is BELOW FOE (v > v_foe), we need to Pitch Down (Negative Rate)?
+                    # Sim Pitch: Neg = Nose Down.
+                    # Controller Pitch Rate: Neg = Nose Down.
+                    # If v_err > 0, Target is "below" FOE (in image, +v is down).
+                    # We are aiming "above" the target.
+                    # We need to pitch down.
+                    # pitch_rate = -Kp * v_err.
+                    pitch_track = -ctrl.k_pitch * v_err
+                else:
+                     # Fallback logic
+                     pitch_bias = ctrl.pitch_bias_intercept + ctrl.pitch_bias_slope * pitch
+                     pitch_bias = max(ctrl.pitch_bias_min, min(ctrl.pitch_bias_max, pitch_bias))
+                     v_target = ctrl.velocity_limit - 1.0
+                     pitch_track = +ctrl.k_pitch * (v - v_target) + pitch_bias
 
-                # Positive Pitch Rate (Nose Up) slows down.
-                # If v > v_target, term (v-v_target) is positive.
-                # We want Pitch Up. So sign must be POSITIVE.
-                pitch_track = +ctrl.k_pitch * (v - v_target) + pitch_bias
-
-                # Limit Dive Angle (Sim Pitch Positive = Nose Down)
-                # If Sim Pitch > 0.3 (17 deg), don't pitch down further (Negative Rate)
-                # Wait, pitch_track is Rate. Positive = Nose Up.
-                # If pitch_track < 0 (Nose Down) and pitch > 0.3 (Already Steep)
-                # Clamp to 0.
-                # BUT, earlier I said Sim Pitch Negative = Nose Down?
-                # "Scenario 6 Start: pitch = -39.5 deg".
-                # So Negative is Nose Down.
-                # If pitch < -0.3 (-17 deg). And pitch_track < 0 (Nose Down rate).
-                # Clamp.
+                # Keep Safety Clamps
                 if pitch < -0.3 and pitch_track < 0.0:
                      pitch_track = 0.0
 
@@ -295,8 +240,16 @@ class DPCFlightController:
                 thrust_correction = max(0.0, effective_k_rer * (self.rer_smoothed - ctrl.rer_target))
                 thrust_track = thrust_base - thrust_correction
 
-                if v < v_target - 0.2:
-                    thrust_track += -(v - v_target) * 2.0
+                # Speed governor via Thrust
+                # v_target = 5.0 (approx)
+                # If speed estimation available (v_mag_est)
+                if velocity_est:
+                     v_est = math.sqrt(velocity_est['vx']**2 + velocity_est['vy']**2 + velocity_est['vz']**2)
+                     if v_est < 5.0:
+                          thrust_track += 0.1
+                     elif v_est > 6.0:
+                          thrust_track -= 0.1
+
                 thrust_track = max(0.1, min(0.95, thrust_track))
 
                 if self.rer_smoothed > ctrl.rer_target + ctrl.flare_threshold_offset:
