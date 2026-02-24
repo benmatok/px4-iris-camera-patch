@@ -185,12 +185,86 @@ class DPCFlightController:
                     self.dive_initiated = True
 
             # Use FOE if available for Yaw Control
-            if foe_uv:
+            # If FOE missing, estimate from Velocity State
+            calc_foe = foe_uv
+            if not calc_foe and velocity_est:
+                # Estimate FOE from VIO/GT Velocity
+                # V_world (ENU) -> V_body -> V_cam -> FOE (u, v)
+
+                # 1. World (ENU) to Body
+                # R_b2w = Rz(y) * Ry(p) * Rx(r)
+                # V_b = R_b2w.T @ V_w
+                cr = math.cos(roll); sr = math.sin(roll)
+                cp = math.cos(pitch); sp = math.sin(pitch)
+                cy = math.cos(yaw); sy = math.sin(yaw)
+
+                # R_b2w construction
+                r11 = cy * cp
+                r12 = cy * sp * sr - sy * cr
+                r13 = cy * sp * cr + sy * sr
+                r21 = sy * cp
+                r22 = sy * sp * sr + cy * cr
+                r23 = sy * sp * cr - cy * sr
+                r31 = -sp
+                r32 = cp * sr
+                r33 = cp * cr
+
+                R_b2w = np.array([
+                    [r11, r12, r13],
+                    [r21, r22, r23],
+                    [r31, r32, r33]
+                ])
+
+                v_w = np.array([self.est_vx, self.est_vy, self.est_vz])
+                v_b = R_b2w.T @ v_w
+
+                # 2. Body to Camera
+                # Cam Tilt 30 deg UP (pitch +30 relative to body).
+                # R_c2b = R_y(tilt). (Camera Frame: Z forward, X right, Y down)
+                # Wait. Projector says:
+                # Base: Xc=Yb(Right), Yc=Zb(Down), Zc=Xb(Fwd)
+                # Then Tilt (Pitch).
+
+                # Let's use Projector Logic manually:
+                # R_c2b_base:
+                # [0, 0, 1]
+                # [1, 0, 0]
+                # [0, 1, 0]
+                # Body X -> Cam Z. Body Y -> Cam X. Body Z -> Cam Y.
+
+                # Tilt 30 deg. (Positive Pitch).
+                theta = np.radians(self.config.camera.tilt_deg)
+                ct, st = math.cos(theta), math.sin(theta)
+                R_tilt = np.array([
+                    [ct, 0, st],
+                    [0, 1, 0],
+                    [-st, 0, ct]
+                ])
+
+                R_base = np.array([
+                    [0, 0, 1],
+                    [1, 0, 0],
+                    [0, 1, 0]
+                ], dtype=np.float32)
+
+                R_c2b = R_tilt @ R_base
+
+                # V_c = R_c2b.T @ V_b
+                v_c = R_c2b.T @ v_b
+
+                # 3. Project to Normalized Image Plane
+                # u = x/z, v = y/z
+                if v_c[2] > 0.1: # Moving forward relative to camera
+                     u_foe = v_c[0] / v_c[2]
+                     v_foe = v_c[1] / v_c[2]
+                     calc_foe = (u_foe, v_foe)
+                     # logger.debug(f"Est FOE: {calc_foe}")
+
+            if calc_foe:
                  # Steer Target (u, v) towards FOE (foe_u, foe_v)
-                 # Or steer to center? No, user said "tracking the target into foe".
-                 # This means we want u_target = u_foe.
+                 # We want u_target = u_foe.
                  # Error = u_target - u_foe.
-                 u_err = u - foe_uv[0]
+                 u_err = u - calc_foe[0]
                  yaw_rate_cmd = -ctrl.k_yaw * u_err
             else:
                  # Fallback to centering
@@ -204,28 +278,31 @@ class DPCFlightController:
                 pitch_track = max(-1.0, min(1.0, pitch_track))
                 thrust_track = 0.55
             else:
-                # Use FOE for Pitch Control?
-                # We want v_target = v_foe.
-                # But Pitch also controls speed.
-                # If we assume speed is controlled by Drag/Thrust balance...
-                # Let's keep existing Dive Logic but bias with FOE?
-
-                if foe_uv:
-                    v_err = v - foe_uv[1]
-                    # If target is BELOW FOE (v > v_foe), we need to Pitch Down (Negative Rate)?
+                if calc_foe:
+                    v_err = v - calc_foe[1]
+                    # If target is BELOW FOE (v > v_foe), we need to Pitch Down (Negative Rate).
                     # Sim Pitch: Neg = Nose Down.
                     # Controller Pitch Rate: Neg = Nose Down.
                     # If v_err > 0, Target is "below" FOE (in image, +v is down).
                     # We are aiming "above" the target.
                     # We need to pitch down.
-                    # pitch_rate = -Kp * v_err.
                     pitch_track = -ctrl.k_pitch * v_err
                 else:
-                     # Fallback logic
+                     # Fallback logic based on Speed
                      pitch_bias = ctrl.pitch_bias_intercept + ctrl.pitch_bias_slope * pitch
                      pitch_bias = max(ctrl.pitch_bias_min, min(ctrl.pitch_bias_max, pitch_bias))
+
+                     # SPEED CONTROL FALLBACK
+                     # If too slow -> Pitch Down (Neg)
+                     # If too fast -> Pitch Up (Pos)
                      v_target = ctrl.velocity_limit - 1.0
-                     pitch_track = +ctrl.k_pitch * (v - v_target) + pitch_bias
+                     v_current = 0.0
+                     if velocity_est:
+                          v_current = math.sqrt(velocity_est['vx']**2 + velocity_est['vy']**2 + velocity_est['vz']**2)
+
+                     # v_current - v_target.
+                     # If fast (positive diff), want Pos Pitch (Up).
+                     pitch_track = +ctrl.k_pitch * (v_current - v_target) + pitch_bias
 
                 # Keep Safety Clamps
                 if pitch < -0.3 and pitch_track < 0.0:
