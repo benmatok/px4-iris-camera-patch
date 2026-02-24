@@ -10,19 +10,29 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from sim_interface import SimDroneInterface, PyGhostModel
 from flight_controller_gdpc import NumPyGhostModel
 from vision.projection import Projector
+from flight_config import FlightConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ComparePhysics")
 
 def compare_models(steps=20, dt=0.05):
+    config = FlightConfig()
+
     # 1. Initialize Ground Truth (Sim)
     proj = Projector(640, 480, 120.0, 30.0)
-    sim = SimDroneInterface(proj)
+    sim = SimDroneInterface(proj, config=config)
 
     # 2. Initialize Prediction Model (GDPC)
-    # Defaults from flight_controller_gdpc.py: mass=1.0, drag_coeff=0.1, thrust_coeff=1.0, tau=0.1
-    # Defaults from sim_interface.py: mass=1.0, drag_coeff=0.1, thrust_coeff=1.0, tau=0.1
-    pred_model = NumPyGhostModel()
+    # Use same config
+    phy = config.physics
+    pred_model = NumPyGhostModel(
+        mass=phy.mass,
+        drag_coeff=phy.drag_coeff,
+        thrust_coeff=phy.thrust_coeff,
+        tau=phy.tau,
+        g=phy.g,
+        max_thrust_base=phy.max_thrust_base
+    )
 
     # 3. Set Initial State
     # Start at Hover: thrust=0.5 (approx), orientation flat

@@ -117,9 +117,10 @@ class NumPyGhostModel:
             ay_thrust = thrust_force * ay_dir / self.mass
             az_thrust = thrust_force * az_dir / self.mass
 
-            ax_drag = -self.drag_coeff * vx
-            ay_drag = -self.drag_coeff * vy
-            az_drag = -self.drag_coeff * vz
+            # Match PyGhostModel: drag is divided by mass
+            ax_drag = -self.drag_coeff * vx / self.mass
+            ay_drag = -self.drag_coeff * vy / self.mass
+            az_drag = -self.drag_coeff * vz / self.mass
 
             ax = ax_thrust + ax_drag
             ay = ay_thrust + ay_drag
