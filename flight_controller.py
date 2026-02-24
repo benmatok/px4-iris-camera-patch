@@ -380,7 +380,7 @@ class DPCFlightController:
 
         # If Pitch > 0.0 (Horizon). Prevent further Nose Up to avoid backward flight.
         # pitch_rate_cmd Positive = Nose Up command.
-        if pitch > 0.0 and pitch_rate_cmd > 0.0:
+        if pitch > 0.5 and pitch_rate_cmd > 0.0:
              pitch_rate_cmd = 0.0
 
         # If Pitch < -1.0 (Too Nose Down)

@@ -48,7 +48,7 @@ class VisualTracker:
                     # Target Absolute NED
                     t_ned_x = tx
                     t_ned_y = ty
-                    t_ned_z = -tz
+                    t_ned_z = tz
 
                     # Drone Absolute NED
                     d_ned_x = drone_state_ned['px']
