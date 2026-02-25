@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # Constants
-DT = 0.05
+DT = 0.01
 
 class DiveValidator:
     def __init__(self, use_ground_truth=True, use_blind_mode=False, init_alt=50.0, init_dist=150.0, config: FlightConfig = None, sim_config: FlightConfig = None, ctrl_config: FlightConfig = None, control_use_gt=False):
@@ -216,7 +216,8 @@ class DiveValidator:
             if center:
                 # flight_controller expects PIXELS, not normalized coordinates
                 tracking_norm = center
-                tracking_size_norm = radius / 480.0
+                # Normalize radius by image height (800)
+                tracking_size_norm = radius / 800.0
 
             # --- VIO UPDATE (BA System) ---
 

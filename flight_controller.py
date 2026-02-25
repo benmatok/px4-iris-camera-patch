@@ -12,7 +12,7 @@ class DPCFlightController:
     """
     Standard ENU (East-North-Up) Flight Controller.
     """
-    def __init__(self, dt=0.05, mode='PID', config: FlightConfig = None):
+    def __init__(self, dt=0.01, mode='PID', config: FlightConfig = None):
         self.dt = dt
         self.mode = mode
         self.config = config or FlightConfig()
@@ -142,9 +142,27 @@ class DPCFlightController:
              self.est_vz = alpha_vel * vz_enu + (1-alpha_vel) * self.est_vz
 
         # 2. Tracking Control (Visual Servoing)
-        pitch_track = 0.0
+        pitch_rate_cmd = 0.0
         yaw_rate_cmd = 0.0
         thrust_track = 0.6
+
+        # --- CONSTANT PITCH MODE (Sim Pitch Positive = Nose Up, Negative = Nose Down) ---
+        target_pitch = ctrl.fixed_pitch # e.g. -0.10 rad (6 deg Nose Down)
+
+        # P-Controller for Pitch RATE to hold Pitch ANGLE
+        pitch_err = target_pitch - pitch
+
+        # P-Gain for Holding
+        # We need Negative Pitch Rate to Pitch Up (increase pitch value towards 0 or positive).
+        # We need Positive Pitch Rate to Pitch Down (decrease pitch value towards negative).
+        # Wait. Test 19: Cmd +1.0 -> Pitch -48 to -54 (More Negative).
+        # So Positive Cmd = Pitch Down (Negative Change).
+        # If Err = Target (-0.10) - Current (-0.84) = +0.74.
+        # We want to go UP (Pitch Up).
+        # Pitch Up needs Negative Cmd.
+        # So Gain must be Negative. `cmd = -K * err`.
+        pitch_rate_cmd = -ctrl.k_pitch_hold * pitch_err
+        pitch_rate_cmd = max(-1.0, min(1.0, pitch_rate_cmd))
 
         if tracking_uv:
             u, v = tracking_uv
@@ -158,9 +176,8 @@ class DPCFlightController:
                 trigger_rer = self.rer_smoothed > ctrl.dive_trigger_rer
                 trigger_v_pos = v > ctrl.dive_trigger_v_threshold
 
-                # IMMEDIATE TRIGGER if track is solid and near center (approach phase)
-                # To prevent "skidding back"
-                if abs(u - self.cam_cx) < 50 and abs(v - self.cam_cy) < 50:
+                # IMMEDIATE TRIGGER if track is solid and near center
+                if abs(u - self.cam_cx) < 100 and abs(v - self.cam_cy) < 100:
                      logger.info("Target Centered - FORCING DIVE.")
                      self.dive_initiated = True
 
@@ -202,6 +219,7 @@ class DPCFlightController:
                  v_px = calc_foe_norm[1] * self.cam_fy + self.cam_cy
                  calc_foe_px = (u_px, v_px)
 
+            # --- YAW CONTROL (Steering) ---
             if calc_foe_px:
                  u_err = u - calc_foe_px[0]
                  u_err_norm = u_err / self.cam_fx
@@ -212,86 +230,71 @@ class DPCFlightController:
 
             yaw_rate_cmd = max(-1.0, min(1.0, yaw_rate_cmd))
 
+            # --- THRUST CONTROL (Vertical Tracking) ---
             if not self.dive_initiated:
-                # Force forward bias in Cruise if Tracking
-                # Pitch Down (-ve) to accelerate
-                pitch_track = -0.3 # Bias
                 thrust_track = 0.55
             else:
-                # Tracking Pitch Control
-                # Priority: 1. FOE (Precise), 2. Center (Fallback)
-                if calc_foe_px:
-                    v_err = v - calc_foe_px[1]
-                    v_err_norm = v_err / self.cam_fy
-                    pitch_track = -ctrl.k_pitch * v_err_norm
+                # Use v_err to modulate thrust
+                # If target is low (v > center), we are too high -> Decrease Thrust (Sink)
+                # If target is high (v < center), we are too low -> Increase Thrust (Climb/Loft)
+
+                v_err = v - self.cam_cy
+                v_err_norm = v_err / self.cam_fy
+
+                # Thrust Base
+                thrust_base = 0.55
+
+                # Correction
+                # v_err_norm > 0 (Target Low) -> Want Less Thrust.
+                # v_err_norm < 0 (Target High) -> Want More Thrust.
+                thrust_correction = ctrl.k_thrust_vertical * v_err_norm
+
+                # If Pitch is significantly steeper than target (initial dive), cut thrust to avoid overspeed
+                if pitch < target_pitch - 0.2:
+                     thrust_track = 0.1 # Idle
                 else:
-                    # Fallback: Track Image Center
-                    v_err = v - self.cam_cy
-                    v_err_norm = v_err / self.cam_fy
-                    pitch_track = -ctrl.k_pitch * v_err_norm
+                     thrust_track = thrust_base - thrust_correction
 
-                pitch_track = max(-1.5, min(1.5, pitch_track))
-
-                thrust_base = ctrl.thrust_base_intercept + ctrl.thrust_base_slope * pitch
-                thrust_base = max(ctrl.thrust_min, min(ctrl.thrust_max, thrust_base))
-
-                effective_k_rer = ctrl.k_rer * (abs(pitch) ** 2)
-                thrust_correction = max(0.0, effective_k_rer * (self.rer_smoothed - ctrl.rer_target))
-                thrust_track = thrust_base - thrust_correction
-
-                if velocity_est:
-                     if vel_mag < 5.0:
-                          thrust_track += 0.1
-                     elif vel_mag > 6.0:
-                          thrust_track -= 0.1
-
-                thrust_track = max(0.1, min(0.95, thrust_track))
+                thrust_track = max(ctrl.thrust_min, min(ctrl.thrust_max, thrust_track))
 
         else:
             yaw_rate_cmd = 0.0
-            pitch_track = 0.0
+            # Keep constant pitch
             thrust_track = 0.55
 
-        # --- Active Braking ---
+        # --- Active Braking (Override if too fast) ---
         if velocity_est:
-             limit = 6.0
+             limit = ctrl.velocity_limit # 10.0
              vio_vz_enu = -velocity_est['vz']
              est_vz_error = abs(vio_vz_enu - self.est_vz)
-             vio_plausible = (est_vz_error < 5.0) and (vel_mag < 10.0)
+             vio_plausible = (est_vz_error < 5.0) and (vel_mag < 15.0)
 
              if vel_mag > limit:
                   if vio_plausible:
                       logger.info(f"HARD LIMIT: v={vel_mag:.2f} > {limit}. Engaging Airbrake.")
-                      target_pitch_brake = 0.5 + 0.1 * (vel_mag - limit)
-                      target_pitch_brake = min(1.2, target_pitch_brake) # Allow steeper flare
-                      k_p_brake = 4.0 # Stiffer brake
-                      pitch_error = target_pitch_brake - pitch
-                      pitch_brake_rate = k_p_brake * pitch_error
-                      pitch_brake_rate = max(-1.5, min(1.5, pitch_brake_rate)) # Increased Range
-                      pitch_track = pitch_brake_rate
+
+                      target_pitch_brake = 0.0 # Level Out
+                      pitch_err_brake = target_pitch_brake - pitch
+                      pitch_rate_cmd = -ctrl.k_pitch_brake * pitch_err_brake
+
                       thrust_track = 0.1 # Cut throttle
 
         # --- Safety Floor ---
         if obs_pz is not None and obs_pz < 15.0 and self.est_vz < -3.0:
-             target_pitch_floor = 0.3
-             pitch_error_floor = target_pitch_floor - pitch
-             pitch_floor_rate = 3.0 * pitch_error_floor
-             pitch_floor_rate = max(-1.0, min(1.0, pitch_floor_rate))
-             pitch_track = pitch_floor_rate
+             target_pitch_floor = 0.3 # Nose Up
+             pitch_err_floor = target_pitch_floor - pitch
+             pitch_rate_cmd = -ctrl.k_pitch_floor * pitch_err_floor
              thrust_track = 0.8
 
         # --- Final Command ---
-        if pitch > 1.2 and pitch_track > 0.0:
-             pitch_track = 0.0
 
         yaw_rate_cmd += extra_yaw_rate
-
         roll_rate_cmd = 4.0 * (0.0 - roll)
 
         action = {
             'thrust': thrust_track,
             'roll_rate': roll_rate_cmd,
-            'pitch_rate': -pitch_track,
+            'pitch_rate': pitch_rate_cmd,
             'yaw_rate': -yaw_rate_cmd
         }
         self.last_action = action
