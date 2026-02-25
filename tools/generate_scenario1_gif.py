@@ -131,11 +131,18 @@ def generate_gif():
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
             # Draw Target Marker on Image if detected or GT Project
+            # Draw a large Green X
             if center:
-                 cv2.circle(img_rgb, (int(center[0]), int(center[1])), 10, (0, 255, 0), 2)
+                 cx, cy = int(center[0]), int(center[1])
+                 size = 20
+                 # Draw X
+                 cv2.line(img_rgb, (cx - size, cy - size), (cx + size, cy + size), (0, 255, 0), 2)
+                 cv2.line(img_rgb, (cx - size, cy + size), (cx + size, cy - size), (0, 255, 0), 2)
+                 # Draw Circle
+                 cv2.circle(img_rgb, (cx, cy), size + 5, (0, 255, 0), 2)
 
             ax2.imshow(img_rgb)
-            ax2.set_title("Drone Camera View")
+            ax2.set_title("Drone Camera View (Green X = Tracked Target)")
 
             # Save using Buffer
             buf = io.BytesIO()
