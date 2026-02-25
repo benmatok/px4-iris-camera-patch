@@ -129,6 +129,11 @@ def generate_gif():
             ax2 = fig.add_subplot(1, 2, 2)
             # OpenCV BGR -> RGB
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+            # Draw Target Marker on Image if detected or GT Project
+            if center:
+                 cv2.circle(img_rgb, (int(center[0]), int(center[1])), 10, (0, 255, 0), 2)
+
             ax2.imshow(img_rgb)
             ax2.set_title("Drone Camera View")
 
