@@ -1,0 +1,14 @@
+INFO:sim_interface:SimDroneInterface initialized with PyGhostModel. Drag=0.5, Mass=1.0
+INFO:sim_interface:Reset to Scenario: Blind Dive with Wind: (0.0, 0.0)
+INFO:mission_manager:MissionManager reset to TAKEOFF with Target Alt: 50.0
+Traceback (most recent call last):
+  File "/app/tests/validate_dive_tracking.py", line 515, in <module>
+    validator_blind = DiveValidator(use_ground_truth=True, use_blind_mode=True, init_alt=50.0, init_dist=150.0)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/tests/validate_dive_tracking.py", line 66, in __init__
+    self.controller = DPCFlightController(dt=DT, config=self.ctrl_config)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/flight_controller.py", line 54, in __init__
+    fov_rad = math.radians(self.config.camera.fov)
+                           ^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'CameraConfig' object has no attribute 'fov'

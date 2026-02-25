@@ -5,8 +5,8 @@ from typing import List, Dict, Any
 class CameraConfig:
     tilt_deg: float = 30.0
     fov_deg: float = 120.0
-    width: int = 640
-    height: int = 480
+    width: int = 1280
+    height: int = 800
 
 @dataclass
 class VisionConfig:
@@ -18,7 +18,16 @@ class VisionConfig:
 @dataclass
 class ControlConfig:
     k_yaw: float = 3.31
-    k_pitch: float = 0.8 # Slightly increased for responsiveness
+    k_pitch: float = 2.5
+
+    # Specific Gains
+    k_pitch_hold: float = 4.0
+    k_pitch_brake: float = 4.0
+    k_pitch_floor: float = 3.0
+
+    # Vertical Tracking via Thrust
+    k_thrust_vertical: float = 1.5
+    fixed_pitch: float = -0.10
 
     # Cruise / Dive Logic
     dive_trigger_rer: float = 0.23
@@ -26,7 +35,7 @@ class ControlConfig:
     cruise_pitch_gain: float = 0.34
 
     # Pitch Bias Logic: bias = A + B * pitch
-    pitch_bias_intercept: float = 0.50 # Aim slightly higher (Loft)
+    pitch_bias_intercept: float = 0.50
     pitch_bias_slope: float = 0.33
     pitch_bias_min: float = -0.1
     pitch_bias_max: float = 0.3
@@ -40,9 +49,9 @@ class ControlConfig:
 
     # Thrust
     thrust_base_intercept: float = 0.60
-    thrust_base_slope: float = 0.60 # Steeper slope to cut thrust in dives
+    thrust_base_slope: float = 0.60
     thrust_min: float = 0.15
-    thrust_max: float = 0.5 # Base max
+    thrust_max: float = 0.8
 
     rer_target: float = 0.25
     k_rer: float = 2.75
@@ -69,30 +78,30 @@ class ControlConfig:
     final_mode_overshoot_v_target: float = 0.24
 
     # Velocity Estimation & Speed Limiting
-    velocity_limit: float = 6.0 # Enforce 6m/s limit
+    velocity_limit: float = 10.0 # Increased to 10.0 to prevent brake oscillation
     braking_pitch_gain: float = 0.35
     max_braking_pitch_rate: float = 1.0
     velocity_smoothing_alpha: float = 0.53
 
 @dataclass
 class GDPCConfig:
-    horizon: int = 40 # 2.0 seconds
-    opt_steps: int = 100 # High precision optimization
+    horizon: int = 40
+    opt_steps: int = 100
     lr: float = 0.05
 
     # Weights for Loss Function (Aggressive Tuning)
-    w_pos: float = 50.0  # Force path adherence
-    w_vel: float = 1.0  # Minimal damping
+    w_pos: float = 50.0
+    w_vel: float = 1.0
     w_att: float = 0.0
 
     w_thrust: float = 0.001
-    w_roll: float = 20.0 # Relaxed attitude constraint
+    w_roll: float = 20.0
     w_pitch: float = 20.0
     w_yaw: float = 10.0
 
-    w_smoothness: float = 0.1 # Allow aggressive maneuvers
-    w_terminal: float = 5000.0 # Must hit target (high accuracy)
-    w_terminal_vel: float = 500.0 # Strong stopping incentive
+    w_smoothness: float = 0.1
+    w_terminal: float = 5000.0
+    w_terminal_vel: float = 500.0
 
 @dataclass
 class MissionConfig:
@@ -105,7 +114,7 @@ class MissionConfig:
 @dataclass
 class PhysicsConfig:
     mass: float = 1.0
-    drag_coeff: float = 0.5 # Increased drag for robust speed control
+    drag_coeff: float = 0.5
     thrust_coeff: float = 1.0
     tau: float = 0.1
     g: float = 9.81

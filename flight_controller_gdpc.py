@@ -6,8 +6,8 @@ from scipy.optimize import minimize
 
 logger = logging.getLogger(__name__)
 
-# --- Inlined SE3 Utils (NumPy) ---
-def so3_exp_np(omega):
+# --- Inlined SE3 Utils (Directly from sim_interface.py) ---
+def so3_exp(omega):
     theta_sq = np.dot(omega, omega)
     theta = math.sqrt(theta_sq)
     K = np.array([
@@ -23,7 +23,7 @@ def so3_exp_np(omega):
         b = (1.0 - math.cos(theta)) * (inv_theta * inv_theta)
         return np.eye(3, dtype=np.float32) + a * K + b * np.matmul(K, K)
 
-def rpy_to_matrix_np(roll, pitch, yaw):
+def rpy_to_matrix(roll, pitch, yaw):
     cr = math.cos(roll); sr = math.sin(roll)
     cp = math.cos(pitch); sp = math.sin(pitch)
     cy = math.cos(yaw); sy = math.sin(yaw)
@@ -39,7 +39,7 @@ def rpy_to_matrix_np(roll, pitch, yaw):
     R[2, 2] = cp * cr
     return R
 
-def matrix_to_rpy_np(R):
+def matrix_to_rpy(R):
     sy = math.sqrt(R[0, 0] * R[0, 0] + R[1, 0] * R[1, 0])
     singular = sy < 1e-6
     if not singular:
@@ -53,13 +53,92 @@ def matrix_to_rpy_np(R):
     return roll, pitch, yaw
 
 class NumPyGhostModel:
-    def __init__(self, mass=1.0, drag_coeff=0.1, thrust_coeff=1.0, tau=0.1, g=9.81, max_thrust_base=20.0):
-        self.mass = mass
-        self.drag_coeff = drag_coeff
-        self.thrust_coeff = thrust_coeff
-        self.tau = tau
-        self.g = g
-        self.max_thrust_base = max_thrust_base
+    def __init__(self, mass=1.0, drag_coeff=0.5, thrust_coeff=1.0, tau=0.1, g=9.81, max_thrust_base=20.0):
+        self.mass = float(mass)
+        self.drag_coeff = float(drag_coeff)
+        self.thrust_coeff = float(thrust_coeff)
+        self.wind_x = 0.0
+        self.wind_y = 0.0
+        self.tau = float(tau)
+        self.G = float(g)
+        self.MAX_THRUST_BASE = float(max_thrust_base)
+
+    def step_scalar(self, state_dict, action_dict, dt):
+        """
+        Single step logic ported directly from PyGhostModel.step in sim_interface.py
+        """
+        px, py, pz = state_dict['px'], state_dict['py'], state_dict['pz']
+        vx, vy, vz = state_dict['vx'], state_dict['vy'], state_dict['vz']
+        roll, pitch, yaw = state_dict['roll'], state_dict['pitch'], state_dict['yaw']
+        wx = state_dict.get('wx', 0.0)
+        wy = state_dict.get('wy', 0.0)
+        wz = state_dict.get('wz', 0.0)
+
+        thrust = action_dict['thrust']
+        roll_rate_cmd = action_dict['roll_rate']
+        pitch_rate_cmd = action_dict['pitch_rate']
+        yaw_rate_cmd = action_dict['yaw_rate']
+
+        alpha = dt / self.tau
+        denom = 1.0 + alpha
+        next_wx = (wx + roll_rate_cmd * alpha) / denom
+        next_wy = (wy + pitch_rate_cmd * alpha) / denom
+        next_wz = (wz + yaw_rate_cmd * alpha) / denom
+
+        avg_wx = 0.5 * (wx + next_wx)
+        avg_wy = 0.5 * (wy + next_wy)
+        avg_wz = 0.5 * (wz + next_wz)
+
+        R_curr = rpy_to_matrix(roll, -pitch, -yaw)
+        omega_vec = np.array([avg_wx, avg_wy, avg_wz], dtype=np.float32) * dt
+        R_update = so3_exp(omega_vec)
+        R_next = np.matmul(R_curr, R_update)
+
+        r, p, y = matrix_to_rpy(R_next)
+        next_roll = r
+        next_pitch = -p
+        next_yaw = -y
+
+        max_thrust = self.MAX_THRUST_BASE * self.thrust_coeff
+        thrust_force = max(0.0, thrust * max_thrust)
+
+        ax_dir = R_next[0, 2]
+        ay_dir = R_next[1, 2]
+        az_dir = R_next[2, 2]
+
+        ax_thrust = thrust_force * ax_dir / self.mass
+        ay_thrust = thrust_force * ay_dir / self.mass
+        az_thrust = thrust_force * az_dir / self.mass
+
+        ax_drag = -self.drag_coeff * (vx - self.wind_x)
+        ay_drag = -self.drag_coeff * (vy - self.wind_y)
+        az_drag = -self.drag_coeff * vz
+
+        # Fix drag units if needed (PyGhostModel logic check)
+        # sim_interface.py has: ax_drag = (-self.drag_coeff * (vx - self.wind_x)) / self.mass
+        # So we divide by mass here.
+        ax_drag /= self.mass
+        ay_drag /= self.mass
+        az_drag /= self.mass
+
+        ax = ax_thrust + ax_drag
+        ay = ay_thrust + ay_drag
+        az = az_thrust + az_drag - self.G
+
+        next_vx = vx + ax * dt
+        next_vy = vy + ay * dt
+        next_vz = vz + az * dt
+
+        next_px = px + next_vx * dt
+        next_py = py + next_vy * dt
+        next_pz = pz + next_vz * dt
+
+        return {
+            'px': next_px, 'py': next_py, 'pz': next_pz,
+            'vx': next_vx, 'vy': next_vy, 'vz': next_vz,
+            'roll': next_roll, 'pitch': next_pitch, 'yaw': next_yaw,
+            'wx': next_wx, 'wy': next_wy, 'wz': next_wz
+        }
 
     def rollout(self, initial_state_dict, action_seq, dt=0.05):
         """
@@ -67,90 +146,40 @@ class NumPyGhostModel:
         Returns:
             trajectory: (H, 12) numpy array
         """
-        px, py, pz = initial_state_dict['px'], initial_state_dict['py'], initial_state_dict['pz']
-        vx, vy, vz = initial_state_dict['vx'], initial_state_dict['vy'], initial_state_dict['vz']
-        roll, pitch, yaw = initial_state_dict['roll'], initial_state_dict['pitch'], initial_state_dict['yaw']
-        wx, wy, wz = initial_state_dict['wx'], initial_state_dict['wy'], initial_state_dict['wz']
+        # Convert initial state to current working state
+        current_state = initial_state_dict.copy()
 
         H = len(action_seq)
         traj = np.zeros((H, 12), dtype=np.float32)
 
         for t in range(H):
+            # Extract action
             u = action_seq[t]
-            thrust_cmd = u[0]
-            r_rate_cmd = u[1]
-            p_rate_cmd = u[2]
-            y_rate_cmd = u[3]
+            action_dict = {
+                'thrust': float(u[0]),
+                'roll_rate': float(u[1]),
+                'pitch_rate': float(u[2]),
+                'yaw_rate': float(u[3])
+            }
 
-            alpha = dt / self.tau
-            denom = 1.0 + alpha
+            # Step
+            next_state = self.step_scalar(current_state, action_dict, dt)
+            current_state = next_state
 
-            next_wx = (wx + r_rate_cmd * alpha) / denom
-            next_wy = (wy + p_rate_cmd * alpha) / denom
-            next_wz = (wz + y_rate_cmd * alpha) / denom
-
-            avg_wx = 0.5 * (wx + next_wx)
-            avg_wy = 0.5 * (wy + next_wy)
-            avg_wz = 0.5 * (wz + next_wz)
-
-            # Using same PyGhostModel convention: (r, -p, -y)
-            R_curr = rpy_to_matrix_np(roll, -pitch, -yaw)
-            omega_vec = np.array([avg_wx, avg_wy, avg_wz], dtype=np.float32) * dt
-            R_update = so3_exp_np(omega_vec)
-            R_next = np.matmul(R_curr, R_update)
-
-            next_roll, next_p_inv, next_y_inv = matrix_to_rpy_np(R_next)
-            next_pitch = -next_p_inv
-            next_yaw = -next_y_inv
-
-            max_thrust = self.max_thrust_base * self.thrust_coeff
-            # Ensure thrust > 0 (ReLU equivalent)
-            thrust_force = max(0.0, thrust_cmd) * max_thrust
-
-            # Thrust in Body: [0, 0, T] (ENU Z is Up, but this is weird)
-            # PyGhostModel uses R_next[0,2], [1,2], [2,2]
-            ax_dir = R_next[0, 2]
-            ay_dir = R_next[1, 2]
-            az_dir = R_next[2, 2]
-
-            ax_thrust = thrust_force * ax_dir / self.mass
-            ay_thrust = thrust_force * ay_dir / self.mass
-            az_thrust = thrust_force * az_dir / self.mass
-
-            ax_drag = -self.drag_coeff * vx
-            ay_drag = -self.drag_coeff * vy
-            az_drag = -self.drag_coeff * vz
-
-            ax = ax_thrust + ax_drag
-            ay = ay_thrust + ay_drag
-            az = az_thrust + az_drag - self.g
-
-            next_vx = vx + ax * dt
-            next_vy = vy + ay * dt
-            next_vz = vz + az * dt
-
-            next_px = px + next_vx * dt
-            next_py = py + next_vy * dt
-            next_pz = pz + next_vz * dt
-
-            # Update state
-            px, py, pz = next_px, next_py, next_pz
-            vx, vy, vz = next_vx, next_vy, next_vz
-            roll, pitch, yaw = next_roll, next_pitch, next_yaw
-            wx, wy, wz = next_wx, next_wy, next_wz
-
-            traj[t, 0] = px
-            traj[t, 1] = py
-            traj[t, 2] = pz
-            traj[t, 3] = vx
-            traj[t, 4] = vy
-            traj[t, 5] = vz
-            traj[t, 6] = roll
-            traj[t, 7] = pitch
-            traj[t, 8] = yaw
-            traj[t, 9] = wx
-            traj[t, 10] = wy
-            traj[t, 11] = wz
+            # Store in trajectory array
+            # Layout: px, py, pz, vx, vy, vz, roll, pitch, yaw, wx, wy, wz
+            traj[t, 0] = current_state['px']
+            traj[t, 1] = current_state['py']
+            traj[t, 2] = current_state['pz']
+            traj[t, 3] = current_state['vx']
+            traj[t, 4] = current_state['vy']
+            traj[t, 5] = current_state['vz']
+            traj[t, 6] = current_state['roll']
+            traj[t, 7] = current_state['pitch']
+            traj[t, 8] = current_state['yaw']
+            traj[t, 9] = current_state['wx']
+            traj[t, 10] = current_state['wy']
+            traj[t, 11] = current_state['wz']
 
         return traj
 
@@ -159,37 +188,14 @@ class GDPCOptimizer:
         self.config = config
         self.gdpc_cfg = config.gdpc
 
-        # Initialize Ensemble Models (Particle Ghosts)
+        # Initialize Single Nominal Model (No Ensemble) to exactly mimic simulation
         phy = config.physics
-
-        # Nominal
-        self.models = []
-        self.models.append(NumPyGhostModel(
+        self.model = NumPyGhostModel(
             mass=phy.mass, drag_coeff=phy.drag_coeff, thrust_coeff=phy.thrust_coeff,
             tau=phy.tau, g=phy.g, max_thrust_base=phy.max_thrust_base
-        ))
-
-        # Perturbed (Mass +/- 5%, Drag +/- 10%)
-        # Heavy High Drag
-        self.models.append(NumPyGhostModel(
-            mass=phy.mass * 1.05, drag_coeff=phy.drag_coeff * 1.1, thrust_coeff=phy.thrust_coeff,
-            tau=phy.tau, g=phy.g, max_thrust_base=phy.max_thrust_base
-        ))
-        # Light Low Drag
-        self.models.append(NumPyGhostModel(
-            mass=phy.mass * 0.95, drag_coeff=phy.drag_coeff * 0.9, thrust_coeff=phy.thrust_coeff,
-            tau=phy.tau, g=phy.g, max_thrust_base=phy.max_thrust_base
-        ))
-        # Nominal High Drag
-        self.models.append(NumPyGhostModel(
-            mass=phy.mass, drag_coeff=phy.drag_coeff * 1.2, thrust_coeff=phy.thrust_coeff,
-            tau=phy.tau, g=phy.g, max_thrust_base=phy.max_thrust_base
-        ))
-        # Nominal Low Drag
-        self.models.append(NumPyGhostModel(
-            mass=phy.mass, drag_coeff=phy.drag_coeff * 0.8, thrust_coeff=phy.thrust_coeff,
-            tau=phy.tau, g=phy.g, max_thrust_base=phy.max_thrust_base
-        ))
+        )
+        # Store as list for compatibility if needed, but we will use self.model directly
+        self.models = [self.model]
 
         self.u_seq = None # Shape (H, 4)
 
@@ -198,7 +204,7 @@ class GDPCOptimizer:
 
     def compute_action(self, state_obs, target_pos_world):
         """
-        Uses SciPy Optimize to find the best action sequence minimizing expected cost over ghosts.
+        Uses SciPy Optimize to find the best action sequence minimizing cost.
         """
         H = self.gdpc_cfg.horizon
 
@@ -212,62 +218,58 @@ class GDPCOptimizer:
         def cost_fn(u_flat):
             u = u_flat.reshape((H, 4))
 
-            total_cost_ensemble = 0.0
+            # Single Model Rollout
+            traj = self.model.rollout(state_obs, u)
 
-            for model in self.models:
-                traj = model.rollout(state_obs, u)
+            pos_traj = traj[:, 0:3]
+            vel_traj = traj[:, 3:6]
+            att_traj = traj[:, 6:9]
 
-                pos_traj = traj[:, 0:3]
-                vel_traj = traj[:, 3:6]
-                att_traj = traj[:, 6:9]
+            dist_sq = np.sum((pos_traj - target_pos_world)**2, axis=1)
+            dist_sq = np.clip(dist_sq, 0, 1e6)
+            loss_pos = np.mean(dist_sq) * self.gdpc_cfg.w_pos
 
-                dist_sq = np.sum((pos_traj - target_pos_world)**2, axis=1)
-                dist_sq = np.clip(dist_sq, 0, 1e6)
-                loss_pos = np.mean(dist_sq) * self.gdpc_cfg.w_pos
+            # Velocity Tracking (5.0 m/s)
+            v_norm_sq = np.sum(vel_traj**2, axis=1)
+            v_norm = np.sqrt(v_norm_sq + 1e-6)
+            loss_vel_track = np.mean((v_norm - 5.0)**2) * 20.0 # Hardcoded weight for now
 
-                # Velocity Tracking (5.0 m/s)
-                v_norm_sq = np.sum(vel_traj**2, axis=1)
-                v_norm = np.sqrt(v_norm_sq + 1e-6)
-                loss_vel_track = np.mean((v_norm - 5.0)**2) * 20.0 # Hardcoded weight for now
+            # Stability (Pitch ~ -0.1 rad for glide)
+            loss_pitch_stab = np.mean((att_traj[:, 1] - (-0.1))**2) * 50.0
 
-                # Stability (Pitch ~ -0.1 rad for glide)
-                loss_pitch_stab = np.mean((att_traj[:, 1] - (-0.1))**2) * 50.0
+            v_sq = v_norm_sq
+            v_sq = np.clip(v_sq, 0, 1e6)
+            loss_vel = np.mean(v_sq) * self.gdpc_cfg.w_vel
 
-                v_sq = v_norm_sq
-                v_sq = np.clip(v_sq, 0, 1e6)
-                loss_vel = np.mean(v_sq) * self.gdpc_cfg.w_vel
+            loss_roll = np.mean(att_traj[:, 0]**2) * self.gdpc_cfg.w_roll
+            loss_pitch = np.mean(att_traj[:, 1]**2) * self.gdpc_cfg.w_pitch
 
-                loss_roll = np.mean(att_traj[:, 0]**2) * self.gdpc_cfg.w_roll
-                loss_pitch = np.mean(att_traj[:, 1]**2) * self.gdpc_cfg.w_pitch
+            loss_thrust = np.mean((u[:, 0] - 0.5)**2) * self.gdpc_cfg.w_thrust
 
-                loss_thrust = np.mean((u[:, 0] - 0.5)**2) * self.gdpc_cfg.w_thrust
+            u_delta = u[1:] - u[:-1]
+            loss_smooth = np.mean(np.sum(u_delta**2, axis=1)) * self.gdpc_cfg.w_smoothness
 
-                u_delta = u[1:] - u[:-1]
-                loss_smooth = np.mean(np.sum(u_delta**2, axis=1)) * self.gdpc_cfg.w_smoothness
+            final_pos = pos_traj[-1]
+            final_dist_sq = np.sum((final_pos - target_pos_world)**2)
+            final_dist_sq = np.clip(final_dist_sq, 0, 1e6)
+            loss_terminal = final_dist_sq * self.gdpc_cfg.w_terminal
 
-                final_pos = pos_traj[-1]
-                final_dist_sq = np.sum((final_pos - target_pos_world)**2)
-                final_dist_sq = np.clip(final_dist_sq, 0, 1e6)
-                loss_terminal = final_dist_sq * self.gdpc_cfg.w_terminal
+            final_vel = vel_traj[-1]
+            loss_terminal_vel = np.sum(final_vel**2) * self.gdpc_cfg.w_terminal_vel
+            loss_terminal_vel = np.clip(loss_terminal_vel, 0, 1e6)
 
-                final_vel = vel_traj[-1]
-                loss_terminal_vel = np.sum(final_vel**2) * self.gdpc_cfg.w_terminal_vel
-                loss_terminal_vel = np.clip(loss_terminal_vel, 0, 1e6)
+            rates = u[:, 1:]
+            rate_penalty = np.mean(np.sum(rates**2, axis=1)) * 0.01
 
-                rates = u[:, 1:]
-                rate_penalty = np.mean(np.sum(rates**2, axis=1)) * 0.01
+            v_norm_traj = np.sqrt(np.sum(vel_traj**2, axis=1))
+            excess_v = np.maximum(0, v_norm_traj - self.config.control.velocity_limit)
+            loss_limit = np.sum(excess_v**2) * 100.0
 
-                v_norm_traj = np.sqrt(np.sum(vel_traj**2, axis=1))
-                excess_v = np.maximum(0, v_norm_traj - self.config.control.velocity_limit)
-                loss_limit = np.sum(excess_v**2) * 100.0
+            total_cost = (loss_pos + loss_vel + loss_roll + loss_pitch + loss_thrust + loss_smooth + loss_terminal + loss_terminal_vel + rate_penalty + loss_limit + loss_vel_track + loss_pitch_stab)
 
-                total_cost_ensemble += (loss_pos + loss_vel + loss_roll + loss_pitch + loss_thrust + loss_smooth + loss_terminal + loss_terminal_vel + rate_penalty + loss_limit + loss_vel_track + loss_pitch_stab)
-
-            avg_cost = total_cost_ensemble / len(self.models)
-
-            if not np.isfinite(avg_cost):
+            if not np.isfinite(total_cost):
                 return 1e12
-            return avg_cost
+            return total_cost
 
         # Bounds
         bounds = []
@@ -286,10 +288,8 @@ class GDPCOptimizer:
 
         action_np = self.u_seq[0]
 
-        # Generate ALL trajectories for visualization
-        ghost_trajs = []
-        for model in self.models:
-            ghost_trajs.append(model.rollout(state_obs, self.u_seq))
+        # Generate trajectory for visualization
+        ghost_trajs = [self.model.rollout(state_obs, self.u_seq)]
 
         return {
             'thrust': float(action_np[0]),

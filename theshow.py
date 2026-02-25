@@ -29,14 +29,15 @@ except ImportError as e:
     sys.exit(1)
 
 # Constants
-DT = 0.05
+DT = 0.01
 
 class TheShow:
     def __init__(self):
         try:
             # 1. Initialize Components
             # Tilt 30.0 (Up) as requested
-            self.projector = Projector(width=640, height=480, fov_deg=120.0, tilt_deg=30.0)
+            # Resolution updated to 1280x800 per config
+            self.projector = Projector(width=1280, height=800, fov_deg=120.0, tilt_deg=30.0)
 
             # Scenario / Sim
             self.sim = SimDroneInterface(self.projector)
@@ -279,9 +280,10 @@ class TheShow:
         tracking_norm = None
         tracking_size_norm = None
         if center:
-            tracking_norm = self.projector.pixel_to_normalized(center[0], center[1])
-            # Normalize radius by image height (480)
-            tracking_size_norm = radius / 480.0
+            # Flight Controller expects PIXELS, not normalized coordinates
+            tracking_norm = center
+            # Normalize radius by image height (800)
+            tracking_size_norm = radius / 800.0
 
         # 3. Update Mission Logic
         # Pass sanitized relative state to mission (px=0, py=0)

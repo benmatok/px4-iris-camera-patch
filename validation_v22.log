@@ -1,0 +1,57 @@
+DEBUG: T=0.00
+  Drone NED: px=0.0, py=0.0, pz=-50.0, pitch=-48.4, yaw=90.0
+  Target NED: [0.0, 150.0, -0.0]
+  Center UV: (np.float64(640.0), np.float64(399.99999999999994))
+T=0.00 State=HOMING Dist=158.11 Pos=(0.0, 0.0, 50.0) UV=(640.00, 400.00)
+      SimV=0.00 VioV=0.08 BA=[0.00, 0.00, 0.00]
+DEBUG: T=0.01
+  Drone NED: px=0.0, py=0.0, pz=-50.0, pitch=-48.0, yaw=90.0
+  Target NED: [0.0, 150.0, -0.0]
+  Center UV: (np.float64(640.0), np.float64(403.08082846970257))
+DEBUG: T=0.02
+  Drone NED: px=0.0, py=0.1, pz=-50.0, pitch=-46.7, yaw=90.0
+  Target NED: [0.0, 150.0, -0.0]
+  Center UV: (np.float64(640.0), np.float64(411.2979360386625))
+DEBUG: T=0.03
+  Drone NED: px=0.0, py=0.1, pz=-50.0, pitch=-44.9, yaw=90.0
+  Target NED: [0.0, 150.0, -0.0]
+  Center UV: (np.float64(640.0), np.float64(422.9571982349546))
+DEBUG: T=0.04
+  Drone NED: px=0.0, py=0.2, pz=-49.9, pitch=-42.7, yaw=90.0
+  Target NED: [0.0, 150.0, -0.0]
+  Center UV: (np.float64(640.0), np.float64(436.95869280861007))
+T=0.20 State=HOMING Dist=155.76 Pos=(1.7, -0.0, 47.7) UV=(575.17, 719.36)
+      SimV=5.06 VioV=1.38 BA=[-0.00, -0.00, 0.00]
+T=0.40 State=HOMING Dist=152.35 Pos=(3.4, 0.1, 41.4) UV=None
+      SimV=6.27 VioV=2.85 BA=[-0.00, -0.00, -0.00]
+T=0.60 State=HOMING Dist=149.61 Pos=(5.1, 1.0, 37.2) UV=None
+      SimV=3.54 VioV=4.47 BA=[-0.00, -0.00, -0.00]
+T=0.80 State=HOMING Dist=147.49 Pos=(6.9, 2.6, 35.5) UV=None
+      SimV=2.71 VioV=6.05 BA=[-0.00, -0.00, -0.00]
+T=1.00 State=HOMING Dist=145.33 Pos=(8.1, 3.8, 31.3) UV=None
+      SimV=6.93 VioV=7.22 BA=[-0.00, -0.00, -0.00]
+T=1.20 State=HOMING Dist=143.35 Pos=(8.5, 4.0, 22.4) UV=None
+      SimV=10.54 VioV=8.57 BA=[-0.00, -0.00, -0.00]
+T=1.40 State=HOMING Dist=142.50 Pos=(8.0, 3.1, 11.4) UV=None
+      SimV=9.06 VioV=10.17 BA=[-0.00, -0.00, -0.00]
+T=1.60 State=HOMING Dist=144.65 Pos=(5.5, -0.6, 7.2) UV=None
+      SimV=5.56 VioV=12.06 BA=[0.00, -0.00, -0.00]
+T=1.80 State=HOMING Dist=148.49 Pos=(1.9, -5.8, 9.0) UV=None
+      SimV=8.04 VioV=13.79 BA=[0.00, -0.00, -0.00]
+T=2.00 State=HOMING Dist=153.60 Pos=(-2.4, -12.1, 14.4) UV=None
+      SimV=10.42 VioV=15.38 BA=[0.00, -0.00, -0.00]
+T=2.20 State=HOMING Dist=158.72 Pos=(-6.4, -17.7, 20.4) UV=None
+      SimV=7.15 VioV=16.69 BA=[0.00, -0.00, -0.00]
+T=2.40 State=HOMING Dist=161.38 Pos=(-8.2, -20.3, 24.8) UV=None
+      SimV=4.27 VioV=18.03 BA=[0.00, -0.00, -0.00]
+T=2.60 State=HOMING Dist=162.32 Pos=(-8.5, -20.7, 28.3) UV=None
+      SimV=3.23 VioV=19.37 BA=[0.00, -0.00, -0.00]
+T=2.80 State=HOMING Dist=162.22 Pos=(-7.9, -19.9, 31.3) UV=None
+      SimV=3.16 VioV=20.71 BA=[0.00, -0.00, -0.00]
+Saved plot to validation_dive_tracking.png
+Final Distance (Blind Web): 161.55m
+FAILURE: Blind Web Dive Failed
+
+--- Prediction Error Analysis (Blind/VIO Run) ---
+Mean Prediction Error: 3.5126m
+Max Prediction Error: 6.5649m
