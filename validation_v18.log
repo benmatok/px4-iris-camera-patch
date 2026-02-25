@@ -1,0 +1,33 @@
+DEBUG: T=0.00
+  Drone NED: px=0.0, py=0.0, pz=-50.0, pitch=-48.4, yaw=90.0
+  Target NED: [0.0, 150.0, -0.0]
+  Center UV: (np.float64(320.0), np.float64(239.99999999999997))
+T=0.00 State=HOMING Dist=158.11 Pos=(0.0, 0.0, 50.0) UV=(320.00, 240.00)
+      SimV=0.00 VioV=0.40 BA=[0.00, 0.00, 0.00]
+DEBUG: T=0.05
+  Drone NED: px=0.0, py=0.0, pz=-50.0, pitch=-48.4, yaw=90.0
+  Target NED: [0.0, 150.0, -0.0]
+  Center UV: (np.float64(320.0), np.float64(239.98546495865781))
+DEBUG: T=0.10
+  Drone NED: px=0.0, py=0.0, pz=-50.0, pitch=-48.4, yaw=90.0
+  Target NED: [0.0, 150.0, -0.0]
+  Center UV: (np.float64(320.0), np.float64(239.9570479307127))
+DEBUG: T=0.15
+  Drone NED: px=0.0, py=0.1, pz=-49.9, pitch=-48.4, yaw=90.0
+  Target NED: [0.0, 150.0, -0.0]
+  Center UV: (np.float64(320.0), np.float64(239.91587856151475))
+DEBUG: T=0.20
+  Drone NED: px=0.0, py=0.1, pz=-49.8, pitch=-48.4, yaw=90.0
+  Target NED: [0.0, 150.0, -0.0]
+  Center UV: (np.float64(320.0), np.float64(239.86338614445665))
+T=1.00 State=HOMING Dist=155.65 Pos=(1.6, 0.0, 47.0) UV=(320.00, 246.77)
+      SimV=6.09 VioV=6.89 BA=[-0.00, -0.00, 0.00]
+T=2.00 State=HOMING Dist=151.23 Pos=(4.1, 0.0, 39.9) UV=(251.54, 285.52)
+      SimV=8.17 VioV=14.27 BA=[-0.00, -0.00, 0.00]
+Saved plot to validation_dive_tracking.png
+Final Distance (Blind Web): 146.20m
+FAILURE: Blind Web Dive Failed
+
+--- Prediction Error Analysis (Blind/VIO Run) ---
+Mean Prediction Error: 3.0594m
+Max Prediction Error: 5.4494m

@@ -18,7 +18,7 @@ class VisionConfig:
 @dataclass
 class ControlConfig:
     k_yaw: float = 3.31
-    k_pitch: float = 0.8 # Slightly increased for responsiveness
+    k_pitch: float = 2.5 # Increased for tighter tracking
 
     # Cruise / Dive Logic
     dive_trigger_rer: float = 0.23

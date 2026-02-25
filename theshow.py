@@ -279,7 +279,8 @@ class TheShow:
         tracking_norm = None
         tracking_size_norm = None
         if center:
-            tracking_norm = self.projector.pixel_to_normalized(center[0], center[1])
+            # Flight Controller expects PIXELS, not normalized coordinates
+            tracking_norm = center
             # Normalize radius by image height (480)
             tracking_size_norm = radius / 480.0
 

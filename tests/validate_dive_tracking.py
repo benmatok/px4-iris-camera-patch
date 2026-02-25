@@ -214,7 +214,8 @@ class DiveValidator:
             tracking_norm = None
             tracking_size_norm = None
             if center:
-                tracking_norm = self.projector.pixel_to_normalized(center[0], center[1])
+                # flight_controller expects PIXELS, not normalized coordinates
+                tracking_norm = center
                 tracking_size_norm = radius / 480.0
 
             # --- VIO UPDATE (BA System) ---
