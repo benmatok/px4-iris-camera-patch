@@ -68,28 +68,29 @@ class DiveValidator:
     def calculate_initial_orientation(self, drone_pos, target_pos):
         dx = target_pos[0] - drone_pos[0]
         dy = target_pos[1] - drone_pos[1]
-        dz = target_pos[2] - drone_pos[2]
+        dz = target_pos[2] - drone_pos[2] # Z is Up in Sim. Target Z=0, Drone Z=100. dz = -100 (Down).
 
         yaw = np.arctan2(dy, dx)
         dist_xy = np.sqrt(dx*dx + dy*dy)
-        pitch_vec = np.arctan2(dz, dist_xy)
 
-        # Camera Tilt is 30.0 (Up)
-        camera_tilt = np.deg2rad(self.config.camera.tilt_deg)
+        # Sim Frame: Z is Up. Pitch is Nose Up (Positive).
+        # Target Vector Angle (Elevation)
+        # alpha = atan2(dz, dist_xy)
+        # Example: dz = -50, dist = 150. alpha = atan(-0.33) ~ -18 deg.
+        alpha = np.arctan2(dz, dist_xy)
 
-        # PyGhostModel Convention: Positive Pitch = Nose Down.
-        # But flight_controller uses Positive Pitch = Nose Up.
-        # We need to set initial pitch in Sim convention?
-        # Let's try to match target.
-        # Vector is ~ -18 deg (Down). Camera is +30 deg (Up).
-        # We need Body = -48 deg (Nose Up).
-        # If Sim Pitch is + = Nose Down, then -48 is -48.
-        # Wait, if Sim Pitch is - = Nose Up.
-        # Then we need -48.
-        # Sim Pitch Negative = Nose Down.
-        pitch = (pitch_vec - camera_tilt)
+        # Camera is Tilted UP by 30 deg relative to Body X.
+        # Vector_Cam = Vector_Body + Tilt?
+        # No, Body Angle = Vector Angle - Tilt.
+        # If I want Cam to point at -18 deg, and Cam is +30 relative to Body.
+        # Body must be at -18 - 30 = -48 deg.
 
-        # Clamp pitch
+        tilt_rad = np.radians(self.config.camera.tilt_deg)
+        pitch = alpha - tilt_rad
+
+        # Ensure we don't hit the -1.48 floor in validation unless necessary
+        # The floor in sim_interface might be for aerodynamic stability, but let's clamp for safety.
+        # -1.48 rad is approx -85 degrees (nearly vertical down).
         if pitch < -1.48:
             pitch = -1.48
 
@@ -107,7 +108,25 @@ class DiveValidator:
         ned['vz'] = -sim_state['vz']
 
         ned['roll'] = sim_state['roll']
-        # Sim Pitch (Nose Down -) -> NED Pitch (Nose Down -). Match signs.
+        # Sim Pitch (Nose Up +) -> NED Pitch (Nose Up +)?
+        # Standard NED: Z Down. Pitch + is Nose Up.
+        # Sim ENU: Z Up. Pitch + is Nose Up.
+        # So Signs match?
+        # Let's check rotation matrices.
+        # Sim (PyGhost): Rz(y)*Ry(-p)*Rx(r)? No.
+        # rpy_to_matrix(roll, -pitch, -yaw).
+        # This implies Sim Internal Pitch is Nose Down Positive?
+        # Wait, SimInterface init: self.state['pitch'] = 0.0
+        # If I look at calculate_initial_orientation: "Sim Pitch Positive = Nose Up".
+        # But PyGhostModel does `rpy_to_matrix(roll, -pitch, -yaw)`.
+        # This suggests the internal matrix function expects Standard Aerospace (Nose Up +), but maybe the inputs are inverted?
+        # Or maybe PyGhostModel uses a different convention.
+
+        # Let's stick to what works in visualization.
+        # In `visual_tracker.py`, Projector uses `drone_state['pitch']`.
+        # Projector expects Standard Aerospace (Nose Up +).
+        # So we pass Sim Pitch directly to NED Pitch.
+
         ned['pitch'] = sim_state['pitch']
         ned['yaw'] = (math.pi / 2.0) - sim_state['yaw']
         ned['yaw'] = (ned['yaw'] + math.pi) % (2 * math.pi) - math.pi
@@ -228,17 +247,7 @@ class DiveValidator:
             vio_state = self.vio_system.get_state_dict()
 
             if self.control_use_gt:
-                # Use Ground Truth Sim State (converted to NED Velocity for compatibility if controller expects NED or ENU?)
-                # Controller expects ENU velocity if passed as 'velocity_est' because DPCFlightController converts VIO (NED) to ENU inside?
-                # Let's check flight_controller.py.
-                # "vx_enu = velocity_est['vy']; vy_enu = velocity_est['vx']; vz_enu = -velocity_est['vz']"
-                # It expects VIO dictionary in NED Frame.
-                # Sim State s['vx'] is ENU world velocity.
-                # So we must pass Sim Velocity converted to NED for the controller to re-convert it to ENU?
-                # Or we can modify controller to accept ENU.
-                # But to minimally change controller, let's construct a "Fake VIO State" in NED.
-                # Sim (ENU): vx, vy, vz
-                # NED: vx_n = sim_vy, vy_n = sim_vx, vz_n = -sim_vz
+                # Fake VIO State in NED
                 vel_est = {'vx': s['vy'], 'vy': s['vx'], 'vz': -s['vz']}
                 pos_est = {'px': s['py'], 'py': s['px'], 'pz': -s['pz']}
                 vel_reliable = True
